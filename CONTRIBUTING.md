@@ -40,6 +40,12 @@ columns or `enum` types — see [ADR 0001](docs/adr/0001-phase-0-deviations.md) 
 reasoning, which is subtler than "SQLite can't do it". Run `pnpm --filter @hub/db validate:all`
 after touching `schema.prisma`.
 
+**2a. Database identifiers are snake_case.** Add `@map("snake_case")` to any field whose
+name is not a single lowercase word, and `@@map` to every model. The client stays camelCase,
+so this changes nothing in application code — but the admin SQL console exposes raw SQL to
+operators, and mixed-case columns would force them to quote every identifier on Postgres
+while behaving differently again on MySQL.
+
 **3. Never put a nullable column in a `@@unique` meant to prevent duplicates.**
 `NULL != NULL` in unique indexes on all three dialects, so the constraint silently never
 fires. Use a non-null sentinel default instead — see `Sku.printing`.

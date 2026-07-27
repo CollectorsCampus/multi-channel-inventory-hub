@@ -28,10 +28,10 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.3"
+    "@prisma/client": "^6.19.3",
+    "prisma": "^6.19.3"
   },
   "devDependencies": {
-    "prisma": "^6.19.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

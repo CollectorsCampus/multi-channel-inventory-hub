@@ -106,6 +106,13 @@ jobs:
       - run: pnpm --filter @hub/db migrate:deploy
 
       - run: pnpm --filter "./packages/**" build
+
+      # The SPA build must exist before the API tests run. AppModule only
+      # registers ServeStaticModule when apps/web/dist is present, so without
+      # this the boot smoke test silently skips the static-serving path — which
+      # is exactly where a missing @fastify/static would show up.
+      - run: pnpm --filter @hub/web build
+
       - run: pnpm test
 
   # -------------------------------------------------------------------------

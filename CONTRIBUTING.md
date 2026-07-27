@@ -51,6 +51,13 @@ in ADR 0001.
 
 **5. Connectors never compute quantities.** See [the connector guide](docs/CONNECTOR_GUIDE.md).
 
+**5a. Nest resolves some packages at runtime, not from imports.** `ValidationPipe` needs
+`class-validator`/`class-transformer`; `ServeStaticModule` under Fastify needs
+`@fastify/static`. Nothing in the source references them, so a missing one passes
+typecheck, passes the DI test, builds cleanly, and then crash-loops the container. If you
+add a Nest feature that loads a package by name, add a case to
+`apps/api/test/boot.spec.ts`, which initializes the real HTTP app.
+
 **6. Do not use `import type` for anything NestJS injects.** In `apps/api`, providers and
 `@Body()` DTOs must be value imports. A type-only import is erased at compile time, so
 `emitDecoratorMetadata` writes `Object` into `design:paramtypes` and DI fails at runtime

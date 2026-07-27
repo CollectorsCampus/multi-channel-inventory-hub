@@ -1,12 +1,11 @@
 import 'reflect-metadata';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import fastifyCookie from '@fastify/cookie';
-import fastifyHelmet from '@fastify/helmet';
 import { AppModule } from './app.module';
+import { configureApp } from './bootstrap';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -24,31 +23,10 @@ async function bootstrap(): Promise<void> {
   const port = config.get<number>('PORT', 3000);
   const isProduction = config.get<string>('NODE_ENV') === 'production';
 
-  await app.register(fastifyCookie, { secret: config.get<string>('SESSION_SECRET') });
-
-  await app.register(fastifyHelmet, {
-    // The SPA is same-origin; CSP defaults would block the Swagger UI assets.
-    contentSecurityPolicy: isProduction
-      ? {
-          directives: {
-            defaultSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'"],
-            imgSrc: ["'self'", 'data:', 'https:'],
-            scriptSrc: ["'self'"],
-          },
-        }
-      : false,
+  await configureApp(app, {
+    sessionSecret: config.get<string>('SESSION_SECRET'),
+    isProduction,
   });
-
-  app.setGlobalPrefix('api', { exclude: ['health/live', 'health/ready'] });
-
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
 
   app.enableShutdownHooks();
 

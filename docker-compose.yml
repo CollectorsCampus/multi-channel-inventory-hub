@@ -1,0 +1,73 @@
+# One command to a running dashboard:
+#   cp .env.example .env   # then fill in the two generated secrets
+#   docker compose up -d
+#
+# Generate the secrets with:
+#   openssl rand -base64 32
+
+name: inventory-hub
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: inventory-hub:local
+    restart: unless-stopped
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD:-hub}@postgres:5432/${POSTGRES_DB:-hub}
+      DATABASE_PROVIDER: postgresql
+      REDIS_URL: redis://redis:6379
+      RUN_WORKERS_IN_PROCESS: ${RUN_WORKERS_IN_PROCESS:-true}
+      CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY:?set CREDENTIAL_MASTER_KEY in .env — openssl rand -base64 32}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env — openssl rand -base64 32}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-720}
+      ENABLE_QUERY_CONSOLE: ${ENABLE_QUERY_CONSOLE:-false}
+      QUERY_CONSOLE_DATABASE_URL: ${QUERY_CONSOLE_DATABASE_URL:-}
+      RECONCILE_CRON: ${RECONCILE_CRON:-0 3 * * *}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hub}
+      POSTGRES_DB: ${POSTGRES_DB:-hub}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-hub} -d ${POSTGRES_DB:-hub}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published by default: the app reaches it over the compose network.
+    # Uncomment to connect a local client.
+    # ports:
+    #   - '5432:5432'
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:

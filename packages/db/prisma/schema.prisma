@@ -1,0 +1,441 @@
+// Multi-Channel Inventory Hub — canonical Prisma schema.
+//
+// PORTABILITY CONTRACT (Postgres reference; MySQL/MariaDB + SQLite must also work):
+//   1. No `Json` columns.  NOT because SQLite cannot take them — Prisma 6.19+
+//      accepts `Json` on all three providers — but because Json null semantics
+//      diverge: the `Prisma.DbNull` vs `Prisma.JsonNull` distinction is
+//      Postgres-only, so identical code silently behaves differently per
+//      dialect.  JSON-bearing fields are `String`, serialized and parsed at the
+//      service boundary via packages/db/src/json.ts.  TECHNICAL_DESIGN.md §3
+//      already forbids querying into them, so nothing is lost.
+//   2. No `enum` types.  Again not a hard limitation — Prisma maps enums to
+//      TEXT on SQLite — but growing a native enum costs a migration that
+//      rewrites data: Postgres needs ALTER TYPE, MySQL ENUM changes can rewrite
+//      the whole table.  Closed value sets are `String`, validated at runtime by
+//      packages/db/src/enums.ts, which is their single source of truth.
+//   3. No nullable columns inside a @@unique that is meant to *prevent* duplicates.
+//      NULL != NULL in unique indexes on all three dialects, so such a constraint
+//      silently never fires.  Where a natural key needs an optional-looking field,
+//      it is non-null with a sentinel default (see Sku.printing).
+//   4. No dialect-specific native types, and no raw SQL in core query paths.
+//
+// CONCURRENCY: InventoryItem.version is an optimistic-locking token.  Prisma
+// interactive transactions do NOT take row locks, and SQLite has no row locking
+// at all, so `SELECT ... FOR UPDATE` is not a portable option.  All quantity
+// mutations go through InventoryService, which reads the version, writes via
+// `updateMany({ where: { id, version } })`, and retries when zero rows match.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+/// The abstract product: "Charizard — Base Set". Not sellable on its own.
+model CatalogItem {
+  id        String   @id @default(uuid(7))
+  name      String
+  game      String? // "Magic", "Pokemon"; null for non-TCG goods
+  setName   String?
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  externalRefs CatalogExternalRef[]
+  skus         Sku[]
+
+  @@index([name])
+  @@index([game, setName])
+  @@map("catalog_items")
+}
+
+/// Maps a CatalogItem onto a platform's canonical ID. We reuse external IDs
+/// (notably TCGPlayer productId) rather than inventing our own catalog.
+model CatalogExternalRef {
+  id            String   @id @default(uuid(7))
+  catalogItemId String
+  source        String // CatalogSource: "tcgplayer" | "scryfall" | "shopify" | ...
+  externalId    String
+  createdAt     DateTime @default(now())
+
+  catalogItem CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+
+  @@unique([source, externalId])
+  @@index([catalogItemId])
+  @@map("catalog_external_refs")
+}
+
+/// The sellable unit: item + condition + printing + language.
+model Sku {
+  id            String   @id @default(uuid(7))
+  catalogItemId String
+  condition     String // SkuCondition: NM | LP | MP | HP | DMG | SEALED | NA
+  /// Non-null by design: a nullable column in the natural key below would make
+  /// the unique constraint unenforceable (NULL != NULL). "NORMAL" is the
+  /// sentinel for "no special printing".
+  printing      String   @default("NORMAL")
+  language      String   @default("EN")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  catalogItem CatalogItem    @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  inventory   InventoryItem?
+
+  @@unique([catalogItemId, condition, printing, language])
+  @@index([catalogItemId])
+  @@map("skus")
+}
+
+// ---------------------------------------------------------------------------
+// Inventory ledger
+// ---------------------------------------------------------------------------
+
+/// One row per Sku; the root of the quantity ledger and the single source of truth.
+///
+/// INVARIANT: quantityOnHand >= SUM(fixed allocations' quantityAllocated) + reserveQuantity >= 0
+///
+/// This spans two tables, so no CHECK constraint can express it. It is enforced
+/// in InventoryService inside a transaction, and audited by a scheduled
+/// integrity job that reports violations alongside reconciliation.
+model InventoryItem {
+  id              String @id @default(uuid(7))
+  skuId           String @unique
+  /// Physical truth: how many units we actually possess.
+  quantityOnHand  Int    @default(0)
+  /// Held back from the pool before any pooled math — "never list the last N anywhere".
+  reserveQuantity Int    @default(0)
+  /// Cents. Single scalar; cannot represent lots acquired at different prices.
+  costBasis       Int?
+  /// Optimistic-locking token. Incremented on every quantity mutation.
+  version         Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sku         Sku                 @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  allocations ChannelAllocation[]
+  movements   StockMovement[]
+
+  @@map("inventory_items")
+}
+
+/// Append-only ledger of every change to quantityOnHand, whatever the cause.
+/// Distinct from SyncEvent: this is the stock ledger, SyncEvent is the I/O log.
+model StockMovement {
+  id                String   @id @default(uuid(7))
+  inventoryItemId   String
+  /// Signed: +5 intake, -1 sale.
+  delta             Int
+  /// Value of quantityOnHand after this movement was applied.
+  resultingOnHand   Int
+  reason            String // StockMovementReason: intake | sale | adjustment | return | reconcile | shrinkage
+  channelInstanceId String?
+  allocationId      String?
+  /// Free-text note; for sales, the external order reference.
+  note              String?
+  actorUserId       String?
+  createdAt         DateTime @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@index([inventoryItemId, createdAt])
+  @@index([reason, createdAt])
+  @@map("stock_movements")
+}
+
+// ---------------------------------------------------------------------------
+// Channels
+// ---------------------------------------------------------------------------
+
+/// A configured connection, e.g. "My Shopify Store", resolving to a connector plugin.
+model ChannelInstance {
+  id            String  @id @default(uuid(7))
+  connectorKey  String // resolves a registered connector: "shopify" | "tcgplayer"
+  displayName   String
+  /// JSON-encoded non-secret connector config, shaped by the connector's
+  /// configSchema. Never contains credentials. String, not Json — see header.
+  config        String  @default("{}")
+  /// Points at Credential.ref. Null until the channel has been connected.
+  credentialRef String?
+
+  enabled Boolean @default(true)
+
+  /// Cursor for connectors whose inbound path is orders.poll rather than webhooks.
+  lastPolledAt     DateTime?
+  lastReconciledAt DateTime?
+  /// ChannelHealth: unknown | ok | degraded | error
+  healthStatus     String    @default("unknown")
+  healthCheckedAt  DateTime?
+  healthDetail     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations   ChannelAllocation[]
+  syncEvents    SyncEvent[]
+  webhookEvents WebhookEvent[]
+  alerts        Alert[]
+
+  @@index([connectorKey])
+  @@index([enabled])
+  @@map("channel_instances")
+}
+
+/// Per-channel listing for one InventoryItem: allocation mode, quantity, price.
+model ChannelAllocation {
+  id                String @id @default(uuid(7))
+  inventoryItemId   String
+  channelInstanceId String
+
+  /// AllocationMode: "fixed" | "pooled". See TECHNICAL_DESIGN.md §4.
+  mode              String @default("pooled")
+  /// fixed mode only: this channel's exclusive partition of stock.
+  quantityAllocated Int?
+  /// pooled mode only: optional cap. Null = mirror the whole pool.
+  maxQuantity       Int?
+  /// Cache of the quantity we last pushed / believe is live on the channel.
+  /// In pooled mode this is derived, never truth — recomputed on every change.
+  listedQuantity    Int    @default(0)
+
+  /// Cents, channel-specific. Nullable: a draft allocation may not be priced yet.
+  price    Int?
+  currency String @default("USD")
+
+  /// shopify variant/inventory-item id, tcgplayer sku listing id, ...
+  externalListingId String?
+  /// AllocationStatus: draft | listed | error | delisted
+  status            String  @default("draft")
+
+  lastPushedAt DateTime?
+  lastError    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventoryItem   InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  channelInstance ChannelInstance @relation(fields: [channelInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryItemId, channelInstanceId])
+  /// Index, not unique: externalListingId is nullable, so a unique constraint
+  /// would not enforce anything for unlisted rows. This is the hot lookup for
+  /// the inbound sale path (external listing id -> allocation).
+  @@index([channelInstanceId, externalListingId])
+  @@index([status])
+  @@index([inventoryItemId])
+  @@map("channel_allocations")
+}
+
+// ---------------------------------------------------------------------------
+// Sync engine
+// ---------------------------------------------------------------------------
+
+/// Raw inbound webhook payload, persisted by the ingress endpoint before any
+/// work is enqueued. Ingress does nothing else: verify signature, write this
+/// row, enqueue, return 200.
+model WebhookEvent {
+  id                String  @id @default(uuid(7))
+  channelInstanceId String
+  /// Platform topic, e.g. "orders/create".
+  topic             String?
+  /// Idempotency key. Non-null by design so the unique constraint actually
+  /// fires; connectors fall back to a hash of the raw body when the platform
+  /// supplies no event ID.
+  externalEventId   String
+  /// JSON-encoded request headers.
+  headers           String
+  /// Raw request body, byte-exact as received (signature verification depends on it).
+  body              String
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  /// WebhookStatus: received | processed | failed | ignored
+  status      String    @default("received")
+  attempts    Int       @default(0)
+  error       String?
+
+  channelInstance ChannelInstance @relation(fields: [channelInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([channelInstanceId, externalEventId])
+  @@index([status, receivedAt])
+  @@map("webhook_events")
+}
+
+/// Append-only audit log of every inbound/outbound/reconcile action.
+model SyncEvent {
+  id                String   @id @default(uuid(7))
+  ts                DateTime @default(now())
+  /// SyncDirection: inbound | outbound | reconcile
+  direction         String
+  channelInstanceId String?
+  /// SyncEntityType: allocation | order | listing | inventory | channel
+  entityType        String
+  entityId          String?
+  /// Connector operation, e.g. "updateQuantity", "pushListing", "fetchLiveState".
+  operation         String?
+  /// JSON-encoded request/response or webhook body. String, not Json — see header.
+  payload           String?
+  /// SyncOutcome: pending | ok | error | conflict
+  outcome           String
+  detail            String?
+  durationMs        Int?
+
+  channelInstance ChannelInstance? @relation(fields: [channelInstanceId], references: [id], onDelete: SetNull)
+
+  @@index([ts])
+  @@index([channelInstanceId, ts])
+  @@index([entityType, entityId])
+  @@index([outcome, ts])
+  @@map("sync_events")
+}
+
+/// Human-actionable alert. Distinct from SyncEvent because an alert carries
+/// acknowledge/resolve state and an inbox workflow; SyncEvent is immutable.
+model Alert {
+  id       String @id @default(uuid(7))
+  /// AlertKind: oversell | sync_failure | reconcile_drift | auth_failure | invariant_violation
+  kind     String
+  /// AlertSeverity: info | warning | critical
+  severity String @default("warning")
+
+  channelInstanceId String?
+  inventoryItemId   String?
+  skuId             String?
+
+  title   String
+  detail  String?
+  /// JSON-encoded structured context (expected vs actual, ids, ...).
+  context String?
+
+  /// AlertStatus: open | acknowledged | resolved
+  status         String    @default("open")
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  channelInstance ChannelInstance? @relation(fields: [channelInstanceId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([kind, status])
+  @@index([inventoryItemId])
+  @@map("alerts")
+}
+
+// ---------------------------------------------------------------------------
+// Auth (TECHNICAL_DESIGN.md §8)
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String  @id @default(uuid(7))
+  username     String  @unique
+  email        String? @unique
+  displayName  String?
+  /// argon2id hash. Null for users provisioned by an external identity provider.
+  passwordHash String?
+  /// UserRole: admin | editor | viewer
+  role         String  @default("viewer")
+  /// AuthProviderKey: local | oidc
+  provider     String  @default("local")
+  /// OIDC subject claim; null for local users.
+  externalId   String?
+
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions Session[]
+  apiKeys  ApiKey[]
+
+  @@unique([provider, externalId])
+  @@index([role])
+  @@map("users")
+}
+
+model Session {
+  id        String @id @default(uuid(7))
+  userId    String
+  /// SHA-256 of the session token. The raw token lives only in the cookie.
+  tokenHash String @unique
+  /// Per-session CSRF token (double-submit cookie pattern).
+  csrfToken String
+
+  userAgent String?
+  ipAddress String?
+
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model ApiKey {
+  id      String @id @default(uuid(7))
+  name    String
+  /// Public, non-secret lookup prefix; also shown in the UI to identify the key.
+  prefix  String @unique
+  /// argon2id hash of the secret half.
+  keyHash String
+
+  userId String?
+  /// UserRole the key acts as; may not exceed the owning user's role.
+  role   String  @default("viewer")
+
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+/// Encrypted credential store (AES-256-GCM, master key from env/KMS).
+/// Connectors receive decrypted secrets only inside Ctx, at call time.
+model Credential {
+  id  String @id @default(uuid(7))
+  /// ChannelInstance.credentialRef points here.
+  ref String @unique
+
+  /// base64 AES-256-GCM ciphertext of the JSON secret bundle.
+  ciphertext String
+  /// base64 initialization vector.
+  iv         String
+  /// base64 GCM authentication tag.
+  authTag    String
+  /// Master-key generation, so keys can be rotated without downtime.
+  keyVersion Int    @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("credentials")
+}
+
+/// Instance-level key/value settings (first-run completion flag, defaults, ...).
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}

@@ -1,0 +1,29 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+# Prisma generated client + local SQLite databases
+packages/db/generated/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local agent/tooling config
+.claude/
+
+*.log
+npm-debug.log*
+pnpm-debug.log*

@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  # -------------------------------------------------------------------------
+  build:
+    name: Lint, typecheck & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Everything downstream needs the generated client to typecheck.
+      - run: pnpm --filter @hub/db generate
+
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm --filter "./packages/**" build
+      - run: pnpm typecheck
+      - run: pnpm --filter @hub/api build
+      - run: pnpm --filter @hub/web build
+
+  # -------------------------------------------------------------------------
+  # Stand-in for the 3-DB test matrix in TECHNICAL_DESIGN.md §3, which cannot
+  # exist yet: Phase 0 ships a Postgres-only migration history, and Prisma
+  # migrations are not portable across providers. This proves the schema stays
+  # free of dialect-specific constructs. It does NOT prove behavioural parity —
+  # that needs the real matrix, which lands when the per-provider migration
+  # mechanism does.
+  schema-portability:
+    name: Schema validates on all dialects
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @hub/db validate:all
+
+  # -------------------------------------------------------------------------
+  test:
+    name: Tests (postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: hub
+          POSTGRES_DB: hub_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hub -d hub_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://hub:hub@localhost:5432/hub_test
+      DATABASE_PROVIDER: postgresql
+      REDIS_URL: redis://localhost:6379
+      # Test-only values. Real deployments generate these per instance.
+      CREDENTIAL_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      SESSION_SECRET: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @hub/db generate
+
+      # Proves the committed migration history actually applies to an empty DB.
+      - run: pnpm --filter @hub/db migrate:deploy
+
+      - run: pnpm --filter "./packages/**" build
+      - run: pnpm test
+
+  # -------------------------------------------------------------------------
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # amd64 only on CI for speed; the release workflow builds the full
+      # multi-arch manifest.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

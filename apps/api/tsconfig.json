@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "baseUrl": ".",
+    "types": ["node"],
+    // NestJS DI resolves constructor param types at runtime via metadata;
+    // optional-property exactness fights that in a few decorator positions.
+    "strictPropertyInitialization": false
+  },
+  "include": ["src/**/*.ts"]
+}

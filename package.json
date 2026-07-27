@@ -1,0 +1,35 @@
+{
+  "name": "inventory-hub",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Self-hostable multi-channel inventory sync. Central ledger, pluggable channel connectors.",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.11.0",
+    "pnpm": ">=9.15.0"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/**\" build && pnpm -r --filter \"./apps/**\" build",
+    "dev": "pnpm -r --parallel dev",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @hub/db generate",
+    "db:migrate": "pnpm --filter @hub/db migrate:dev",
+    "db:studio": "pnpm --filter @hub/db studio",
+    "db:seed": "pnpm --filter @hub/db seed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.2",
+    "prettier-plugin-prisma": "^5.0.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1"
+  }
+}

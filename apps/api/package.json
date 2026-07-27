@@ -1,0 +1,42 @@
+{
+  "name": "@hub/api",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "build": "nest build",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/helmet": "^13.0.0",
+    "@hub/connector-sdk": "workspace:*",
+    "@hub/connector-shopify": "workspace:*",
+    "@hub/connector-tcgplayer": "workspace:*",
+    "@hub/db": "workspace:*",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-fastify": "^11.0.0",
+    "@nestjs/serve-static": "^5.0.0",
+    "@nestjs/swagger": "^11.0.0",
+    "@node-rs/argon2": "^2.0.2",
+    "fastify": "^5.2.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/schematics": "^11.0.0",
+    "@nestjs/testing": "^11.1.28",
+    "@swc/core": "^1.15.46",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "unplugin-swc": "^1.5.9",
+    "vitest": "^2.1.8"
+  }
+}

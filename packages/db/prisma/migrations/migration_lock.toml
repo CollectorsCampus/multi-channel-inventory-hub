@@ -1,0 +1,2 @@
+# Do not edit. Prisma uses this to detect a provider change.
+provider = "postgresql"

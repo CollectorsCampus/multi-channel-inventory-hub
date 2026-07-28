@@ -29,6 +29,20 @@ export interface OutboundJob {
  */
 export const outboundQueueName = (connectorKey: string) => `push-${connectorKey}`;
 
+/**
+ * Inbound queue. One for everything, unlike outbound.
+ *
+ * Inbound work does not call the platform, so there is no rate limit to
+ * enforce and no reason to partition by connector. Its cost is database work
+ * on our own ledger.
+ */
+export const INBOUND_QUEUE = 'inbound';
+
+export interface InboundJob {
+  /** The persisted WebhookEvent to process. Payload is read from the row. */
+  webhookEventId: string;
+}
+
 @Injectable()
 export class OutboundQueue implements OnModuleDestroy {
   private readonly logger = new Logger(OutboundQueue.name);

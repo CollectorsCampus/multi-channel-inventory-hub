@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Redis } from 'ioredis';
 import { REDIS_CONNECTION, createRedisConnection } from './redis.provider';
 import { OutboundQueue } from './outbound-queue.service';
+import { InboundQueue } from './inbound-queue.service';
 
 const redisProvider: Provider = {
   provide: REDIS_CONNECTION,
@@ -21,7 +22,7 @@ const redisProvider: Provider = {
  */
 @Global()
 @Module({
-  providers: [redisProvider, OutboundQueue],
-  exports: [REDIS_CONNECTION, OutboundQueue],
+  providers: [redisProvider, OutboundQueue, InboundQueue],
+  exports: [REDIS_CONNECTION, OutboundQueue, InboundQueue],
 })
 export class QueueModule {}

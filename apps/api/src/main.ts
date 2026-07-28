@@ -13,11 +13,15 @@ async function bootstrap(): Promise<void> {
     AppModule,
     new FastifyAdapter({
       trustProxy: true,
-      // Webhook signature verification needs the byte-exact body
-      // (TECHNICAL_DESIGN.md §5), so keep the raw buffer around for the
-      // ingress routes added in Phase 3.
       bodyLimit: 8 * 1024 * 1024,
     }),
+    {
+      // Webhook signature verification needs the byte-exact body (§5): parsing
+      // and re-serializing changes whitespace and key order, and the HMAC then
+      // never matches. This populates `request.rawBody` alongside the parsed
+      // body so ingress can verify what was actually sent.
+      rawBody: true,
+    },
   );
 
   const config = app.get(ConfigService);

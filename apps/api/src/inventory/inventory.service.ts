@@ -616,15 +616,12 @@ export class InventoryService {
         }
       }
 
-      // listedQuantity caches what we believe is live on each channel. With no
-      // connectors yet there is nothing to push to, so deriving it here is
-      // accurate. Phase 3 moves this write into the outbound worker, where it
-      // may only happen after a push actually succeeds.
-      await this.syncListedQuantityCache(ledger);
-      for (const allocation of ledger.allocations) {
-        allocation.listedQuantity = allocation.desiredListedQuantity;
-      }
-
+      // listedQuantity is deliberately NOT written here. It records what we
+      // believe the channel is actually advertising, and until a push succeeds
+      // that is still the old value. Writing it optimistically would make
+      // reconciliation compare our guess against the channel and conclude
+      // there is no drift precisely when there is. The outbound worker sets it
+      // after a successful push.
       await this.enqueuePushes(changes);
 
       return { ledger, changes, conflicts: outcome.conflicts ?? [] };
@@ -675,18 +672,6 @@ export class InventoryService {
         );
       }
     }
-  }
-
-  private async syncListedQuantityCache(ledger: LedgerSnapshot): Promise<void> {
-    const stale = ledger.allocations.filter((a) => a.listedQuantity !== a.desiredListedQuantity);
-    await Promise.all(
-      stale.map((a) =>
-        this.prisma.channelAllocation.update({
-          where: { id: a.id },
-          data: { listedQuantity: a.desiredListedQuantity },
-        }),
-      ),
-    );
   }
 }
 

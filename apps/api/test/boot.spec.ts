@@ -135,6 +135,34 @@ describe('HTTP application', () => {
     });
   });
 
+  /**
+   * The ingress endpoint is public by necessity — the caller is a platform, not
+   * a signed-in operator — so the HMAC is the only thing standing between the
+   * ledger and anyone who learns the URL.
+   */
+  describe('webhook ingress', () => {
+    it('is reachable without a session', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/webhooks/some-channel',
+        payload: { hello: 'world' },
+      });
+      // Not 401-for-missing-session: it fails on the channel or the signature,
+      // never on the absence of a cookie.
+      expect(res.statusCode).not.toBe(403);
+      expect(JSON.stringify(res.json())).not.toMatch(/Authentication required/);
+    });
+
+    it('rejects a body it cannot verify', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/webhooks/some-channel',
+        payload: {},
+      });
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    });
+  });
+
   it('requires a CSRF token on cookie-authenticated writes', async () => {
     const res = await app.inject({
       method: 'POST',

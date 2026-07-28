@@ -8,6 +8,7 @@ import { ConnectorsModule } from './connectors/connectors.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { QueueModule } from './queue/queue.module';
 import { SyncModule } from './sync/sync.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 import { HealthController } from './health/health.controller';
 
 // Static SPA serving lives in bootstrap.ts (`serveSpa`), not here: it needs the
@@ -28,6 +29,7 @@ import { HealthController } from './health/health.controller';
     ConnectorsModule,
     CatalogModule,
     SyncModule,
+    WebhooksModule,
   ],
   controllers: [HealthController],
 })

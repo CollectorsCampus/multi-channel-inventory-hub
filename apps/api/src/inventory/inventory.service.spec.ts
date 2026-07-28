@@ -214,18 +214,30 @@ describeDb('InventoryService', () => {
       expect(issue?.allocationId).toBe(tcg.id);
     });
 
-    it('persists the listedQuantity cache', async () => {
+    /**
+     * listedQuantity records what we believe the channel is *actually*
+     * advertising, so an edit must not touch it — until a push succeeds the
+     * channel still shows the old number. Writing it optimistically would make
+     * reconciliation compare our guess against the channel and find no drift
+     * exactly when there is some. The outbound worker sets it after a
+     * successful push.
+     */
+    it('leaves listedQuantity alone until a push succeeds', async () => {
       const item = await seedItem(10);
       const channel = await seedChannel('Shopify');
 
-      await service.upsertAllocation(item.id, {
+      const { ledger } = await service.upsertAllocation(item.id, {
         channelInstanceId: channel.id,
         mode: 'pooled',
         maxQuantity: null,
       });
 
+      // Desired is derived immediately and drives the push...
+      expect(ledger.allocations[0]?.desiredListedQuantity).toBe(10);
+
+      // ...but the cached belief about the channel is still zero.
       const row = await prisma.channelAllocation.findFirst({ where: { inventoryItemId: item.id } });
-      expect(row?.listedQuantity).toBe(10);
+      expect(row?.listedQuantity).toBe(0);
     });
   });
 

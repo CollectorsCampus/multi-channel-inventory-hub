@@ -3,6 +3,7 @@ import { ConnectorsModule } from '../connectors/connectors.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { SyncEventService } from './sync-event.service';
 import { OutboundWorker } from './outbound.worker';
+import { InboundWorker } from './inbound.worker';
 
 /**
  * The consuming half of the sync engine.
@@ -13,7 +14,7 @@ import { OutboundWorker } from './outbound.worker';
  */
 @Module({
   imports: [ConnectorsModule, InventoryModule],
-  providers: [SyncEventService, OutboundWorker],
+  providers: [SyncEventService, OutboundWorker, InboundWorker],
   exports: [SyncEventService],
 })
 export class SyncModule {}

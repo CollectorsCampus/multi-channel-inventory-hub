@@ -1,0 +1,212 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiFetch } from './client';
+
+export type AllocationMode = 'fixed' | 'pooled';
+
+export interface Allocation {
+  id: string;
+  channelInstanceId: string;
+  mode: AllocationMode;
+  quantityAllocated: number | null;
+  maxQuantity: number | null;
+  /** Derived from the current ledger — what the channel should be advertising. */
+  desiredListedQuantity: number;
+  /** Cached belief about what it is actually advertising. */
+  listedQuantity: number;
+  status: string;
+  price: number | null;
+  currency: string;
+  externalListingId: string | null;
+}
+
+export interface Ledger {
+  inventoryItemId: string;
+  skuId: string;
+  quantityOnHand: number;
+  reserveQuantity: number;
+  pool: number;
+  version: number;
+  allocations: Allocation[];
+}
+
+export type InventoryRow = Ledger & {
+  name: string;
+  game: string | null;
+  setName: string | null;
+  condition: string;
+  printing: string;
+  language: string;
+};
+
+export interface InventoryPage {
+  items: InventoryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}
+
+export interface LedgerIssue {
+  code: string;
+  message: string;
+  allocationId?: string;
+}
+
+export interface LedgerPreview {
+  pool: number;
+  issues: LedgerIssue[];
+  /**
+   * Keyed by channelInstanceId, not allocation id — a proposed allocation may
+   * not exist yet and so has no id of its own.
+   */
+  listed: Record<string, number>;
+}
+
+export interface InventoryFilters {
+  search?: string;
+  game?: string;
+  condition?: string;
+  channelInstanceId?: string;
+  page?: number;
+  pageSize?: number;
+  sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';
+  sortDir?: 'asc' | 'desc';
+}
+
+function toQueryString(filters: InventoryFilters): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '' && value !== null) params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export const inventoryKeys = {
+  list: (filters: InventoryFilters) => ['inventory', 'list', filters] as const,
+  detail: (id: string) => ['inventory', 'detail', id] as const,
+};
+
+export function useInventoryList(filters: InventoryFilters) {
+  return useQuery({
+    queryKey: inventoryKeys.list(filters),
+    queryFn: () => apiFetch<InventoryPage>(`/inventory${toQueryString(filters)}`),
+    // Keeps the previous page on screen while the next one loads, so paging and
+    // sorting do not blank the table on every keystroke.
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useInventoryItem(id: string) {
+  return useQuery({
+    queryKey: inventoryKeys.detail(id),
+    queryFn: () => apiFetch<Ledger>(`/inventory/${id}`),
+  });
+}
+
+/**
+ * Server-side dry run behind the allocation editor.
+ *
+ * The rules deliberately are not reimplemented here: the allocation maths has
+ * one authority, and a client-side copy would drift from it silently. The cost
+ * is a debounced round trip per edit.
+ */
+export function usePreviewLedger(id: string) {
+  return useMutation({
+    mutationFn: (body: {
+      quantityOnHand?: number;
+      reserveQuantity?: number;
+      allocations?: Array<{
+        channelInstanceId: string;
+        mode: AllocationMode;
+        quantityAllocated?: number | null;
+        maxQuantity?: number | null;
+      }>;
+    }) =>
+      apiFetch<LedgerPreview>(`/inventory/${id}/preview`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  });
+}
+
+interface MutationOutcome {
+  ledger: Ledger;
+  changes: Array<{ allocationId: string; channelInstanceId: string; from: number; to: number }>;
+  conflicts: Array<{ code: string; message: string; shortfall: number }>;
+}
+
+function useLedgerMutation<TArgs>(id: string, request: (args: TArgs) => Promise<MutationOutcome>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: request,
+    onSuccess: (outcome) => {
+      queryClient.setQueryData(inventoryKeys.detail(id), outcome.ledger);
+      // The browse list shows derived quantities, so it is stale after any write.
+      void queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] });
+    },
+  });
+}
+
+export function useAdjustQuantity(id: string) {
+  return useLedgerMutation(id, (body: { delta: number; reason: string; note?: string }) =>
+    apiFetch<MutationOutcome>(`/inventory/${id}/adjust`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export function useSetReserve(id: string) {
+  return useLedgerMutation(id, (reserveQuantity: number) =>
+    apiFetch<MutationOutcome>(`/inventory/${id}/reserve`, {
+      method: 'PUT',
+      body: JSON.stringify({ reserveQuantity }),
+    }),
+  );
+}
+
+export function useUpsertAllocation(id: string) {
+  return useLedgerMutation(
+    id,
+    (body: {
+      channelInstanceId: string;
+      mode: AllocationMode;
+      quantityAllocated?: number | null;
+      maxQuantity?: number | null;
+      price?: number | null;
+    }) =>
+      apiFetch<MutationOutcome>(`/inventory/${id}/allocations`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+  );
+}
+
+export function useRemoveAllocation(id: string) {
+  return useLedgerMutation(id, (channelInstanceId: string) =>
+    apiFetch<MutationOutcome>(`/inventory/${id}/allocations/${channelInstanceId}`, {
+      method: 'DELETE',
+    }),
+  );
+}
+
+export function useCreateInventoryItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      name: string;
+      game?: string;
+      setName?: string;
+      condition: string;
+      quantityOnHand?: number;
+    }) => apiFetch<Ledger>('/inventory', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] }),
+  });
+}
+
+/** Cents to a display string. Prices are integers everywhere; never parse them as floats. */
+export function formatPrice(cents: number | null, currency = 'USD'): string {
+  if (cents === null) return '—';
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(cents / 100);
+}

@@ -1,26 +1,45 @@
+import { RouterProvider } from '@tanstack/react-router';
 import { useCurrentUser } from './auth';
 import { LoginPage } from './pages/LoginPage';
-import { DashboardPage } from './pages/DashboardPage';
+import { router } from './router';
 
 /**
- * Phase 0 has exactly two states, so the shell is a conditional rather than a
- * router. TanStack Router is introduced in Phase 1 alongside the first real
- * route tree (inventory browser, item detail) — adding it now would be
- * boilerplate around a single screen.
+ * The router is mounted only once a session exists.
+ *
+ * Authentication is a whole-application gate rather than a per-route guard:
+ * every route behind it needs a session, so branching here keeps the route
+ * definitions free of auth concerns. The server enforces access regardless —
+ * the UI only reflects permissions (§8).
  */
 export function App() {
   const { data: user, isLoading, error } = useCurrentUser();
 
-  if (isLoading) return <p className="muted">Loading…</p>;
-
-  if (error) {
+  if (isLoading) {
     return (
-      <div className="card">
-        <h1>Something went wrong</h1>
-        <p className="error">{error.message}</p>
+      <div className="centered">
+        <p className="muted">Loading…</p>
       </div>
     );
   }
 
-  return user ? <DashboardPage user={user} /> : <LoginPage />;
+  if (error) {
+    return (
+      <div className="centered">
+        <div className="card">
+          <h1>Something went wrong</h1>
+          <p className="error">{(error as Error).message}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="centered">
+        <LoginPage />
+      </div>
+    );
+  }
+
+  return <RouterProvider router={router} />;
 }

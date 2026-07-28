@@ -167,6 +167,53 @@ describeDb('InventoryService', () => {
       expect(after.version).toBe(0);
     });
 
+    /**
+     * The preview response is only useful if the caller can match it back to
+     * the row being edited. Keying it by a synthetic id shipped a UI that
+     * always displayed "would list 0" while the pool figure beside it was
+     * correct — the numbers were right, the lookup was not.
+     */
+    it('keys preview results by channelInstanceId, including for unsaved allocations', async () => {
+      const item = await seedItem(10);
+      const tcg = await seedChannel('TCGPlayer');
+      const shopify = await seedChannel('Shopify');
+
+      await service.upsertAllocation(item.id, {
+        channelInstanceId: tcg.id,
+        mode: 'fixed',
+        quantityAllocated: 6,
+      });
+
+      // Existing allocations only.
+      const current = await service.previewLedger(item.id, {});
+      expect(Object.keys(current.listed)).toEqual([tcg.id]);
+      expect(current.listed[tcg.id]).toBe(6);
+      expect(current.pool).toBe(4);
+
+      // A proposal including a channel with no allocation row yet.
+      const proposed = await service.previewLedger(item.id, {
+        allocations: [
+          { channelInstanceId: tcg.id, mode: 'fixed', quantityAllocated: 6 },
+          { channelInstanceId: shopify.id, mode: 'pooled', maxQuantity: null },
+        ],
+      });
+      expect(proposed.listed[tcg.id]).toBe(6);
+      expect(proposed.listed[shopify.id]).toBe(4);
+      expect(proposed.issues).toEqual([]);
+    });
+
+    it('reports preview issues against the channel, not an internal id', async () => {
+      const item = await seedItem(10);
+      const tcg = await seedChannel('TCGPlayer');
+
+      const preview = await service.previewLedger(item.id, {
+        allocations: [{ channelInstanceId: tcg.id, mode: 'fixed', quantityAllocated: -1 }],
+      });
+
+      const issue = preview.issues.find((i) => i.code === 'fixed_negative_quantity');
+      expect(issue?.allocationId).toBe(tcg.id);
+    });
+
     it('persists the listedQuantity cache', async () => {
       const item = await seedItem(10);
       const channel = await seedChannel('Shopify');

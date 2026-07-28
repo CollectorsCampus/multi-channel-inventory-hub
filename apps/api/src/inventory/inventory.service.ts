@@ -192,6 +192,11 @@ export class InventoryService {
    * Backs the allocation editor's live validation (§7). The editor deliberately
    * does not reimplement the rules client-side — one authority for the maths,
    * even at the cost of a round trip per change.
+   *
+   * `listed` and any issue's `allocationId` are keyed by **channelInstanceId**,
+   * not allocation id. A proposed allocation may not exist yet and so has no id
+   * of its own; keying on something the caller already knows is the only way
+   * the response can be matched back to the row being edited.
    */
   async previewLedger(
     inventoryItemId: string,
@@ -204,8 +209,8 @@ export class InventoryService {
     const current = await this.getLedger(inventoryItemId);
 
     const allocations: AllocationView[] = proposed.allocations
-      ? proposed.allocations.map((a, index) => normalizeWrite(a, `preview-${index}`))
-      : current.allocations.map(stripToView);
+      ? proposed.allocations.map((a) => normalizeWrite(a, a.channelInstanceId))
+      : current.allocations.map((a) => ({ ...stripToView(a), id: a.channelInstanceId }));
 
     const ledger: LedgerView = {
       quantityOnHand: proposed.quantityOnHand ?? current.quantityOnHand,

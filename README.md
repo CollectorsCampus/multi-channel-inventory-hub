@@ -14,8 +14,9 @@ channel, so the same card is not sold twice.
 > Shopify is the only continuous-sync channel in v1. See
 > [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md).
 
-> **Status: Phase 0 — scaffold.** The schema, auth, container and CI are in place. There is
-> no inventory UI and no working connector yet. See [Roadmap](#roadmap).
+> **Status: Phase 1.** The ledger, allocation engine, inventory API and browser/detail UI
+> work end to end. No channel connector exists yet, so nothing syncs outward.
+> See [Roadmap](#roadmap).
 
 ## Why
 
@@ -144,7 +145,7 @@ Contributor rules that keep this true:
 | Phase | Scope                                                                                         | Status   |
 | ----- | --------------------------------------------------------------------------------------------- | -------- |
 | 0     | Monorepo, CI, Docker, local auth, schema + migrations                                         | **Done** |
-| 1     | Inventory CRUD, allocation invariants, browser/detail UI                                      | Next     |
+| 1     | Inventory CRUD, allocation invariants, browser/detail UI                                      | **Done** |
 | 2     | Connector SDK (incl. file-based channels), catalog import, intake flow                        |          |
 | 3     | Shopify connector (push, then webhooks), sync activity UI                                     |          |
 | 4     | TCGPlayer connector — _file-based, see [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md)_ |          |

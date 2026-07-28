@@ -7,6 +7,8 @@ import {
   type CatalogSearchQuery,
   type CatalogSource,
 } from '@hub/connector-sdk';
+import { createScryfallSource } from '@hub/catalog-scryfall';
+import { MinIntervalLimiter, intervalFor } from './rate-limiter';
 
 /**
  * Registry of product-reference sources, parallel to ConnectorRegistry but
@@ -34,6 +36,7 @@ export interface AttributedCandidate extends CatalogCandidate {
 export class CatalogSourceRegistry implements OnModuleInit {
   private readonly logger = new Logger(CatalogSourceRegistry.name);
   private readonly sources = new Map<string, CatalogSource>();
+  private readonly limiter = new MinIntervalLimiter();
 
   onModuleInit(): void {
     for (const source of BUNDLED_CATALOG_SOURCES) {
@@ -122,7 +125,11 @@ export class CatalogSourceRegistry implements OnModuleInit {
     const settled = await Promise.allSettled(
       applicable.map(async (source) => ({
         source,
-        results: await source.search(makeCtx(source), query),
+        // Declared limits are enforced here rather than inside sources, so
+        // every plugin is throttled identically and none can forget to be.
+        results: await this.limiter.run(source.key, intervalFor(source.rateLimit), () =>
+          source.search(makeCtx(source), query),
+        ),
       })),
     );
 
@@ -155,8 +162,8 @@ export class CatalogSourceRegistry implements OnModuleInit {
 /**
  * Bundled catalog sources.
  *
- * Scryfall lands next. tcgcsv is deliberately not bundled: ADR 0002 records it
- * as an unofficial redistribution of someone else's API output, fine as an
- * opt-in importer but not something to enable for every self-hoster by default.
+ * tcgcsv is deliberately absent: ADR 0002 records it as an unofficial
+ * redistribution of someone else's API output, fine as an opt-in importer but
+ * not something to enable for every self-hoster by default.
  */
-const BUNDLED_CATALOG_SOURCES: CatalogSource[] = [];
+const BUNDLED_CATALOG_SOURCES: CatalogSource[] = [createScryfallSource()];

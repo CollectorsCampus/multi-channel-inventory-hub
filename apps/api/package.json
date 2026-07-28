@@ -14,6 +14,7 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/helmet": "^13.0.0",
     "@fastify/static": "^9.3.0",
+    "@hub/catalog-scryfall": "workspace:^",
     "@hub/connector-sdk": "workspace:*",
     "@hub/connector-shopify": "workspace:*",
     "@hub/connector-tcgplayer": "workspace:*",

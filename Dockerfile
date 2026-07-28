@@ -34,6 +34,7 @@ COPY packages/db/package.json        packages/db/
 COPY packages/connector-sdk/package.json        packages/connector-sdk/
 COPY packages/connector-shopify/package.json    packages/connector-shopify/
 COPY packages/connector-tcgplayer/package.json  packages/connector-tcgplayer/
+COPY packages/catalog-scryfall/package.json     packages/catalog-scryfall/
 
 # ---------------------------------------------------------------------------
 # deps — full workspace install, dev dependencies included
@@ -94,6 +95,7 @@ COPY --from=build --chown=node:node /repo/packages/db/prisma     ./packages/db/p
 COPY --from=build --chown=node:node /repo/packages/connector-sdk/dist        ./packages/connector-sdk/dist
 COPY --from=build --chown=node:node /repo/packages/connector-shopify/dist    ./packages/connector-shopify/dist
 COPY --from=build --chown=node:node /repo/packages/connector-tcgplayer/dist  ./packages/connector-tcgplayer/dist
+COPY --from=build --chown=node:node /repo/packages/catalog-scryfall/dist     ./packages/catalog-scryfall/dist
 
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 

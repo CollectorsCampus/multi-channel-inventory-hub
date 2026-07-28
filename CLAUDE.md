@@ -21,7 +21,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — reconciliation done |
 
-`main` is green: **447 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **502 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### What Phase 4 actually shipped
 
@@ -95,6 +95,43 @@ sale against an unmapped listing, which is a different fact.
 
 Manual channels never reach any of this: they do not declare `reconcile`, so
 their expected staleness cannot be mistaken for drift.
+
+### Phase 5 so far: the query console
+
+`apps/api/src/query-console/` is the **one** sanctioned exception to the
+no-raw-SQL rule — the raw statement is the feature. Off by default, admin-only,
+PostgreSQL-only, and `GET /query-console/status` is what makes the nav link
+appear at all.
+
+Three layers, and they are not equally worth anything:
+
+1. **A separate database role** on `QUERY_CONSOLE_DATABASE_URL`, granted
+   `SELECT` and nothing else. `validateEnv` refuses to boot with the console
+   enabled and no separate URL, because the obvious shortcut — pointing it at
+   `DATABASE_URL` — silently removes the whole protection. The exact `GRANT`
+   recipe is in `.env.example`, and a test builds that role and proves it cannot
+   write, so a mistake in the documentation fails CI rather than a deployment.
+2. **A `READ ONLY` transaction** around every statement, so a misconfigured role
+   is still refused by PostgreSQL itself. This is the layer that matters, and
+   the tests demonstrate it by pointing the console at the application's own
+   read-write connection and showing writes still fail.
+3. **A statement shape check** in `statement.ts`, which is a courtesy that turns
+   an obvious mistake into a clear message. **Not a security boundary** — it is
+   documented as such in the file, because a regex over SQL is exactly the kind
+   of thing someone later mistakes for one and deletes the transaction.
+
+A writing CTE (`WITH x AS (INSERT ...)`) and `EXPLAIN ANALYZE INSERT` both sail
+past any keyword filter and are refused by layer 2; both are pinned by tests.
+
+Why this is defensible at all: the database holds no directly usable secret.
+Session tokens are SHA-256 hashes, API keys argon2id, channel credentials
+AES-GCM ciphertext with the key in the environment. The blast radius is business
+data an admin can already read through the UI.
+
+**Not persisted:** who ran which statement is written to the application log,
+not to a table. A queryable audit trail would need its own model and retention
+story, and `SyncEvent` is the wrong home — it is the log of external mutations,
+and a read is neither.
 
 ## TCGPlayer file formats (verified against a real Pro account, 2026-07-28)
 

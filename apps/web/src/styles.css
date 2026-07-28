@@ -453,6 +453,19 @@ a {
   color: var(--accent);
 }
 
+/* --- query console --- */
+
+/* Monospaced and resizable: a real reporting query is several lines long, and
+   proportional type makes aligned SQL unreadable. */
+.sql-editor {
+  width: 100%;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  resize: vertical;
+  tab-size: 2;
+}
+
 /* --- table --- */
 
 .table-wrap {

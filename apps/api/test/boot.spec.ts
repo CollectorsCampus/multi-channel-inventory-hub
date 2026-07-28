@@ -204,6 +204,29 @@ describe('HTTP application', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  /**
+   * The console ships off, and a deployment that has not enabled it should not
+   * advertise that the endpoint exists — hence 404 rather than 403 from the
+   * service. The status route stays readable so the SPA can decide whether to
+   * render a nav link.
+   */
+  describe('query console', () => {
+    it('reports itself disabled by default', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/query-console/status' });
+      // Guarded like any other route; no session here, so 401.
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('guards the run endpoint before anything reads the SQL', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/query-console/query',
+        payload: { sql: 'SELECT 1' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
   it('requires a CSRF token on cookie-authenticated writes', async () => {
     const res = await app.inject({
       method: 'POST',

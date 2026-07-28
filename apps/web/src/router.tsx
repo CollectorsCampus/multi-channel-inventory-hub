@@ -5,6 +5,7 @@ import { ItemDetailPage } from './pages/ItemDetailPage';
 import { IntakePage } from './pages/IntakePage';
 import { ChannelsPage } from './pages/ChannelsPage';
 import { ActivityPage } from './pages/ActivityPage';
+import { QueryConsolePage } from './pages/QueryConsolePage';
 
 /**
  * Code-based routes rather than the file-based convention.
@@ -83,12 +84,24 @@ const activityRoute = createRoute({
   component: ActivityPage,
 });
 
+/**
+ * Registered whether or not the feature is enabled. The page reports the
+ * deployment's own status, which is a better answer for someone following a
+ * link than a 404 from the SPA router.
+ */
+const queryConsoleRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/query',
+  component: QueryConsolePage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   itemRoute,
   intakeRoute,
   channelsRoute,
   activityRoute,
+  queryConsoleRoute,
 ]);
 
 export const router = createRouter({ routeTree });

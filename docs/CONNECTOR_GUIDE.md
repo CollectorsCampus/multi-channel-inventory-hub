@@ -24,7 +24,6 @@ manual channel whose freshness depends on a human moving files.
 
 | Capability         | Method                             | Meaning                                      |
 | ------------------ | ---------------------------------- | -------------------------------------------- |
-| `catalog.search`   | `searchCatalog`                    | Search the platform's product catalog        |
 | `listing.push`     | `pushListing`                      | Create or update a listing                   |
 | `listing.price`    | `updatePrice`                      | Change a listing's price                     |
 | `listing.quantity` | `updateQuantity`                   | Change advertised quantity                   |
@@ -40,6 +39,22 @@ Every method is optional. Declaring a capability without its method — or imple
 method without declaring the capability — is rejected at startup by `validateConnector`,
 because the core dispatches on capabilities and an undeclared method would silently never
 run.
+
+### Catalog sources are a different thing
+
+There is no `catalog.search` capability. Product lookup is not a sales-channel concern — a
+catalog source has no listings, no orders, and no place in the allocation loop — so it
+lives behind the separate `CatalogSource` interface, with its own much smaller contract
+suite (`runCatalogSourceContractTests`).
+
+A package may export both when a platform genuinely does both. If TCGPlayer API access
+were ever restored, its package would export a `Connector` for selling and a
+`CatalogSource` for lookups, and neither would have to pretend to be the other.
+
+The rule for a `CatalogSource`: **never fabricate a foreign id.** Coverage is never
+complete — Scryfall omits `tcgplayer_id` on roughly a tenth of a modern Magic set and on
+many older printings — and a blank id written to `CatalogExternalRef` is worse than an
+absent one, because it will never match anything. Omit the key.
 
 ### File-based channels are first class
 

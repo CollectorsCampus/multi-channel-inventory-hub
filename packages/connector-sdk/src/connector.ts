@@ -6,8 +6,6 @@ import {
   type SyncMode,
 } from './capabilities';
 import type {
-  CatalogQuery,
-  CatalogResult,
   Ctx,
   DelistRequest,
   ExportListingsRequest,
@@ -68,8 +66,7 @@ export interface Connector {
    */
   readonly rateLimit?: { requestsPerSecond: number; burst?: number };
 
-  // --- catalog -------------------------------------------------------------
-  searchCatalog?(ctx: Ctx, query: CatalogQuery): Promise<CatalogResult[]>;
+  // Product lookup is not here by design — see CatalogSource in catalog.ts.
 
   // --- outbound ------------------------------------------------------------
   pushListing?(ctx: Ctx, req: PushListingRequest): Promise<PushListingResult>;

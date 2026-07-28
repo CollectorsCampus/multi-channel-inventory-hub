@@ -16,4 +16,12 @@ export * from './capabilities';
 export * from './types';
 export * from './connector';
 
+/**
+ * Catalog sources are a separate plugin point from connectors: they answer
+ * "what product is this?" and have no listings, orders or ledger relationship.
+ * The package keeps the name `connector-sdk` (§10 fixes the repository layout),
+ * but it is really the plugin SDK for both contracts.
+ */
+export * from './catalog';
+
 export const CONNECTOR_SDK_VERSION = '0.1.0';

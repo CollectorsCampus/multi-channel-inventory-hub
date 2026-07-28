@@ -41,27 +41,8 @@ export interface ConnectorLogger {
   error(message: string, meta?: Record<string, unknown>): void;
 }
 
-// ---------------------------------------------------------------------------
-// Catalog
-// ---------------------------------------------------------------------------
-
-export interface CatalogQuery {
-  text: string;
-  game?: string;
-  setName?: string;
-  limit?: number;
-}
-
-export interface CatalogResult {
-  /** The platform's own product id. Reused as our canonical id (§4). */
-  externalId: string;
-  name: string;
-  game?: string;
-  setName?: string;
-  imageUrl?: string;
-  /** Reference market price in cents, when the platform exposes one. */
-  marketPrice?: number;
-}
+// Catalog types live in catalog.ts, behind the separate CatalogSource
+// interface — product lookup is not a sales-channel concern.
 
 // ---------------------------------------------------------------------------
 // Outbound

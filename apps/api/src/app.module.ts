@@ -8,6 +8,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ConnectorsModule } from './connectors/connectors.module';
+import { CatalogModule } from './catalog/catalog.module';
 import { HealthController } from './health/health.controller';
 
 /**
@@ -39,6 +40,7 @@ const serveStatic = existsSync(webRoot)
     AuthModule,
     InventoryModule,
     ConnectorsModule,
+    CatalogModule,
     ...serveStatic,
   ],
   controllers: [HealthController],

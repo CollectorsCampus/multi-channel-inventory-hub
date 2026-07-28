@@ -20,8 +20,10 @@
  */
 
 export const CAPABILITIES = [
-  /** Search the platform's product catalog. */
-  'catalog.search',
+  // Note: there is no `catalog.search`. Product lookup is not a channel
+  // concern — it has no listings, no orders and no place in the allocation
+  // loop — so it lives behind the separate `CatalogSource` interface in
+  // catalog.ts. A package may export both when a platform does both.
 
   // --- outbound, live -------------------------------------------------------
   /** Create or update a listing. */
@@ -63,7 +65,6 @@ export type Capability = (typeof CAPABILITIES)[number];
  * crash during the first sale of the night.
  */
 export const CAPABILITY_METHODS = {
-  'catalog.search': 'searchCatalog',
   'listing.push': 'pushListing',
   'listing.price': 'updatePrice',
   'listing.quantity': 'updateQuantity',

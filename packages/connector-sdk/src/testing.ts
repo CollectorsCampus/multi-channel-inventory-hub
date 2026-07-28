@@ -3,6 +3,8 @@ import { validateConnector, type Connector } from './connector';
 import { hasCapability } from './capabilities';
 import type { Ctx, ImportedFile } from './types';
 
+export { runCatalogSourceContractTests, type CatalogContractOptions } from './catalog-testing';
+
 /**
  * The shared connector contract suite (§10).
  *
@@ -180,26 +182,6 @@ export function runConnectorContractTests(options: ContractTestOptions): void {
           // Omitting an unknown listing is correct; claiming quantity 0 for it
           // would read as drift and trigger a spurious alert.
           expect(state.every((s) => s.externalListingId !== 'definitely-not-a-listing')).toBe(true);
-        });
-      });
-    }
-
-    if (hasCapability(connector.capabilities, 'catalog.search')) {
-      describe('catalog.search', () => {
-        it('returns an array for a query that matches nothing', async () => {
-          const results = await connector.searchCatalog!(makeCtx(), {
-            text: 'zzzz-no-such-product-zzzz',
-          });
-          expect(Array.isArray(results)).toBe(true);
-        });
-
-        it('reports prices in integer cents', async () => {
-          const results = await connector.searchCatalog!(makeCtx(), { text: 'a' });
-          for (const result of results) {
-            if (result.marketPrice !== undefined) {
-              expect(Number.isInteger(result.marketPrice)).toBe(true);
-            }
-          }
         });
       });
     }

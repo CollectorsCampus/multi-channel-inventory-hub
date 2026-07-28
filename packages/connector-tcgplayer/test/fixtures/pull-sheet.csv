@@ -1,0 +1,7 @@
+Product Line,Product Name,Condition,Number,Set,Rarity,Quantity,Main Photo URL,Set Release Date,SkuId,Order Quantity
+"Magic","Example Creature, the Wanderer","Near Mint Holofoil","112","Example Set One","R","1","","03/06/2026 00:00:00","1000002","AAAAAAAA-111111-AAAAA:1"
+"Magic","Example Land","Near Mint Foil","250","Example Set Two","M","8","","06/13/2025 00:00:00","1000004","AAAAAAAA-222222-BBBBB:6 | AAAAAAAA-333333-CCCCC:2"
+"Pokemon","Example Charizard","Near Mint Holofoil - Japanese","4","Example Pokemon Set","SR","1","","01/01/2025 00:00:00","1000007","AAAAAAAA-444444-DDDDD:1"
+"Yugioh","Example Dragon","Lightly Played 1st Edition","1","Example Yugioh Set","UR","2","","01/01/2025 00:00:00","1000006","AAAAAAAA-555555-EEEEE:2"
+"Magic","Example Unknown Condition Card","","9","Example Set Two","C","1","","01/01/2025 00:00:00","1000009","AAAAAAAA-666666-FFFFF:1"
+"Card Sleeves","Example Matte Sleeves - Blue (100-Pack)","Unopened","","Example Sleeve Brand","","10","","01/01/2025 00:00:00","1000001","AAAAAAAA-777777-GGGGG:10"

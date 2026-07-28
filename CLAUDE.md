@@ -30,12 +30,67 @@ skeleton. It compiles but is **not wired up**: `index.ts` still exports only the
 are no tests, it is not in `BUNDLED_CONNECTORS`, and the core has no endpoints or UI for
 file export/import.
 
-**The open question that shaped it:** TCGPlayer's exact CSV headers are not publicly
-documented — a search turned up only third-party tools' formats. Hard-coding a guess would
-silently mis-read a seller's inventory, so every column resolves through accepted aliases
-that channel settings can override, and a file whose required columns are missing is
-**refused** with the headers it did see. Those defaults are unverified and must be checked
-against a real TCGPlayer Pro export before release.
+**The skeleton predates knowing the real formats and needs reworking against them.** It
+resolves columns through operator-configurable aliases, which was hedging against not
+knowing the headers. The headers are now known (below), so that configuration surface
+should be dropped in favour of a fixed header set per file type with a short alias list,
+still failing loudly on anything unrecognised.
+
+## TCGPlayer file formats (verified against a real Pro account, 2026-07-28)
+
+Derived from real exports. Redacted fixtures preserving every shape below live in
+`packages/connector-tcgplayer/test/fixtures/` — **use those; the real exports are not in
+the repo and are not needed.**
+
+Three exports matter, and two must never be touched:
+
+| Export                           | Use                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `MyPricing`                      | Inventory state → `inventory.import`, and the shape `listing.export` must emit |
+| `PullSheet`                      | **The only line-item sales source** → `orders.import`                          |
+| `OrderList`                      | Useless here — order totals only, no products                                  |
+| `ShippingExport`, `PackingSlips` | **Never ingest.** Full customer names and postal addresses.                    |
+
+**MyPricing** — header row unquoted, every value quoted, **CRLF**:
+
+```
+TCGplayer Id,Product Line,Set Name,Product Name,Title,Number,Rarity,Condition,
+TCG Market Price,TCG Direct Low,TCG Low Price With Shipping,TCG Low Price,
+Total Quantity,Add to Quantity,TCG Marketplace Price,Photo URL
+```
+
+**PullSheet** — header row unquoted, every value quoted, **LF** (the two exports disagree
+on line endings, so the parser must handle both):
+
+```
+Product Line,Product Name,Condition,Number,Set,Rarity,Quantity,
+Main Photo URL,Set Release Date,SkuId,Order Quantity
+```
+
+Facts that are not guessable from the headers:
+
+- **`TCGplayer Id` / `SkuId` are SKU-level**, not product-level: the same card in Near Mint
+  Foil and Lightly Played Foil has two different ids. So `externalListingId` is that id
+  alone — no composite key needed. Confirmed by 218 of 219 pull-sheet ids appearing in the
+  pricing export, i.e. one shared id space.
+- **`Order Quantity` is not a quantity.** It is `<order#>:<qty>`, pipe-separated across
+  orders: `AAAA-1111-AAAA:6 | AAAA-2222-BBBB:2`. This is what makes `orders.import`
+  possible at all, and it gives a stable idempotency key: `hash(order# + skuId)`.
+  Verified that `Quantity` equals the sum of the `:N` parts in every row.
+- **`Condition` merges condition, edition, finish and language** into one string:
+  `Near Mint Holofoil`, `Moderately Played Unlimited Holofoil`,
+  `Near Mint Holofoil - Japanese`, `Unopened`. Our model keeps these as separate fields, so
+  import must split it and export must recombine it. **Unrecognised values must be reported
+  as import problems, never guessed** — a guesser files a Japanese card as English.
+- **Real data contains an empty `Condition`.** Handle it.
+- **Prices carry 2 _or_ 4 decimal places** (`13.33`, `17.0000`). Parse without floats.
+- **Quantity 0 rows are normal**, not errors — 563 of 1333 in a real export. They mean
+  "priced but not stocked", and reconciliation must not read them as drift.
+
+**Operational caveat for `orders.import`:** a pull sheet lists orders _awaiting
+fulfilment_, not a sales history. Shipped orders drop off it, so an operator who ships
+before uploading never records those sales. Idempotency makes re-uploading safe, but
+nothing makes a _missed_ upload recoverable except inventory reconciliation.
 
 ---
 

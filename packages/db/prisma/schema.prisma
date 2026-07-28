@@ -49,11 +49,21 @@ datasource db {
 
 /// The abstract product: "Charizard — Base Set". Not sellable on its own.
 model CatalogItem {
-  id        String   @id @default(uuid(7))
-  name      String
-  game      String? // "Magic", "Pokemon"; null for non-TCG goods
-  setName   String?  @map("set_name")
-  imageUrl  String?  @map("image_url")
+  id         String  @id @default(uuid(7))
+  name       String
+  /// Lower-cased copy of `name`, maintained on write and queried by the
+  /// inventory browser's free-text filter.
+  ///
+  /// Exists because Prisma's `mode: "insensitive"` is a PostgreSQL-only filter:
+  /// it does not compile for SQLite, and MySQL's behaviour depends on the
+  /// column collation instead. Searching a pre-normalized column is the only
+  /// way to get identical, case-insensitive matching on all three dialects
+  /// without dialect-specific query code (§3).
+  searchName String  @default("") @map("search_name")
+  game       String? // "Magic", "Pokemon"; null for non-TCG goods
+  setName    String? @map("set_name")
+  imageUrl   String? @map("image_url")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -61,6 +71,7 @@ model CatalogItem {
   skus         Sku[]
 
   @@index([name])
+  @@index([searchName])
   @@index([game, setName])
   @@map("catalog_items")
 }

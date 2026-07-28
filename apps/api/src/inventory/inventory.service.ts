@@ -107,6 +107,66 @@ export interface AllocationWrite {
 
 type ItemWithAllocations = Prisma.InventoryItemGetPayload<{ include: { allocations: true } }>;
 
+export interface InventoryQuery {
+  search?: string;
+  game?: string;
+  condition?: string;
+  channelInstanceId?: string;
+  hasUnallocated?: boolean;
+  page?: number;
+  pageSize?: number;
+  sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';
+  sortDir?: 'asc' | 'desc';
+}
+
+export type InventoryRow = LedgerSnapshot & {
+  name: string;
+  game: string | null;
+  setName: string | null;
+  condition: string;
+  printing: string;
+  language: string;
+};
+
+export interface InventoryPage {
+  items: InventoryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}
+
+export interface CreateInventoryInput {
+  name: string;
+  game?: string;
+  setName?: string;
+  condition: string;
+  printing?: string;
+  language?: string;
+  quantityOnHand?: number;
+  costBasis?: number;
+  externalSource?: string;
+  externalId?: string;
+  actorUserId?: string;
+}
+
+/** Sort keys are whitelisted by the DTO, so this only has to map them. */
+function buildOrderBy(
+  sortBy: NonNullable<InventoryQuery['sortBy']>,
+  sortDir: 'asc' | 'desc',
+): Prisma.InventoryItemOrderByWithRelationInput {
+  switch (sortBy) {
+    case 'name':
+      return { sku: { catalogItem: { name: sortDir } } };
+    case 'condition':
+      return { sku: { condition: sortDir } };
+    case 'quantityOnHand':
+      return { quantityOnHand: sortDir };
+    case 'updatedAt':
+      return { updatedAt: sortDir };
+  }
+}
+
 @Injectable()
 export class InventoryService {
   private readonly logger = new Logger(InventoryService.name);
@@ -158,6 +218,117 @@ export class InventoryService {
       issues: validateLedger(ledger),
       listed: Object.fromEntries(computeAllListedQuantities(ledger)),
     };
+  }
+
+  /**
+   * Server-side paginated, filtered and sorted inventory browse (§7).
+   *
+   * Free-text search runs against CatalogItem.searchName, a lower-cased copy
+   * maintained on write, rather than Prisma's `mode: "insensitive"` — that
+   * filter is PostgreSQL-only and would not compile for SQLite.
+   */
+  async listInventory(query: InventoryQuery): Promise<InventoryPage> {
+    const page = Math.max(1, query.page ?? 1);
+    const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 50));
+
+    const where: Prisma.InventoryItemWhereInput = {
+      sku: {
+        ...(query.condition ? { condition: query.condition } : {}),
+        catalogItem: {
+          ...(query.search ? { searchName: { contains: query.search.trim().toLowerCase() } } : {}),
+          ...(query.game ? { game: query.game } : {}),
+        },
+      },
+      ...(query.channelInstanceId
+        ? { allocations: { some: { channelInstanceId: query.channelInstanceId } } }
+        : {}),
+    };
+
+    const orderBy = buildOrderBy(query.sortBy ?? 'name', query.sortDir ?? 'asc');
+
+    const [total, rows] = await Promise.all([
+      this.prisma.inventoryItem.count({ where }),
+      this.prisma.inventoryItem.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { allocations: true, sku: { include: { catalogItem: true } } },
+      }),
+    ]);
+
+    let items = rows.map((row) => ({
+      ...toSnapshot(row),
+      name: row.sku.catalogItem.name,
+      game: row.sku.catalogItem.game,
+      setName: row.sku.catalogItem.setName,
+      condition: row.sku.condition,
+      printing: row.sku.printing,
+      language: row.sku.language,
+    }));
+
+    // `pool` is derived rather than stored, so it cannot be filtered in SQL
+    // without duplicating the allocation maths in a query. Applied after the
+    // page is fetched, which means the filter narrows the current page rather
+    // than the result set — acceptable while it is a coarse toggle, but it
+    // must move into the query if it ever becomes a primary browse axis.
+    if (query.hasUnallocated) {
+      items = items.filter((item) => item.pool > 0);
+    }
+
+    return { items, total, page, pageSize, pageCount: Math.ceil(total / pageSize) };
+  }
+
+  /** Create a catalog item, SKU and inventory row together. */
+  async createInventoryItem(input: CreateInventoryInput): Promise<LedgerSnapshot> {
+    const name = input.name.trim();
+    const printing = input.printing?.trim() || 'NORMAL';
+    const language = input.language?.trim() || 'EN';
+
+    const item = await this.prisma.$transaction(async (tx) => {
+      const catalogItem = await tx.catalogItem.create({
+        data: {
+          name,
+          searchName: name.toLowerCase(),
+          game: input.game ?? null,
+          setName: input.setName ?? null,
+          ...(input.externalSource && input.externalId
+            ? {
+                externalRefs: {
+                  create: [{ source: input.externalSource, externalId: input.externalId }],
+                },
+              }
+            : {}),
+        },
+      });
+
+      const sku = await tx.sku.create({
+        data: { catalogItemId: catalogItem.id, condition: input.condition, printing, language },
+      });
+
+      return tx.inventoryItem.create({
+        data: {
+          skuId: sku.id,
+          quantityOnHand: input.quantityOnHand ?? 0,
+          costBasis: input.costBasis ?? null,
+        },
+        include: { allocations: true },
+      });
+    });
+
+    if ((input.quantityOnHand ?? 0) > 0) {
+      await this.prisma.stockMovement.create({
+        data: {
+          inventoryItemId: item.id,
+          delta: input.quantityOnHand!,
+          resultingOnHand: input.quantityOnHand!,
+          reason: 'intake',
+          actorUserId: input.actorUserId ?? null,
+        },
+      });
+    }
+
+    return toSnapshot(item);
   }
 
   // -------------------------------------------------------------------------

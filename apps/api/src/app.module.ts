@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { validateEnv } from './config/env';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { InventoryModule } from './inventory/inventory.module';
 import { HealthController } from './health/health.controller';
 
 /**
@@ -35,6 +36,7 @@ const serveStatic = existsSync(webRoot)
     }),
     PrismaModule,
     AuthModule,
+    InventoryModule,
     ...serveStatic,
   ],
   controllers: [HealthController],

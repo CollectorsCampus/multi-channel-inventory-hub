@@ -4,7 +4,11 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // Tests must not reach dist. src/testing.ts is the published contract suite
+  // and does ship; *.spec.ts files are this package's own tests and do not.
+  "exclude": ["src/**/*.spec.ts"]
 }

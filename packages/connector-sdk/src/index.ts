@@ -1,13 +1,19 @@
 /**
  * @hub/connector-sdk — the published contract every channel connector implements.
  *
- * Phase 0 ships this package as a buildable placeholder only. The `Connector`
- * interface, `Capability` union, `Ctx`/credential plumbing, and the shared
- * contract test suite are Phase 2 deliverables (TECHNICAL_DESIGN.md §5, §11).
+ * Connectors are dumb pipes. A connector translates between the core's
+ * canonical operations and one platform's interface; it never decides a
+ * quantity, never reads the ledger, and never resolves a conflict. All
+ * allocation maths lives in the core (TECHNICAL_DESIGN.md §5).
  *
- * Do not add core quantity logic here. Connectors are dumb pipes: they
- * translate between the core's canonical operations and a platform's API, and
- * never decide quantities themselves.
+ * The contract test suite is published separately from `@hub/connector-sdk/testing`
+ * so this entry point stays free of a vitest dependency.
+ *
+ * See docs/CONNECTOR_GUIDE.md.
  */
 
-export const CONNECTOR_SDK_VERSION = '0.0.0';
+export * from './capabilities';
+export * from './types';
+export * from './connector';
+
+export const CONNECTOR_SDK_VERSION = '0.1.0';

@@ -1,45 +1,97 @@
 # Connector authoring guide
 
-> **Phase 0 placeholder.** The `Connector` interface and the shared contract test suite are
-> Phase 2 deliverables. This file will become the spec for community connector authors
-> (eBay, Square, Cardmarket, …), with the contract tests doubling as its executable form.
+A connector teaches the hub how to talk to one sales channel. This guide is the
+prose; [`@hub/connector-sdk/testing`](../packages/connector-sdk/src/testing.ts) is the
+executable version, and it is the one that decides whether your connector is correct.
 
 ## The one rule
 
-**Connectors are dumb pipes. The core owns all quantity math.**
+**Connectors are dumb pipes. The core owns all quantity maths.**
 
-A connector translates between the core's canonical operations and one platform's API. It
-never decides how many units to list, never reads the ledger, and never resolves a conflict.
-If you find yourself computing a quantity inside a connector, the abstraction has been
-breached — raise it as an issue rather than working around it.
+A connector translates between the core's canonical operations and one platform's
+interface. It never decides how many units to list, never reads the ledger, and never
+resolves a conflict. Requests arrive carrying a quantity the core has already computed
+from the allocation rules — use it as given.
 
-## What a connector will implement
+If you find yourself deriving a quantity inside a connector, the abstraction has been
+breached. Raise an issue rather than working around it.
 
-See `TECHNICAL_DESIGN.md` §5 for the current interface sketch. In outline:
+## Capabilities
 
-| Area      | Methods                                                  |
-| --------- | -------------------------------------------------------- |
-| Catalog   | `searchCatalog?`                                         |
-| Outbound  | `pushListing`, `updateQuantity`, `updatePrice`, `delist` |
-| Inbound   | `verifyWebhook?`, `parseWebhook?`, `pollChanges?`        |
-| Reconcile | `fetchLiveState`                                         |
+Declare what you support; the core degrades around it. A connector without
+`orders.webhook` is automatically scheduled for `orders.poll`, and one with neither is a
+manual channel whose freshness depends on a human moving files.
 
-Three things are declared rather than assumed:
+| Capability         | Method                             | Meaning                                      |
+| ------------------ | ---------------------------------- | -------------------------------------------- |
+| `catalog.search`   | `searchCatalog`                    | Search the platform's product catalog        |
+| `listing.push`     | `pushListing`                      | Create or update a listing                   |
+| `listing.price`    | `updatePrice`                      | Change a listing's price                     |
+| `listing.quantity` | `updateQuantity`                   | Change advertised quantity                   |
+| `listing.delist`   | `delist`                           | Remove a listing                             |
+| `orders.webhook`   | `parseWebhook` (+ `verifyWebhook`) | Platform posts order events to us            |
+| `orders.poll`      | `pollChanges`                      | We poll for order events                     |
+| `reconcile`        | `fetchLiveState`                   | Fetch live state for drift detection         |
+| `listing.export`   | `exportListings`                   | Render listings to a file for manual upload  |
+| `orders.import`    | `importOrders`                     | Parse an operator-supplied order export      |
+| `inventory.import` | `importInventory`                  | Parse an inventory export for reconciliation |
 
-- **`capabilities`** — the core degrades gracefully around what you do not support. A
-  connector without `orders.webhook` is automatically scheduled for `pollChanges` instead.
-- **`configSchema`** — JSON Schema. The settings UI for your connector is generated from
-  this, so community connectors get a real config form without touching core code.
-- **Rate limits** — declared, then enforced by the core's queue layer. Do not implement
-  your own throttling or retry logic; it belongs in one place.
+Every method is optional. Declaring a capability without its method — or implementing a
+method without declaring the capability — is rejected at startup by `validateConnector`,
+because the core dispatches on capabilities and an undeclared method would silently never
+run.
 
-## Credentials
+### File-based channels are first class
 
-Credentials never appear in `config`. The core holds an encrypted credential store
-(AES-256-GCM, master key from env/KMS) and passes decrypted secrets to your connector only
-inside `Ctx`, at call time. Never persist a secret yourself, and never log one.
+The last three capabilities exist because not every marketplace has a usable API.
+TCGPlayer closed its developer programme (see [ADR 0002](adr/0002-tcgplayer-without-an-api.md)),
+so its connector renders a CSV the operator uploads and ingests the sales export they get
+back. A connector declaring only file capabilities is not a degraded connector; it is a
+`manual` channel, and the core knows to present it that way and not to mistake its
+staleness for drift.
 
-## Webhook ingress
+## Rules the contract tests enforce
 
-Ingress does no work inline: verify the signature, persist the raw event, enqueue, return 200. `verifyWebhook` receives the byte-exact raw body — do not parse or re-serialize before
-verifying, or HMAC comparison will fail for reasons that are painful to debug.
+- **Verify webhook signatures.** `orders.webhook` requires `verifyWebhook`. You receive
+  the byte-exact raw body — do not parse or re-serialize before verifying, or the HMAC
+  will not match. An unverified endpoint accepts forged sales from anyone who learns the
+  URL.
+- **Idempotency keys must be deterministic.** Every event carries `externalEventId`, and
+  the same input must always produce the same key. Webhooks get redelivered and operators
+  re-upload the same export; a random key double-decrements stock. Hash the payload when
+  the platform gives you no id.
+- **Malformed input is reported, not thrown.** One bad row in a thousand-row export must
+  not discard the other 999. Return `{ records, problems }`.
+- **Money is integer cents.** Never a float, never a formatted string.
+- **Secrets stay out of `configSchema`.** Declare them in `secretFields`; the core stores
+  them encrypted and hands them to you in `Ctx.secrets` at call time only. Never persist
+  or log them.
+- **Do not invent reconciliation state.** Omit listings you cannot find rather than
+  reporting quantity 0 for them — a fabricated zero reads as drift and raises a spurious
+  alert.
+
+## Rate limiting and retries
+
+Declare `rateLimit` and let the core's queue enforce it. Retries, backoff and per-channel
+limits all live in the core (§5) so they behave identically for every connector. Do not
+implement your own.
+
+## Running the contract suite
+
+```ts
+import { runConnectorContractTests } from '@hub/connector-sdk/testing';
+
+runConnectorContractTests({
+  connector: makeMyConnector(mockPlatformClient),
+  makeCtx: () => ({ channelInstanceId: 'test', config: {}, secrets: {}, logger }),
+  validWebhook: { headers, rawBody }, // if you do webhooks
+  validOrderExport: { filename, content }, // if you do file import
+});
+```
+
+Run it against a **mock** platform, never a live seller account. That is what allowed the
+TCGPlayer connector to be built and verified while its API application sat unapproved, and
+it is why running the suite costs nothing and risks nothing.
+
+Only your declared capabilities are exercised. A connector that supports two things well is
+not penalised against one that supports six badly.

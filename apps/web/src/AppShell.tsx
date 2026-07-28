@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useCurrentUser, useLogout } from './auth';
+import { useOpenAlertCount } from './api/sync';
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { data: user } = useCurrentUser();
   const logout = useLogout();
+  const openAlerts = useOpenAlertCount().data?.open ?? 0;
 
   return (
     <div className="app">
@@ -19,6 +21,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               page explains the restriction if they lack the role (§8: the UI
               reflects permissions, it never enforces them). */}
           <Link to="/channels">Channels</Link>
+          <Link to="/activity">
+            Activity
+            {/* An alert nobody notices is an alert that does not work. */}
+            {openAlerts > 0 && <span className="badge">{openAlerts}</span>}
+          </Link>
         </div>
         <div className="topbar-right">
           {user && (

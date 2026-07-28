@@ -248,6 +248,67 @@ describeQueue('outbound queue round trip', () => {
       expect(alerts).toHaveLength(1);
       expect(alerts[0]).toMatchObject({ kind: 'sync_failure', status: 'open' });
     });
+
+    /**
+     * A channel with a bad token fails every push. An alert per failure would
+     * bury everything else and train an operator to ignore the inbox — the one
+     * outcome alerting cannot survive. Each failure is still logged
+     * individually; the alert only says "this channel is broken".
+     */
+    it('keeps one open alert per channel however many pushes fail', async () => {
+      const item = await seedItem(5);
+      const channel = await seedChannel();
+      const { ledger } = await inventory.upsertAllocation(item.id, {
+        channelInstanceId: channel.id,
+        mode: 'pooled',
+        maxQuantity: null,
+      });
+      const allocationId = ledger.allocations[0]!.id;
+
+      const failing = fakeConnector(async () => {
+        throw new Error('401 Unauthorized');
+      });
+
+      await runOneJob(failing, allocationId, channel.id, { attempts: 1 });
+      await runOneJob(failing, allocationId, channel.id, { attempts: 1 });
+      await runOneJob(failing, allocationId, channel.id, { attempts: 1 });
+
+      expect(await prisma.alert.count({ where: { kind: 'sync_failure' } })).toBe(1);
+
+      // Every attempt is still individually recorded in the log.
+      expect(await prisma.syncEvent.count({ where: { outcome: 'error' } })).toBe(3);
+    });
+
+    it('refreshes the open alert with the latest reason', async () => {
+      const item = await seedItem(5);
+      const channel = await seedChannel();
+      const { ledger } = await inventory.upsertAllocation(item.id, {
+        channelInstanceId: channel.id,
+        mode: 'pooled',
+        maxQuantity: null,
+      });
+      const allocationId = ledger.allocations[0]!.id;
+
+      await runOneJob(
+        fakeConnector(async () => {
+          throw new Error('first reason');
+        }),
+        allocationId,
+        channel.id,
+        { attempts: 1 },
+      );
+      await runOneJob(
+        fakeConnector(async () => {
+          throw new Error('second reason');
+        }),
+        allocationId,
+        channel.id,
+        { attempts: 1 },
+      );
+
+      const alert = await prisma.alert.findFirstOrThrow({ where: { kind: 'sync_failure' } });
+      expect(alert.detail).toMatch(/second reason/);
+    });
   });
 
   // -------------------------------------------------------------------------

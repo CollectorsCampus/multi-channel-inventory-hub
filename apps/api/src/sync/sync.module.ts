@@ -4,6 +4,8 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { SyncEventService } from './sync-event.service';
 import { OutboundWorker } from './outbound.worker';
 import { InboundWorker } from './inbound.worker';
+import { SyncActivityService } from './sync-activity.service';
+import { SyncActivityController } from './sync-activity.controller';
 
 /**
  * The consuming half of the sync engine.
@@ -14,7 +16,8 @@ import { InboundWorker } from './inbound.worker';
  */
 @Module({
   imports: [ConnectorsModule, InventoryModule],
-  providers: [SyncEventService, OutboundWorker, InboundWorker],
+  controllers: [SyncActivityController],
+  providers: [SyncEventService, SyncActivityService, OutboundWorker, InboundWorker],
   exports: [SyncEventService],
 })
 export class SyncModule {}

@@ -13,6 +13,7 @@ import {
   type Ledger,
 } from '../api/inventory';
 import { STOCK_MOVEMENT_REASONS } from '../constants';
+import { useSyncEvents } from '../api/sync';
 
 /**
  * Item detail with the allocation editor (§7).
@@ -44,7 +45,43 @@ export function ItemDetailPage() {
       <LedgerSummary ledger={ledger} />
       <QuantityControls ledger={ledger} />
       <AllocationEditor ledger={ledger} />
+      <ItemSyncHistory ledger={ledger} />
     </section>
+  );
+}
+
+/**
+ * This item's own sync history (§7).
+ *
+ * Sync events are keyed by allocation, not by inventory item, so the query is
+ * scoped to this item's allocation ids. An item with no allocations has no
+ * history by definition and the panel stays out of the way.
+ */
+function ItemSyncHistory({ ledger }: { ledger: Ledger }) {
+  const allocationIds = ledger.allocations.map((a) => a.id);
+  const events = useSyncEvents({
+    entityIds: allocationIds,
+    pageSize: 10,
+    enabled: allocationIds.length > 0,
+  });
+
+  if (allocationIds.length === 0) return null;
+
+  return (
+    <div className="panel">
+      <h2>Sync history</h2>
+
+      {events.data?.items.length === 0 && <p className="muted">Nothing pushed to a channel yet.</p>}
+
+      {events.data?.items.map((event) => (
+        <p key={event.id} className="muted">
+          <span className={`chip outcome-${event.outcome}`}>{event.outcome}</span>{' '}
+          {new Date(event.ts).toLocaleString()} · {event.direction} {event.operation}
+          {event.channelName ? ` · ${event.channelName}` : ''}
+          {event.detail ? ` — ${event.detail}` : ''}
+        </p>
+      ))}
+    </div>
   );
 }
 

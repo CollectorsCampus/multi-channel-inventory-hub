@@ -238,6 +238,30 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
       data: { status: 'error', lastError: message.slice(0, 1000) },
     });
 
+    // One open alert per channel, not one per failed push.
+    //
+    // A channel with a bad token fails every push, and an alert each time
+    // would bury everything else and train an operator to ignore the inbox —
+    // which is the one outcome alerting cannot survive. Every individual
+    // failure is already in the sync log with its own detail; the alert only
+    // has to say "this channel is broken", and be refreshed with the latest
+    // reason while it stays broken.
+    const existing = await this.prisma.alert.findFirst({
+      where: { kind: 'sync_failure', channelInstanceId, status: 'open' },
+      select: { id: true },
+    });
+
+    if (existing) {
+      await this.prisma.alert.update({
+        where: { id: existing.id },
+        data: {
+          title: `Could not push ${operation} to the channel`,
+          detail: message.slice(0, 2000),
+        },
+      });
+      return;
+    }
+
     await this.prisma.alert.create({
       data: {
         kind: 'sync_failure',

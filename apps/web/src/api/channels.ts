@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from './client';
+import { ApiError, apiFetch } from './client';
 import type { JsonSchema } from '../components/SchemaForm';
 
 export interface ConnectorSummary {
@@ -88,6 +88,126 @@ export function useDeleteChannel() {
   return useChannelMutation((id: string) =>
     apiFetch<void>(`/channels/${id}`, { method: 'DELETE' }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// File transport (ADR 0002)
+// ---------------------------------------------------------------------------
+
+export type ImportKind = 'orders' | 'inventory';
+
+export interface ImportProblem {
+  line?: number;
+  message: string;
+}
+
+export interface ImportSummary {
+  kind: ImportKind;
+  filename: string;
+  recordCount: number;
+  problems: ImportProblem[];
+  duplicate: boolean;
+  queued: boolean;
+  differences?: Array<{
+    externalListingId: string;
+    platformQuantity: number;
+    believedQuantity: number;
+  }>;
+  unmappedCount?: number;
+}
+
+export interface ExportResult {
+  filename: string;
+  /** Allocations on this channel, mapped or not. */
+  listings: number;
+  /** Of those, the ones with no platform id, which the file cannot cover. */
+  unmapped: number;
+}
+
+/**
+ * Download a channel's export and hand it to the browser.
+ *
+ * Fetched rather than linked, for two reasons: a plain `<a href>` cannot send
+ * the session cookie policy this client uses, and the counts the operator needs
+ * — how many listings the file covers, and how many it could not — come back in
+ * response headers a link never exposes.
+ */
+export async function downloadChannelExport(channelId: string): Promise<ExportResult> {
+  const response = await fetch(`/api/channels/${channelId}/export`, {
+    credentials: 'same-origin',
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => undefined);
+    const message = (payload as { message?: string } | undefined)?.message;
+    throw new ApiError(response.status, message ?? `Export failed (${response.status})`, payload);
+  }
+
+  const blob = await response.blob();
+  const filename =
+    filenameFromDisposition(response.headers.get('content-disposition')) ?? 'export.csv';
+
+  // Synthesised anchor rather than navigation: navigating away would tear down
+  // the page while the operator is mid-task.
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+
+  return {
+    filename,
+    listings: Number(response.headers.get('x-listing-count') ?? 0),
+    unmapped: Number(response.headers.get('x-unmapped-count') ?? 0),
+  };
+}
+
+/**
+ * Upload a file exported from the platform.
+ *
+ * The body is the raw file as `text/csv`. `kind` is stated rather than sniffed
+ * because the two imports have very different consequences — one records sales
+ * and moves stock, the other only reports — and the server verifies the file
+ * really is the one claimed.
+ */
+export function uploadChannelFile(
+  channelId: string,
+  kind: ImportKind,
+  file: File,
+): Promise<ImportSummary> {
+  const query = new URLSearchParams({ kind, filename: file.name });
+  return apiFetch<ImportSummary>(`/channels/${channelId}/import?${query}`, {
+    method: 'POST',
+    // Set explicitly: an OS may report a .csv as application/vnd.ms-excel, and
+    // the server only parses text/csv.
+    headers: { 'Content-Type': 'text/csv' },
+    body: file,
+  });
+}
+
+export function useExportChannel() {
+  return useMutation({ mutationFn: (channelId: string) => downloadChannelExport(channelId) });
+}
+
+export function useImportChannelFile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, kind, file }: { id: string; kind: ImportKind; file: File }) =>
+      uploadChannelFile(id, kind, file),
+    // An inventory import stamps lastReconciledAt, and an orders import will
+    // move allocation counts once its jobs run.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: channelKeys.list }),
+  });
+}
+
+function filenameFromDisposition(header: string | null): string | undefined {
+  if (!header) return undefined;
+  const match = /filename="?([^";]+)"?/i.exec(header);
+  return match?.[1];
 }
 
 /** Plain-language description of how current a channel's data can be. */

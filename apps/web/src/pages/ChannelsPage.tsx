@@ -1,13 +1,17 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   describeSyncMode,
   useChannels,
   useConnectors,
   useCreateChannel,
   useDeleteChannel,
+  useExportChannel,
+  useImportChannelFile,
   useUpdateChannel,
   type Channel,
   type ConnectorSummary,
+  type ImportKind,
+  type ImportSummary,
 } from '../api/channels';
 import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
@@ -228,6 +232,8 @@ function ChannelCard({ channel }: { channel: Channel }) {
         </p>
       )}
 
+      <FileTransport channel={channel} />
+
       {editing && connector ? (
         <form
           onSubmit={(e) => {
@@ -313,6 +319,237 @@ function ChannelCard({ channel }: { channel: Channel }) {
       )}
 
       {remove.isError && <FormError error={remove.error as Error} />}
+    </div>
+  );
+}
+
+/**
+ * The manual sync loop for a file-based channel (ADR 0002).
+ *
+ * A channel with no usable API still has a sync loop; the operator is the
+ * transport. This is deliberately the most explanatory part of the page,
+ * because unlike a webhook — which either fires or does not — a file round trip
+ * only works if someone knows the order to do it in and how often.
+ *
+ * Rendered from declared capabilities, not from the connector key. A community
+ * connector for any marketplace without an API gets this UI for free.
+ */
+function FileTransport({ channel }: { channel: Channel }) {
+  const canExport = channel.capabilities.includes('listing.export');
+  const canImportOrders = channel.capabilities.includes('orders.import');
+  const canImportInventory = channel.capabilities.includes('inventory.import');
+
+  const exportFile = useExportChannel();
+  const importFile = useImportChannelFile();
+
+  const [summary, setSummary] = useState<ImportSummary | null>(null);
+
+  if (!canExport && !canImportOrders && !canImportInventory) return null;
+
+  return (
+    <div className="file-transport">
+      <h3>Manual sync</h3>
+      <p className="muted">
+        This channel has no API, so stock moves by file. Upload the sales export{' '}
+        <strong>before</strong> you ship — a pull sheet only lists orders still awaiting fulfilment,
+        so anything already shipped has dropped off it and will never be recorded. Re-uploading the
+        same file is always safe.
+      </p>
+
+      <div className="inline-form">
+        {canExport && (
+          <button
+            type="button"
+            onClick={() => {
+              setSummary(null);
+              exportFile.mutate(channel.id);
+            }}
+            disabled={exportFile.isPending}
+          >
+            {exportFile.isPending ? 'Preparing…' : 'Download listings'}
+          </button>
+        )}
+
+        {canImportOrders && (
+          <UploadButton
+            label="Upload sales export"
+            kind="orders"
+            channelId={channel.id}
+            pending={importFile.isPending}
+            onUpload={(args) =>
+              importFile.mutate(args, { onSuccess: setSummary, onError: () => setSummary(null) })
+            }
+          />
+        )}
+
+        {canImportInventory && (
+          <UploadButton
+            label="Upload inventory export"
+            kind="inventory"
+            channelId={channel.id}
+            pending={importFile.isPending}
+            onUpload={(args) =>
+              importFile.mutate(args, { onSuccess: setSummary, onError: () => setSummary(null) })
+            }
+          />
+        )}
+      </div>
+
+      {exportFile.isError && <FormError error={exportFile.error as Error} />}
+      {importFile.isError && <FormError error={importFile.error as Error} />}
+
+      {exportFile.isSuccess && exportFile.data && (
+        <p className="field-hint">
+          Downloaded <code>{exportFile.data.filename}</code> — {exportFile.data.listings} allocation
+          {exportFile.data.listings === 1 ? '' : 's'} on this channel.
+          {exportFile.data.unmapped > 0 && (
+            <>
+              {' '}
+              <strong>
+                {exportFile.data.unmapped} not included: no listing id on this platform yet.
+              </strong>{' '}
+              Create those listings on the platform, then paste their ids onto the allocations —
+              matching by name would be a guess about which printing you meant.
+            </>
+          )}
+        </p>
+      )}
+
+      {summary && <ImportResult summary={summary} />}
+    </div>
+  );
+}
+
+function UploadButton({
+  label,
+  kind,
+  channelId,
+  pending,
+  onUpload,
+}: {
+  label: string;
+  kind: ImportKind;
+  channelId: string;
+  pending: boolean;
+  onUpload: (args: { id: string; kind: ImportKind; file: File }) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+
+  return (
+    <>
+      <button
+        type="button"
+        className="ghost"
+        onClick={() => input.current?.click()}
+        disabled={pending}
+      >
+        {pending ? 'Reading…' : label}
+      </button>
+      <input
+        ref={input}
+        type="file"
+        accept=".csv,text/csv"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          // Reset first: picking the same file twice fires no change event
+          // otherwise, and re-uploading is a thing operators legitimately do.
+          event.target.value = '';
+          if (file) onUpload({ id: channelId, kind, file });
+        }}
+      />
+    </>
+  );
+}
+
+/**
+ * What the upload actually did.
+ *
+ * The two kinds mean different things and are not collapsed into one message:
+ * an orders import moves stock, an inventory import only reports. Saying so
+ * plainly is the difference between an operator trusting this loop and quietly
+ * double-checking everything by hand.
+ */
+function ImportResult({ summary }: { summary: ImportSummary }) {
+  const isOrders = summary.kind === 'orders';
+
+  return (
+    <div className="import-result">
+      {summary.duplicate ? (
+        <p className="field-hint">
+          <strong>Already uploaded.</strong> This exact file has been processed before, so nothing
+          was recorded twice.
+        </p>
+      ) : isOrders ? (
+        <p className="field-hint">
+          {summary.queued ? (
+            <>
+              <strong>
+                {summary.recordCount} sale{summary.recordCount === 1 ? '' : 's'} queued
+              </strong>{' '}
+              from <code>{summary.filename}</code>. Stock updates in the background; sales already
+              recorded are skipped.
+            </>
+          ) : (
+            <>
+              Nothing was recorded from <code>{summary.filename}</code>.
+            </>
+          )}
+        </p>
+      ) : (
+        <p className="field-hint">
+          Read {summary.recordCount} listing{summary.recordCount === 1 ? '' : 's'} from{' '}
+          <code>{summary.filename}</code>.{' '}
+          {summary.unmappedCount ? `${summary.unmappedCount} are not managed here. ` : ''}
+          <strong>Nothing was changed</strong> — inventory exports are a report until reconciliation
+          ships.
+        </p>
+      )}
+
+      {summary.differences && summary.differences.length > 0 && (
+        <details>
+          <summary>
+            {summary.differences.length} listing
+            {summary.differences.length === 1 ? '' : 's'} differ from our records
+          </summary>
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Listing</th>
+                <th>On the platform</th>
+                <th>We believe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.differences.slice(0, 50).map((row) => (
+                <tr key={row.externalListingId}>
+                  <td>
+                    <code>{row.externalListingId}</code>
+                  </td>
+                  <td>{row.platformQuantity}</td>
+                  <td>{row.believedQuantity}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+
+      {summary.problems.length > 0 && (
+        <details>
+          <summary>
+            {summary.problems.length} problem{summary.problems.length === 1 ? '' : 's'} in this file
+          </summary>
+          <ul className="error">
+            {summary.problems.slice(0, 50).map((problem, index) => (
+              <li key={`${problem.line ?? 'file'}-${index}`}>
+                {problem.line ? `Line ${problem.line}: ` : ''}
+                {problem.message}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

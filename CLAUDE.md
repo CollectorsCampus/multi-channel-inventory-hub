@@ -12,29 +12,53 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 
 ## Where things stand
 
-| Phase | Scope                                                                   | Status                      |
-| ----- | ----------------------------------------------------------------------- | --------------------------- |
-| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                        |
-| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                        |
-| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                        |
-| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                        |
-| 4     | TCGPlayer file-based connector                                          | **In progress** — see below |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Not started                 |
+| Phase | Scope                                                                   | Status      |
+| ----- | ----------------------------------------------------------------------- | ----------- |
+| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done        |
+| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done        |
+| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done        |
+| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done        |
+| 4     | TCGPlayer file-based connector                                          | Done        |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Not started |
 
-`main` is green: **281 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **407 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
-### Phase 4 is parked mid-flight
+### What Phase 4 actually shipped
 
-Branch **`phase-4-tcgplayer-wip`** holds an RFC 4180 CSV codec and a TCGPlayer connector
-skeleton. It compiles but is **not wired up**: `index.ts` still exports only the key, there
-are no tests, it is not in `BUNDLED_CONNECTORS`, and the core has no endpoints or UI for
-file export/import.
+`packages/connector-tcgplayer` is registered in `BUNDLED_CONNECTORS` and declares
+`listing.export`, `orders.import` and `inventory.import` — a `manual` channel, with no
+credentials, because there is nothing to authenticate against (ADR 0002).
 
-**The skeleton predates knowing the real formats and needs reworking against them.** It
-resolves columns through operator-configurable aliases, which was hedging against not
-knowing the headers. The headers are now known (below), so that configuration surface
-should be dropped in favour of a fixed header set per file type with a short alias list,
-still failing loudly on anything unrecognised.
+- **`condition.ts`** splits and rebuilds TCGPlayer's four-in-one `Condition` string. It is
+  the exact inverse of itself across the whole vocabulary, pinned by a cross-product test.
+- **`formats.ts`** holds a fixed header set per file type. The old branch resolved columns
+  through operator-editable aliases; that surface is gone, because it let someone point the
+  quantity column at a price column and silently rewrite their own stock.
+- **Core file transport** is `ChannelFilesService` plus `GET /channels/:id/export` and
+  `POST /channels/:id/import?kind=orders|inventory`. Uploads arrive as a raw `text/csv`
+  body — `bootstrap.ts` registers the content-type parser, and `test/boot.spec.ts` guards
+  it, because Fastify answers 415 in the router before any code of ours runs.
+- **The channel card** renders the round trip from declared capabilities, so any future
+  file-based connector gets the UI for free.
+
+The abandoned `phase-4-tcgplayer-wip` branch is superseded; only its CSV codec survived.
+
+**Two things about `Sku` and the export are compromises, not designs — read before
+extending:**
+
+1. **Our model has three SKU fields, TCGPlayer packs four dimensions.** `Sku` is
+   `condition` + `printing` + `language`; TCGPlayer's _edition_ ("1st Edition",
+   "Unlimited") has no column. Edition and finish therefore share `printing` as a composite
+   token — `HOLOFOIL`, `1ST_EDITION_HOLOFOIL`, `UNLIMITED_HOLOFOIL`. Lossless and
+   reversible, but a real `edition` column would mean changing `Sku`'s natural key, which
+   was too large a change to make mid-phase.
+2. **`Total Quantity` vs `Add to Quantity` on _upload_ is unverified.** Both columns are
+   documented below as they appear in an export; which one TCGPlayer acts on when a file is
+   uploaded back is not known. The export writes the desired quantity to `Total Quantity`
+   and a literal `0` to `Add to Quantity` — a no-op under the additive reading, correct
+   under the absolute one. Worst case the export changes nothing; it cannot overstate
+   stock. **Confirm this against a real Pro account before anyone relies on the outbound
+   half.**
 
 ## TCGPlayer file formats (verified against a real Pro account, 2026-07-28)
 
@@ -75,14 +99,21 @@ Facts that are not guessable from the headers:
   pricing export, i.e. one shared id space.
 - **`Order Quantity` is not a quantity.** It is `<order#>:<qty>`, pipe-separated across
   orders: `AAAA-1111-AAAA:6 | AAAA-2222-BBBB:2`. This is what makes `orders.import`
-  possible at all, and it gives a stable idempotency key: `hash(order# + skuId)`.
-  Verified that `Quantity` equals the sum of the `:N` parts in every row.
+  possible at all, and it gives a stable idempotency key: `hash(order# + skuId)` —
+  **deliberately excluding the quantity**, because part-shipping an order shrinks it on the
+  next download and a key including it would read the same sale as a new one.
+  Verified that `Quantity` equals the sum of the `:N` parts in every row; a row where that
+  stops holding is reported, and the per-order pairs are trusted over the total.
 - **`Condition` merges condition, edition, finish and language** into one string:
   `Near Mint Holofoil`, `Moderately Played Unlimited Holofoil`,
-  `Near Mint Holofoil - Japanese`, `Unopened`. Our model keeps these as separate fields, so
-  import must split it and export must recombine it. **Unrecognised values must be reported
-  as import problems, never guessed** — a guesser files a Japanese card as English.
-- **Real data contains an empty `Condition`.** Handle it.
+  `Near Mint Holofoil - Japanese`, `Unopened`. The grammar is
+  `<condition>[ <edition>][ <finish>][ - <language>]`. `condition.ts` splits and rebuilds
+  it; anything it does not recognise becomes an import problem naming the exact string and
+  is **never guessed** — a guesser files a Japanese card as English.
+- **Real data contains an empty `Condition`.** That is a distinct outcome from an
+  unreadable one (`absent` vs `unrecognised`) and is not reported as a problem. An
+  unreadable condition is reported but does **not** discard the row: the row's identity is
+  the SKU id, and losing a real sale is worse than flagging one.
 - **Prices carry 2 _or_ 4 decimal places** (`13.33`, `17.0000`). Parse without floats.
 - **Quantity 0 rows are normal**, not errors — 563 of 1333 in a real export. They mean
   "priced but not stocked", and reconciliation must not read them as drift.
@@ -154,6 +185,19 @@ ciphertext onto another and authenticate to the wrong platform.
 **Alerts are flags, not tallies.** One open `sync_failure` per channel, refreshed with the
 latest reason. An alert per failed push floods the inbox and trains operators to ignore it.
 
+**Uploaded files ride the webhook path.** An order import is stored as a `WebhookEvent` with
+topic `file:orders` and queued; the inbound worker parses and applies it exactly as it does
+a Shopify delivery. Per-sale idempotency, allocation lookup and oversell alerting already
+live there, and a file-specific copy of them would be a second set of bugs. The upload
+endpoint parses too, but only to answer the operator — the worker's parse is authoritative,
+the same way the outbound worker re-reads its allocation.
+
+**An inventory import writes nothing.** It reports what the platform believes against what
+we believe and stamps `lastReconciledAt`. There is no policy yet for what a difference
+_means_ — a lower platform quantity could be a missed sale, a manual edit, or stock never
+pushed — and picking one silently would be reconciliation implemented by accident. Phase 5
+owns that.
+
 ---
 
 ## Testing
@@ -202,7 +246,10 @@ Worth stating plainly, because the README is optimistic by nature:
 - **No live Shopify store.** The connector has only ever run against a mock and a fake
   domain. HMAC verification, the GraphQL shapes and the location scoping are unproven
   against the real Admin API.
-- **No live TCGPlayer export.** See Phase 4 above.
+- **No live TCGPlayer account.** The formats below were read off real exports, and the
+  connector is verified against redacted fixtures of them, but nothing has ever been
+  _uploaded_ to TCGPlayer. The unknown that matters is which quantity column their importer
+  acts on (Phase 4 above); everything inbound is exercised against the real shapes.
 - **MySQL and SQLite are not supported yet.** Only the schema is proven portable; there is
   no migration history for them (ADR 0001 §4).
 - **No reconciliation.** Drift the sync loop misses currently goes unnoticed. That is

@@ -8,6 +8,7 @@ import {
   type SyncMode,
 } from '@hub/connector-sdk';
 import { createShopifyConnector } from '@hub/connector-shopify';
+import { createTcgPlayerConnector } from '@hub/connector-tcgplayer';
 
 /**
  * Resolves a `ChannelInstance.connectorKey` to a connector implementation (§5).
@@ -119,8 +120,10 @@ export class ConnectorRegistry implements OnModuleInit {
 /**
  * The connectors shipped in the box.
  *
- * TCGPlayer joins in Phase 4 as a file-based connector — its package still
- * exports only a key, and registering a placeholder would mean validating
- * something that cannot sync (ADR 0002).
+ * Shopify syncs continuously over its Admin API. TCGPlayer cannot — its
+ * developer programme is closed to new applicants — so it ships as a file-based
+ * connector whose freshness depends on a human doing a round trip (ADR 0002).
+ * Both satisfy the same contract; that they satisfy it so differently is the
+ * point of declaring capabilities rather than assuming them.
  */
-const BUNDLED_CONNECTORS: Connector[] = [createShopifyConnector()];
+const BUNDLED_CONNECTORS: Connector[] = [createShopifyConnector(), createTcgPlayerConnector()];

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,11 +9,17 @@ import {
   Param,
   Patch,
   Post,
+  Query,
+  Req,
+  Res,
 } from '@nestjs/common';
-import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RequireRole } from '../auth/decorators';
 import { ChannelsService } from './channels.service';
+import { ChannelFilesService } from './channel-files.service';
+import { IMPORT_KINDS, type ImportKind, type ImportSummary } from './file-transport';
 
 /**
  * Channel configuration (§7).
@@ -76,7 +83,10 @@ export class UpdateChannelDto {
 @ApiTags('channels')
 @Controller('channels')
 export class ChannelsController {
-  constructor(private readonly channels: ChannelsService) {}
+  constructor(
+    private readonly channels: ChannelsService,
+    private readonly files: ChannelFilesService,
+  ) {}
 
   /**
    * Connectors available on this deployment, with the JSON Schema that drives
@@ -126,4 +136,97 @@ export class ChannelsController {
   async remove(@Param('id') id: string): Promise<void> {
     await this.channels.remove(id);
   }
+
+  // ---------------------------------------------------------------------------
+  // File transport (ADR 0002)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Download this channel's listings as a file to upload to the platform.
+   *
+   * The counts ride back in headers rather than in the body, because the body
+   * is the file. `X-Listing-Count` and `X-Unmapped-Count` let the UI say "412
+   * listings, 6 of them not covered" without a second round trip — and an
+   * operator saving the file straight to disk loses nothing they needed.
+   */
+  @Get(':id/export')
+  @RequireRole('admin')
+  @ApiOperation({ summary: "Download this channel's listings as a platform-shaped file." })
+  async exportFile(@Param('id') id: string, @Res() reply: FastifyReply): Promise<void> {
+    const { file, total, unmapped } = await this.files.exportListings(id);
+
+    await reply
+      .header('Content-Type', file.contentType)
+      // `attachment` and an explicit filename: without it the browser renders
+      // the CSV as text and the operator has nothing to upload.
+      .header('Content-Disposition', `attachment; filename="${sanitizeFilename(file.filename)}"`)
+      .header('Cache-Control', 'no-store')
+      .header('X-Listing-Count', String(total))
+      .header('X-Unmapped-Count', String(unmapped))
+      // Both are non-standard, so a cross-origin caller cannot read them unless
+      // they are named here. Same-origin is unaffected; this is for anyone
+      // scripting against the API.
+      .header('Access-Control-Expose-Headers', 'X-Listing-Count, X-Unmapped-Count')
+      .send(file.content);
+  }
+
+  /**
+   * Upload a file exported from the platform.
+   *
+   * `kind` is explicit rather than sniffed from the contents. The two imports
+   * have very different consequences — one records sales and moves stock, the
+   * other only reports — and having the operator say which they mean lets the
+   * connector *verify* the file matches, rather than guess. Upload a pull sheet
+   * as inventory and it is rejected by name.
+   *
+   * The body is the raw file, sent as `text/csv`. There is no multipart parser
+   * in this application and adding one to carry a single field would be a
+   * dependency to keep alive for no gain.
+   */
+  @Post(':id/import')
+  @RequireRole('admin')
+  @ApiOperation({ summary: 'Upload a sales or inventory export from the platform.' })
+  @ApiBody({ description: 'The raw file, as text/csv.', schema: { type: 'string' } })
+  async importFile(
+    @Param('id') id: string,
+    @Query('kind') kind: string,
+    @Query('filename') filename: string | undefined,
+    @Req() request: FastifyRequest,
+  ): Promise<ImportSummary> {
+    if (!isImportKind(kind)) {
+      throw new BadRequestException(
+        `"kind" must be one of: ${IMPORT_KINDS.join(', ')}. It says which file this is, so ` +
+          `the connector can check that it really is that file.`,
+      );
+    }
+
+    const content = request.body;
+    if (!Buffer.isBuffer(content)) {
+      throw new BadRequestException(
+        'Send the file as the request body with Content-Type: text/csv.',
+      );
+    }
+
+    return this.files.importFile(id, kind, {
+      filename: sanitizeFilename(filename ?? 'upload.csv'),
+      content,
+    });
+  }
+}
+
+function isImportKind(value: string): value is ImportKind {
+  return (IMPORT_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * Strip anything that could escape a filename.
+ *
+ * On the way out it stops a quote or newline breaking the Content-Disposition
+ * header; on the way in it stops a path separator reaching a log or a future
+ * writer. The value is decorative either way, so being aggressive costs
+ * nothing.
+ */
+function sanitizeFilename(value: string): string {
+  const cleaned = value.replace(/[^\w.\- ]+/g, '').trim();
+  return cleaned === '' ? 'upload.csv' : cleaned.slice(0, 120);
 }

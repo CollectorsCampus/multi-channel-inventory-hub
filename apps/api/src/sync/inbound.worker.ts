@@ -8,10 +8,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { UnrecoverableError, Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
-import type { NormalizedEvent, SaleEvent } from '@hub/connector-sdk';
+import type { Connector, Ctx, NormalizedEvent, SaleEvent } from '@hub/connector-sdk';
+import { decodeJsonObject } from '@hub/db';
 import { REDIS_CONNECTION } from '../queue/redis.provider';
 import { INBOUND_QUEUE, type InboundJob } from '../queue/outbound-queue.service';
 import { ChannelContextFactory } from '../connectors/channel-context.service';
+import { fileTopicKind, isFileTopic } from '../channels/file-transport';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { SyncEventService } from './sync-event.service';
@@ -76,19 +78,23 @@ export class InboundWorker implements OnModuleInit, OnModuleDestroy {
     if (record.status === 'processed') return;
 
     const { connector, ctx } = await this.channels.resolve(record.channelInstanceId);
+    const body = Buffer.from(record.body, 'utf8');
 
-    if (typeof connector.parseWebhook !== 'function') {
-      throw new UnrecoverableError(`Connector "${connector.key}" cannot parse webhooks.`);
-    }
-
+    // Two things arrive on this queue: a platform's webhook, and a file an
+    // operator uploaded for a channel with no API (ADR 0002). They differ only
+    // in how the bytes reached us, so everything past this point — idempotency,
+    // allocation lookup, oversell alerting — is shared rather than reimplemented
+    // for files.
     let events: NormalizedEvent[];
     try {
-      events = connector.parseWebhook(ctx, Buffer.from(record.body, 'utf8'));
+      events = isFileTopic(record.topic)
+        ? await this.parseUploadedFile(connector, ctx, record, body)
+        : this.parseWebhookBody(connector, ctx, body);
     } catch (error) {
       // A payload we cannot parse will never parse. Retrying wastes attempts
       // and delays the queue behind it.
       await this.markEvent(record.id, 'failed', (error as Error).message);
-      throw new UnrecoverableError(`Could not parse webhook: ${(error as Error).message}`);
+      throw new UnrecoverableError(`Could not parse inbound event: ${(error as Error).message}`);
     }
 
     for (const event of events) {
@@ -101,6 +107,55 @@ export class InboundWorker implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.markEvent(record.id, 'processed');
+  }
+
+  private parseWebhookBody(connector: Connector, ctx: Ctx, body: Buffer): NormalizedEvent[] {
+    if (typeof connector.parseWebhook !== 'function') {
+      throw new UnrecoverableError(`Connector "${connector.key}" cannot parse webhooks.`);
+    }
+    return connector.parseWebhook(ctx, body);
+  }
+
+  /**
+   * Re-parse an uploaded sales export at execution time.
+   *
+   * The upload endpoint already parsed this file to answer the operator, and
+   * this pass is the authoritative one — same reason the outbound worker
+   * re-reads its allocation instead of trusting the job payload. Parsing is
+   * pure, so the two agree; storing the parsed events instead would put a
+   * connector's output in the queue and lose the raw bytes that make a bad
+   * import diagnosable.
+   *
+   * Row-level problems are not raised here. They were reported synchronously to
+   * the operator who uploaded the file, and repeating them per retry would fill
+   * the activity log with the same complaint.
+   */
+  private async parseUploadedFile(
+    connector: Connector,
+    ctx: Ctx,
+    record: { topic: string | null; headers: string },
+    body: Buffer,
+  ): Promise<NormalizedEvent[]> {
+    const kind = fileTopicKind(record.topic);
+
+    // Only sales move the ledger. An inventory export is reported at upload
+    // time and never queued, because there is nowhere for live listing state to
+    // go until reconciliation exists (Phase 5).
+    if (kind !== 'orders') {
+      throw new UnrecoverableError(`No inbound handler for uploaded file kind "${kind}".`);
+    }
+    if (typeof connector.importOrders !== 'function') {
+      throw new UnrecoverableError(`Connector "${connector.key}" cannot import order files.`);
+    }
+
+    const filename = decodeJsonObject(record.headers).filename;
+
+    const result = await connector.importOrders(ctx, {
+      filename: typeof filename === 'string' ? filename : 'upload.csv',
+      content: body,
+    });
+
+    return result.records;
   }
 
   /**

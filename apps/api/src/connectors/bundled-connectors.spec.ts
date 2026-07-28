@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { validateConnector, connectorSyncMode, type Connector } from '@hub/connector-sdk';
 import { createShopifyConnector } from '@hub/connector-shopify';
+import { TCG_CONDITIONS, createTcgPlayerConnector } from '@hub/connector-tcgplayer';
+import { SKU_CONDITIONS } from '@hub/db';
 import { ConnectorRegistry } from './connector-registry.service';
 
 /**
@@ -12,7 +14,10 @@ import { ConnectorRegistry } from './connector-registry.service';
  * why.
  */
 
-const BUNDLED: Array<[string, () => Connector]> = [['shopify', () => createShopifyConnector()]];
+const BUNDLED: Array<[string, () => Connector]> = [
+  ['shopify', () => createShopifyConnector()],
+  ['tcgplayer', () => createTcgPlayerConnector()],
+];
 
 describe.each(BUNDLED)('bundled connector: %s', (_name, make) => {
   it('passes SDK validation', () => {
@@ -56,5 +61,56 @@ describe('Shopify connector registration', () => {
     expect(registry.get('shopify').displayName).toBe('Shopify');
     expect(registry.supports('shopify', 'orders.webhook')).toBe(true);
     expect(registry.supports('shopify', 'orders.import')).toBe(false);
+  });
+});
+
+describe('TCGPlayer connector registration', () => {
+  it('is a manual channel, since a human moves every byte', () => {
+    // ADR 0002: no API access, so its data is only as fresh as the last file
+    // round trip. The UI must not present it as live, and reconciliation must
+    // not read that staleness as drift.
+    expect(connectorSyncMode(createTcgPlayerConnector())).toBe('manual');
+  });
+
+  it('needs no credentials, because there is nothing to authenticate against', () => {
+    // A connector declaring secrets it cannot use would make the channel look
+    // permanently unconnected in the UI.
+    expect(createTcgPlayerConnector().secretFields).toEqual([]);
+  });
+
+  it('declares all three file capabilities', () => {
+    const registry = new ConnectorRegistry();
+    registry.register(createTcgPlayerConnector());
+
+    expect(registry.supports('tcgplayer', 'listing.export')).toBe(true);
+    expect(registry.supports('tcgplayer', 'orders.import')).toBe(true);
+    expect(registry.supports('tcgplayer', 'inventory.import')).toBe(true);
+    expect(registry.supports('tcgplayer', 'orders.webhook')).toBe(false);
+    expect(registry.supports('tcgplayer', 'listing.quantity')).toBe(false);
+  });
+
+  /**
+   * The connector defines its own condition vocabulary because connectors do
+   * not depend on the database package — they translate, they do not persist.
+   * This is the seam where that duplication would go wrong, and `apps/api` is
+   * the only place that can see both sides.
+   */
+  it('speaks conditions the database actually accepts', () => {
+    for (const condition of TCG_CONDITIONS) {
+      expect(SKU_CONDITIONS, `"${condition}" is not a valid Sku.condition`).toContain(condition);
+    }
+  });
+
+  it('registers alongside Shopify without a key collision', () => {
+    const registry = new ConnectorRegistry();
+    registry.register(createShopifyConnector());
+    registry.register(createTcgPlayerConnector());
+
+    expect(
+      registry
+        .list()
+        .map((c) => c.key)
+        .sort(),
+    ).toEqual(['shopify', 'tcgplayer']);
   });
 });

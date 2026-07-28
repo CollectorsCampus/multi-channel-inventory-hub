@@ -179,6 +179,53 @@ pre.payload {
   color: var(--text);
 }
 
+/* Manual sync for file-based channels (ADR 0002). Set apart from the rest of
+   the card because it is an action the operator performs, not state they read. */
+.file-transport {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.file-transport h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.import-result {
+  margin-top: 0.75rem;
+}
+
+.import-result details {
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.import-result summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.import-result ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
+/* A difference table sits inside a card, so it drops the full-width chrome the
+   browse tables carry. */
+table.compact {
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+}
+
+table.compact th,
+table.compact td {
+  padding: 0.3rem 0.5rem;
+}
+
 .schema-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));

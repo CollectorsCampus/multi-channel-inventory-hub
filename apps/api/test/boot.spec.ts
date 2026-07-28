@@ -163,6 +163,29 @@ describe('HTTP application', () => {
     });
   });
 
+  /**
+   * File-based channels upload a marketplace export as a raw `text/csv` body
+   * (ADR 0002). Fastify answers 415 for a content type it has no parser for,
+   * and it does so in the router — before the guard, before the controller —
+   * so nothing short of booting the app catches a missing parser. Exactly the
+   * failure mode this file exists for.
+   */
+  describe('CSV upload transport', () => {
+    it('parses a text/csv body instead of rejecting the media type', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/channels/some-channel/import?kind=orders',
+        headers: { 'content-type': 'text/csv' },
+        payload: 'Product Line,SkuId\n"Magic","1"\n',
+      });
+
+      // 401 is the correct answer here — the route is admin-only and there is
+      // no session. What matters is that it got as far as the guard.
+      expect(res.statusCode).not.toBe(415);
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
   it('requires a CSRF token on cookie-authenticated writes', async () => {
     const res = await app.inject({
       method: 'POST',

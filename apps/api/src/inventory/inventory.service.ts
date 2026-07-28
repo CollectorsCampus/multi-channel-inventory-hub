@@ -138,6 +138,32 @@ export interface InventoryPage {
   pageCount: number;
 }
 
+/**
+ * One channel's view of one allocation, shaped for a connector's
+ * `exportListings`.
+ *
+ * `quantity` is the *desired* listed quantity — what the ledger says this
+ * channel should be advertising — not `listedQuantity`, which records what we
+ * believe it is advertising now. Exporting the latter would push our own stale
+ * guess back at the channel.
+ */
+export interface ChannelListing {
+  allocationId: string;
+  externalListingId: string | null;
+  quantity: number;
+  price: number | null;
+  currency: string;
+  sku: {
+    skuId: string;
+    name: string;
+    condition: string;
+    printing: string;
+    language: string;
+    game?: string;
+    setName?: string;
+  };
+}
+
 export interface CreateInventoryInput {
   name: string;
   game?: string;
@@ -293,6 +319,59 @@ export class InventoryService {
     }
 
     return { items, total, page, pageSize, pageCount: Math.ceil(total / pageSize) };
+  }
+
+  /**
+   * Every listing one channel should be advertising, for a file export
+   * (ADR 0002).
+   *
+   * Goes through the same `toSnapshot` the rest of this service uses rather
+   * than deriving quantities in a query. The allocation maths has one authority
+   * (§4) and a second implementation of it — even a read-only one — is how the
+   * two quietly stop agreeing.
+   *
+   * Unpaginated by design: an export is the whole channel or it is not an
+   * export. A seller with a very large inventory pays for that in memory once,
+   * on an operation they triggered.
+   */
+  async listChannelListings(channelInstanceId: string): Promise<ChannelListing[]> {
+    const rows = await this.prisma.inventoryItem.findMany({
+      where: { allocations: { some: { channelInstanceId } } },
+      include: { allocations: true, sku: { include: { catalogItem: true } } },
+      orderBy: { id: 'asc' },
+    });
+
+    const listings: ChannelListing[] = [];
+
+    for (const row of rows) {
+      const snapshot = toSnapshot(row);
+      const allocation = snapshot.allocations.find(
+        (a) => a.channelInstanceId === channelInstanceId,
+      );
+      // Unreachable: the query selected on this allocation existing. Present
+      // because the type says it might not, and an assertion here would be a
+      // worse answer than skipping a row.
+      if (!allocation) continue;
+
+      listings.push({
+        allocationId: allocation.id,
+        externalListingId: allocation.externalListingId,
+        quantity: allocation.desiredListedQuantity,
+        price: allocation.price,
+        currency: allocation.currency,
+        sku: {
+          skuId: row.skuId,
+          name: row.sku.catalogItem.name,
+          condition: row.sku.condition,
+          printing: row.sku.printing,
+          language: row.sku.language,
+          ...(row.sku.catalogItem.game ? { game: row.sku.catalogItem.game } : {}),
+          ...(row.sku.catalogItem.setName ? { setName: row.sku.catalogItem.setName } : {}),
+        },
+      });
+    }
+
+    return listings;
   }
 
   /** Create a catalog item, SKU and inventory row together. */

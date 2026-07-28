@@ -35,6 +35,25 @@ export async function configureApp(
       : false,
   });
 
+  /**
+   * Accept a raw CSV body.
+   *
+   * File-based channels (ADR 0002) upload a marketplace export as the request
+   * body. Fastify rejects a content type it has no parser for with a 415, so
+   * without this the upload endpoint is unreachable however correct it is.
+   *
+   * `text/csv` is deliberately not one of the CORS-safelisted content types, so
+   * a cross-site POST of one triggers a preflight and never reaches the handler
+   * — the upload path inherits that protection on top of the CSRF token the
+   * auth guard already demands.
+   */
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .addContentTypeParser('text/csv', { parseAs: 'buffer' }, (_request, body, done) => {
+      done(null, body);
+    });
+
   // Health checks sit outside /api so container probes do not depend on the
   // API's versioning or prefix.
   app.setGlobalPrefix('api', { exclude: ['health/live', 'health/ready'] });

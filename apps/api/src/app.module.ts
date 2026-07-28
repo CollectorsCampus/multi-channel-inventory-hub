@@ -6,6 +6,8 @@ import { AuthModule } from './auth/auth.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ConnectorsModule } from './connectors/connectors.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { QueueModule } from './queue/queue.module';
+import { SyncModule } from './sync/sync.module';
 import { HealthController } from './health/health.controller';
 
 // Static SPA serving lives in bootstrap.ts (`serveSpa`), not here: it needs the
@@ -20,10 +22,12 @@ import { HealthController } from './health/health.controller';
       validate: validateEnv,
     }),
     PrismaModule,
+    QueueModule,
     AuthModule,
     InventoryModule,
     ConnectorsModule,
     CatalogModule,
+    SyncModule,
   ],
   controllers: [HealthController],
 })

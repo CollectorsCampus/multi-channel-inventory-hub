@@ -4,9 +4,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@hub/db';
 import { PrismaService } from '../prisma/prisma.service';
+import { OutboundQueue } from '../queue/outbound-queue.service';
 import {
   applySale,
   computeAllListedQuantities,
@@ -171,7 +173,16 @@ function buildOrderBy(
 export class InventoryService {
   private readonly logger = new Logger(InventoryService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * `outbound` is optional so the service stays constructible without a queue.
+   * The allocation unit tests instantiate it directly against a database and
+   * have no Redis; making the dependency required would force every one of them
+   * to stand one up to test maths that has nothing to do with queues.
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly outbound?: OutboundQueue,
+  ) {}
 
   // -------------------------------------------------------------------------
   // Reads
@@ -614,6 +625,8 @@ export class InventoryService {
         allocation.listedQuantity = allocation.desiredListedQuantity;
       }
 
+      await this.enqueuePushes(changes);
+
       return { ledger, changes, conflicts: outcome.conflicts ?? [] };
     }
 
@@ -621,6 +634,47 @@ export class InventoryService {
       `Inventory item ${inventoryItemId} is being modified concurrently; ` +
         `gave up after ${MAX_ATTEMPTS} attempts.`,
     );
+  }
+
+  /**
+   * Queue an outbound push for every channel whose advertised quantity moved
+   * (§6 steps 2–3).
+   *
+   * Deliberately best-effort. A quantity change is already committed by the
+   * time this runs, and failing the operator's request because Redis was
+   * briefly unreachable would be worse than a listing that catches up at the
+   * next change or at reconciliation. The failure is logged rather than
+   * swallowed silently.
+   */
+  private async enqueuePushes(changes: ListedQuantityChange[]): Promise<void> {
+    if (!this.outbound || changes.length === 0) return;
+
+    const channelKeys = new Map<string, string>();
+
+    for (const change of changes) {
+      try {
+        let connectorKey = channelKeys.get(change.channelInstanceId);
+        if (!connectorKey) {
+          const channel = await this.prisma.channelInstance.findUnique({
+            where: { id: change.channelInstanceId },
+            select: { connectorKey: true, enabled: true },
+          });
+          if (!channel?.enabled) continue;
+          connectorKey = channel.connectorKey;
+          channelKeys.set(change.channelInstanceId, connectorKey);
+        }
+
+        await this.outbound.enqueue(connectorKey, {
+          channelInstanceId: change.channelInstanceId,
+          allocationId: change.allocationId,
+          operation: 'quantity',
+        });
+      } catch (error) {
+        this.logger.error(
+          `Could not queue push for allocation ${change.allocationId}: ${(error as Error).message}`,
+        );
+      }
+    }
   }
 
   private async syncListedQuantityCache(ledger: LedgerSnapshot): Promise<void> {

@@ -91,6 +91,9 @@ jobs:
       TEST_DATABASE_URL: postgresql://hub:hub@localhost:5432/hub_test
       DATABASE_PROVIDER: postgresql
       REDIS_URL: redis://localhost:6379
+      # Opts the queue round-trip tests in. Like TEST_DATABASE_URL, this must
+      # only ever name a throwaway instance — the suite obliterates queues.
+      TEST_REDIS_URL: redis://localhost:6379
       # Test-only values. Real deployments generate these per instance.
       CREDENTIAL_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SESSION_SECRET: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=

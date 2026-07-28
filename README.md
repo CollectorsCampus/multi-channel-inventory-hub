@@ -8,6 +8,12 @@ first — are pluggable **connectors** that stock is allocated out to. When some
 anywhere, the ledger decrements and updated quantities are pushed to every other affected
 channel, so the same card is not sold twice.
 
+> **TCGPlayer is no longer issuing API keys.** Their developer programme is closed to new
+> applicants, so the TCGPlayer connector is file-based (CSV export/import) rather than
+> continuously synced, and sellers holding a legacy key get the API path automatically.
+> Shopify is the only continuous-sync channel in v1. See
+> [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md).
+
 > **Status: Phase 0 — scaffold.** The schema, auth, container and CI are in place. There is
 > no inventory UI and no working connector yet. See [Roadmap](#roadmap).
 
@@ -135,14 +141,14 @@ Contributor rules that keep this true:
 
 ## Roadmap
 
-| Phase | Scope                                                         | Status   |
-| ----- | ------------------------------------------------------------- | -------- |
-| 0     | Monorepo, CI, Docker, local auth, schema + migrations         | **Done** |
-| 1     | Inventory CRUD, allocation invariants, browser/detail UI      | Next     |
-| 2     | Connector SDK, TCGPlayer catalog search, intake flow          |          |
-| 3     | Shopify connector (push, then webhooks), sync activity UI     |          |
-| 4     | TCGPlayer connector — _gated on their API approval_           |          |
-| 5     | Reconciliation, alerting, query console, OIDC, public release |          |
+| Phase | Scope                                                                                         | Status   |
+| ----- | --------------------------------------------------------------------------------------------- | -------- |
+| 0     | Monorepo, CI, Docker, local auth, schema + migrations                                         | **Done** |
+| 1     | Inventory CRUD, allocation invariants, browser/detail UI                                      | Next     |
+| 2     | Connector SDK (incl. file-based channels), catalog import, intake flow                        |          |
+| 3     | Shopify connector (push, then webhooks), sync activity UI                                     |          |
+| 4     | TCGPlayer connector — _file-based, see [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md)_ |          |
+| 5     | Reconciliation, alerting, query console, OIDC, public release                                 |          |
 
 ## License
 

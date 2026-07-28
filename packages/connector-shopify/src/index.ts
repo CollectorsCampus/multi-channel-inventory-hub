@@ -1,14 +1,20 @@
 /**
  * @hub/connector-shopify — Shopify Admin GraphQL connector.
  *
- * Phase 0 placeholder. Implementation lands in Phase 3: outbound push first,
- * then HMAC-verified inbound webhooks for `orders/create` and
- * `inventory_levels/update` (TECHNICAL_DESIGN.md §5, §11).
- *
- * Note for the implementer: Shopify inventory is location-scoped. This
- * connector's config must carry a single `locationId`, and v1 deliberately
- * ignores every other location on the shop — the core data model has one
- * InventoryItem per SKU with no location dimension.
+ * The only continuous-sync channel in v1 (ADR 0002).
  */
 
-export const SHOPIFY_CONNECTOR_KEY = 'shopify';
+export {
+  createShopifyConnector,
+  SHOPIFY_CONNECTOR_KEY,
+  priceToCents,
+  centsToPrice,
+} from './shopify';
+export type { ShopifyConnectorOptions } from './shopify';
+export {
+  createShopifyClient,
+  ShopifyError,
+  ShopifyTransientError,
+  SHOPIFY_API_VERSION,
+} from './client';
+export type { ShopifyClient, FetchLike } from './client';

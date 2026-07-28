@@ -1,13 +1,41 @@
 /**
- * @hub/connector-tcgplayer — TCGPlayer connector.
+ * @hub/connector-tcgplayer — TCGPlayer as a file-based channel.
  *
- * Phase 0 placeholder. Catalog search (usable pre-approval) lands in Phase 2;
- * OAuth, inventory push and order polling land in Phase 4, gated on the
- * TCGPlayer API application being approved (TECHNICAL_DESIGN.md §5, §11, §12).
+ * TCGPlayer closed its developer programme to new applicants, so there is no
+ * API to call and no credentials to obtain (ADR 0002). The connector instead
+ * renders a `MyPricing`-shaped CSV for the operator to upload to TCGPlayer Pro,
+ * and ingests the `MyPricing` and `PullSheet` exports they download back.
  *
- * Because approval is an external dependency with no controllable timeline,
- * this connector is built and verified against a mock platform via the shared
- * connector contract tests rather than against the live API.
+ * Built and verified against redacted fixtures of real exports in
+ * `test/fixtures/`, never against a live account.
  */
 
-export const TCGPLAYER_CONNECTOR_KEY = 'tcgplayer';
+export {
+  TCGPLAYER_CONNECTOR_KEY,
+  createTcgPlayerConnector,
+  formatMoney,
+  parseOrderQuantity,
+  saleKey,
+  type OrderQuantityPair,
+} from './tcgplayer';
+
+export {
+  LANGUAGE_NAMES,
+  TCG_CONDITIONS,
+  TCG_EDITIONS,
+  TCG_FINISHES,
+  formatCondition,
+  fromPrinting,
+  parseCondition,
+  toPrinting,
+  type ConditionFormat,
+  type ConditionParse,
+  type SplitCondition,
+  type TcgCondition,
+  type TcgEdition,
+  type TcgFinish,
+} from './condition';
+
+export { MY_PRICING, PULL_SHEET, type FileFormat } from './formats';
+
+export { parseCsv, parseMoneyToCents, parseQuantity, toCsv, type CsvTable } from './csv';

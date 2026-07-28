@@ -186,6 +186,24 @@ describe('HTTP application', () => {
     });
   });
 
+  /**
+   * ReconcileService is reached from two modules — the channels controller and
+   * the reconcile worker — and NestJS resolves those constructor dependencies
+   * from metadata at runtime. A type-only import anywhere on that path
+   * typechecks perfectly and then fails DI at boot, which is the whole reason
+   * this file initializes the real application.
+   */
+  it('wires the reconcile route rather than failing DI', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/channels/some-channel/reconcile',
+    });
+
+    // Admin-only with no session, so 401 is correct. A 404 would mean the
+    // route never registered; a 500 would mean the provider did not resolve.
+    expect(res.statusCode).toBe(401);
+  });
+
   it('requires a CSRF token on cookie-authenticated writes', async () => {
     const res = await app.inject({
       method: 'POST',

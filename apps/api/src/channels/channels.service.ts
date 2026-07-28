@@ -30,6 +30,8 @@ export interface ChannelSummary {
   healthDetail: string | null;
   lastPolledAt: Date | null;
   lastReconciledAt: Date | null;
+  /** Opt-in re-push when reconciliation finds the channel showing something else (§6). */
+  reconcileAutoCorrect: boolean;
   /** Present only when the connector receives webhooks. */
   webhookPath: string | null;
   allocationCount: number;
@@ -48,6 +50,7 @@ export interface UpdateChannelInput {
   enabled?: boolean;
   config?: Record<string, unknown>;
   secrets?: Record<string, string>;
+  reconcileAutoCorrect?: boolean;
 }
 
 @Injectable()
@@ -143,6 +146,9 @@ export class ChannelsService {
       data: {
         ...(input.displayName !== undefined ? { displayName: input.displayName.trim() } : {}),
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        ...(input.reconcileAutoCorrect !== undefined
+          ? { reconcileAutoCorrect: input.reconcileAutoCorrect }
+          : {}),
         ...(config !== undefined ? { config } : {}),
         ...(credentialRef !== existing.credentialRef ? { credentialRef } : {}),
       },
@@ -225,6 +231,7 @@ export class ChannelsService {
     healthDetail: string | null;
     lastPolledAt: Date | null;
     lastReconciledAt: Date | null;
+    reconcileAutoCorrect: boolean;
     createdAt: Date;
     _count: { allocations: number };
   }): Promise<ChannelSummary> {
@@ -268,6 +275,7 @@ export class ChannelsService {
         : `No connector registered for "${instance.connectorKey}".`,
       lastPolledAt: instance.lastPolledAt,
       lastReconciledAt: instance.lastReconciledAt,
+      reconcileAutoCorrect: instance.reconcileAutoCorrect,
       webhookPath: receivesWebhooks ? `/api/webhooks/${instance.id}` : null,
       allocationCount: instance._count.allocations,
       createdAt: instance.createdAt,

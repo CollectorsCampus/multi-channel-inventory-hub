@@ -4,6 +4,8 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { SyncEventService } from './sync-event.service';
 import { OutboundWorker } from './outbound.worker';
 import { InboundWorker } from './inbound.worker';
+import { ReconcileService } from './reconcile.service';
+import { ReconcileWorker } from './reconcile.worker';
 import { SyncActivityService } from './sync-activity.service';
 import { SyncActivityController } from './sync-activity.controller';
 
@@ -17,7 +19,14 @@ import { SyncActivityController } from './sync-activity.controller';
 @Module({
   imports: [ConnectorsModule, InventoryModule],
   controllers: [SyncActivityController],
-  providers: [SyncEventService, SyncActivityService, OutboundWorker, InboundWorker],
-  exports: [SyncEventService],
+  providers: [
+    SyncEventService,
+    SyncActivityService,
+    ReconcileService,
+    OutboundWorker,
+    InboundWorker,
+    ReconcileWorker,
+  ],
+  exports: [SyncEventService, ReconcileService],
 })
 export class SyncModule {}

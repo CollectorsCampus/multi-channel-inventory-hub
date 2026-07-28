@@ -43,6 +43,24 @@ export interface InboundJob {
   webhookEventId: string;
 }
 
+/**
+ * Reconciliation queue. One repeatable job, not one per channel.
+ *
+ * The sweep is a single scheduled tick that then walks the channels itself.
+ * Scheduling per channel would mean adding and removing repeatable jobs as
+ * channels come and go, and a stale repeatable in Redis outliving the channel
+ * that created it is a well-known way to end up with jobs nobody can explain.
+ */
+export const RECONCILE_QUEUE = 'reconcile';
+
+/** The repeatable's fixed id, so re-registering it replaces rather than adds. */
+export const RECONCILE_SWEEP_JOB = 'nightly-sweep';
+
+export interface ReconcileJob {
+  /** Omitted by the sweep, which does every eligible channel. */
+  channelInstanceId?: string;
+}
+
 @Injectable()
 export class OutboundQueue implements OnModuleDestroy {
   private readonly logger = new Logger(OutboundQueue.name);

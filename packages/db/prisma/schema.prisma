@@ -188,12 +188,17 @@ model ChannelInstance {
   enabled Boolean @default(true)
 
   /// Cursor for connectors whose inbound path is orders.poll rather than webhooks.
-  lastPolledAt     DateTime? @map("last_polled_at")
-  lastReconciledAt DateTime? @map("last_reconciled_at")
+  lastPolledAt         DateTime? @map("last_polled_at")
+  lastReconciledAt     DateTime? @map("last_reconciled_at")
+  /// Opt-in: re-push our quantity when reconciliation finds the channel showing
+  /// something else (§6). Defaults off, and only ever acts in that one
+  /// direction — the ledger is never rewritten from a channel, so a platform
+  /// that reports a wrong number cannot silently become the source of truth.
+  reconcileAutoCorrect Boolean   @default(false) @map("reconcile_auto_correct")
   /// ChannelHealth: unknown | ok | degraded | error
-  healthStatus     String    @default("unknown") @map("health_status")
-  healthCheckedAt  DateTime? @map("health_checked_at")
-  healthDetail     String?   @map("health_detail")
+  healthStatus         String    @default("unknown") @map("health_status")
+  healthCheckedAt      DateTime? @map("health_checked_at")
+  healthDetail         String?   @map("health_detail")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

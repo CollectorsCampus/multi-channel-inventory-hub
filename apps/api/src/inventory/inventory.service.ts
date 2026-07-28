@@ -139,18 +139,24 @@ export interface InventoryPage {
 }
 
 /**
- * One channel's view of one allocation, shaped for a connector's
- * `exportListings`.
+ * One channel's view of one allocation.
  *
- * `quantity` is the *desired* listed quantity — what the ledger says this
- * channel should be advertising — not `listedQuantity`, which records what we
- * believe it is advertising now. Exporting the latter would push our own stale
- * guess back at the channel.
+ * Serves two readers with different needs, which is why it carries both
+ * quantities:
+ *
+ * - **`quantity`** is the *desired* listed quantity — what the ledger says this
+ *   channel should be advertising. This is what a file export emits; exporting
+ *   the other one would push our own stale guess back at the channel.
+ * - **`listedQuantity`** is what we believe it is advertising right now, written
+ *   only after a successful push. This is what reconciliation compares against,
+ *   because it is the only honest record of our last confirmed state.
  */
 export interface ChannelListing {
   allocationId: string;
   externalListingId: string | null;
   quantity: number;
+  listedQuantity: number;
+  status: string;
   price: number | null;
   currency: string;
   sku: {
@@ -357,6 +363,8 @@ export class InventoryService {
         allocationId: allocation.id,
         externalListingId: allocation.externalListingId,
         quantity: allocation.desiredListedQuantity,
+        listedQuantity: allocation.listedQuantity,
+        status: allocation.status,
         price: allocation.price,
         currency: allocation.currency,
         sku: {

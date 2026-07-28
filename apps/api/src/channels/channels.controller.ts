@@ -19,6 +19,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RequireRole } from '../auth/decorators';
 import { ChannelsService } from './channels.service';
 import { ChannelFilesService } from './channel-files.service';
+import { ReconcileService } from '../sync/reconcile.service';
 import { IMPORT_KINDS, type ImportKind, type ImportSummary } from './file-transport';
 
 /**
@@ -78,6 +79,15 @@ export class UpdateChannelDto {
   @IsOptional()
   @IsObject()
   secrets?: Record<string, string>;
+
+  @ApiPropertyOptional({
+    description:
+      'Re-push our quantity when reconciliation finds the channel showing something else. ' +
+      'Acts in that direction only — the ledger is never rewritten from a channel.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  reconcileAutoCorrect?: boolean;
 }
 
 @ApiTags('channels')
@@ -86,6 +96,7 @@ export class ChannelsController {
   constructor(
     private readonly channels: ChannelsService,
     private readonly files: ChannelFilesService,
+    private readonly reconciler: ReconcileService,
   ) {}
 
   /**
@@ -135,6 +146,23 @@ export class ChannelsController {
   @ApiOperation({ summary: 'Delete a channel. Refused while allocations reference it.' })
   async remove(@Param('id') id: string): Promise<void> {
     await this.channels.remove(id);
+  }
+
+  /**
+   * Reconcile this channel now (§6).
+   *
+   * Runs synchronously and returns the report, rather than queueing and handing
+   * back a job id. An operator pressing this wants to know whether their
+   * listings match, and a sweep of a few hundred listings at the connector's
+   * declared rate is a wait they can sit through. The unattended nightly run is
+   * the queued path.
+   */
+  @Post(':id/reconcile')
+  @RequireRole('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Compare this channel against the ledger and report differences.' })
+  reconcile(@Param('id') id: string, @Query('comparePrices') comparePrices?: string) {
+    return this.reconciler.reconcileChannel(id, { comparePrices: comparePrices === 'true' });
   }
 
   // ---------------------------------------------------------------------------

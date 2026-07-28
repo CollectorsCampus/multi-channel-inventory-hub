@@ -12,16 +12,16 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 
 ## Where things stand
 
-| Phase | Scope                                                                   | Status      |
-| ----- | ----------------------------------------------------------------------- | ----------- |
-| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done        |
-| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done        |
-| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done        |
-| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done        |
-| 4     | TCGPlayer file-based connector                                          | Done        |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Not started |
+| Phase | Scope                                                                   | Status                                |
+| ----- | ----------------------------------------------------------------------- | ------------------------------------- |
+| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                                  |
+| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                                  |
+| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
+| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
+| 4     | TCGPlayer file-based connector                                          | Done                                  |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — reconciliation done |
 
-`main` is green: **407 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **447 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### What Phase 4 actually shipped
 
@@ -59,6 +59,42 @@ extending:**
    under the absolute one. Worst case the export changes nothing; it cannot overstate
    stock. **Confirm this against a real Pro account before anyone relies on the outbound
    half.**
+
+### Phase 5 so far: reconciliation
+
+`apps/api/src/sync/reconcile.ts` holds the judgement as pure functions, the way
+`allocation.ts` does; `reconcile.service.ts` does the I/O around them. Nightly on
+`RECONCILE_CRON` (a BullMQ repeatable, no scheduler dependency) plus
+`POST /channels/:id/reconcile` for on demand, which runs synchronously and
+returns the report — an operator pressing a button wants an answer, not a job id.
+
+Four decisions worth not re-deriving:
+
+- **The comparison is against `listedQuantity`, not `desiredListedQuantity`.**
+  That is the whole reason `listedQuantity` exists and is written only after a
+  successful push. Comparing against the desired value would flag every
+  allocation with a push in flight, which is normal. The reverse gap — a push
+  that never landed — is reported separately as `pending`, and already has a
+  `sync_failure` alert of its own.
+- **A listing the channel does not report is `missing`, never quantity 0.** The
+  SDK requires connectors to omit ids they cannot find, so an omission is "no
+  answer". Reading it as zero would manufacture drift for every listing a seller
+  legitimately removed on the platform.
+- **Prices are not compared by default.** §6's price policy is last-write-wins,
+  and platforms round, apply fees and report sale prices, so it would be a
+  permanent stream of findings nobody can act on. `?comparePrices=true` opts in.
+- **Auto-correction is per channel, off by default, one-directional.** It only
+  re-queues a quantity push. `missing` and `inactive` are excluded because
+  reactivating a listing the seller pulled would be the software overruling them,
+  and `price` because the channel's value may legitimately be newer.
+  `ChannelInstance.reconcileAutoCorrect` gates it.
+
+One alert per channel, refreshed and self-clearing — and the sweep only touches
+alerts it raised, because the inbound worker files `reconcile_drift` too for a
+sale against an unmapped listing, which is a different fact.
+
+Manual channels never reach any of this: they do not declare `reconcile`, so
+their expected staleness cannot be mistaken for drift.
 
 ## TCGPlayer file formats (verified against a real Pro account, 2026-07-28)
 
@@ -252,5 +288,8 @@ Worth stating plainly, because the README is optimistic by nature:
   acts on (Phase 4 above); everything inbound is exercised against the real shapes.
 - **MySQL and SQLite are not supported yet.** Only the schema is proven portable; there is
   no migration history for them (ADR 0001 §4).
-- **No reconciliation.** Drift the sync loop misses currently goes unnoticed. That is
-  Phase 5, and it is the safety net the whole design leans on.
+- **Reconciliation has never seen a real platform disagree.** The loop is exercised
+  end to end against a fake connector that reports whatever a test tells it to, and by
+  hand against a running instance — but no live Shopify store has ever drifted and been
+  caught. The diff is thoroughly tested; what is unproven is whether `fetchLiveState`
+  returns what the Admin API actually says.

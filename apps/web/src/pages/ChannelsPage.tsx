@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import {
+  describeDriftKind,
   describeSyncMode,
   useChannels,
   useConnectors,
@@ -7,11 +8,13 @@ import {
   useDeleteChannel,
   useExportChannel,
   useImportChannelFile,
+  useReconcileChannel,
   useUpdateChannel,
   type Channel,
   type ConnectorSummary,
   type ImportKind,
   type ImportSummary,
+  type ReconcileOutcome,
 } from '../api/channels';
 import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
@@ -232,6 +235,8 @@ function ChannelCard({ channel }: { channel: Channel }) {
         </p>
       )}
 
+      <Reconciliation channel={channel} />
+
       <FileTransport channel={channel} />
 
       {editing && connector ? (
@@ -321,6 +326,166 @@ function ChannelCard({ channel }: { channel: Channel }) {
       {remove.isError && <FormError error={remove.error as Error} />}
     </div>
   );
+}
+
+/**
+ * Reconciliation (§6) — does the channel show what we think it shows?
+ *
+ * Shown only for connectors declaring `reconcile`. A file-based channel is
+ * deliberately excluded: its data is only as current as the last human round
+ * trip, so there is nothing live to compare against and presenting a
+ * "reconcile" button would imply a guarantee it cannot make.
+ */
+function Reconciliation({ channel }: { channel: Channel }) {
+  const reconcile = useReconcileChannel();
+  const update = useUpdateChannel();
+  const [outcome, setOutcome] = useState<ReconcileOutcome | null>(null);
+
+  if (!channel.capabilities.includes('reconcile')) return null;
+
+  return (
+    <div className="file-transport">
+      <h3>Reconciliation</h3>
+      <p className="muted">
+        Compares every listing against what we last pushed. Runs nightly on its own;{' '}
+        {channel.lastReconciledAt ? (
+          <>
+            last run{' '}
+            <time dateTime={channel.lastReconciledAt}>{formatWhen(channel.lastReconciledAt)}</time>.
+          </>
+        ) : (
+          <>it has not run yet.</>
+        )}
+      </p>
+
+      <div className="inline-form">
+        <button
+          type="button"
+          onClick={() => {
+            setOutcome(null);
+            reconcile.mutate(channel.id, { onSuccess: setOutcome });
+          }}
+          disabled={reconcile.isPending}
+        >
+          {reconcile.isPending ? 'Checking…' : 'Reconcile now'}
+        </button>
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={channel.reconcileAutoCorrect}
+            disabled={update.isPending}
+            onChange={(event) =>
+              update.mutate({ id: channel.id, reconcileAutoCorrect: event.target.checked })
+            }
+          />
+          Re-push automatically when quantities differ
+        </label>
+      </div>
+
+      <p className="field-hint">
+        Auto-correction only ever pushes our numbers to the channel. The ledger is never rewritten
+        from a channel, so a platform reporting a wrong figure cannot become the source of truth.
+      </p>
+
+      {reconcile.isError && <FormError error={reconcile.error as Error} />}
+      {outcome && <ReconcileResult outcome={outcome} />}
+    </div>
+  );
+}
+
+function ReconcileResult({ outcome }: { outcome: ReconcileOutcome }) {
+  const { report } = outcome;
+
+  return (
+    <div className="import-result">
+      <p className="field-hint">
+        {report.drifts.length === 0 ? (
+          <>
+            <strong>Everything matches.</strong> Checked {report.checked} listing
+            {report.checked === 1 ? '' : 's'}.
+          </>
+        ) : (
+          <>
+            <strong>
+              {report.drifts.length} of {report.checked} listing
+              {report.checked === 1 ? '' : 's'} differ.
+            </strong>
+            {outcome.corrected > 0 && ` Re-pushed ${outcome.corrected}.`}
+          </>
+        )}
+        {report.pending.length > 0 && (
+          <>
+            {' '}
+            {report.pending.length} still waiting on a push that has not landed — the channel is
+            showing what we last told it, not what the ledger says now.
+          </>
+        )}
+      </p>
+
+      {report.drifts.length > 0 && (
+        <details open>
+          <summary>What differs</summary>
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Listing</th>
+                <th>Finding</th>
+                <th>We pushed</th>
+                <th>Channel shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.drifts.slice(0, 50).map((drift) => (
+                <tr key={`${drift.allocationId}-${drift.kind}`}>
+                  <td>
+                    <code>{drift.externalListingId}</code>
+                  </td>
+                  <td>{describeDriftKind(drift.kind)}</td>
+                  <td>{drift.ours ?? '—'}</td>
+                  <td>{drift.theirs ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+
+      {report.unmanaged.length > 0 && (
+        <details>
+          <summary>
+            {report.unmanaged.length} listing{report.unmanaged.length === 1 ? '' : 's'} on the
+            channel we do not manage
+          </summary>
+          <p className="field-hint">
+            Not a fault — you can list things outside the hub. Shown because it is the only signal
+            that the two sides disagree about what exists.
+          </p>
+          <ul>
+            {report.unmanaged.slice(0, 50).map((id) => (
+              <li key={id}>
+                <code>{id}</code>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** Relative for the recent past, absolute once it stops being useful. */
+function formatWhen(iso: string): string {
+  const then = new Date(iso);
+  const minutes = Math.round((Date.now() - then.getTime()) / 60_000);
+
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+
+  return then.toLocaleString();
 }
 
 /**

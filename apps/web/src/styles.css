@@ -199,6 +199,23 @@ pre.payload {
   margin-top: 0.75rem;
 }
 
+/* A checkbox that has to sit on the same line as the buttons beside it, which
+   the global label styling (block, above its input) otherwise prevents. */
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.inline-check input {
+  width: auto;
+  margin: 0;
+}
+
 .import-result details {
   margin-top: 0.5rem;
   font-size: 0.82rem;

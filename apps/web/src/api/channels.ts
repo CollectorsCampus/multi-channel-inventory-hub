@@ -25,6 +25,8 @@ export interface Channel {
   capabilities: string[];
   healthStatus: string;
   healthDetail: string | null;
+  lastReconciledAt: string | null;
+  reconcileAutoCorrect: boolean;
   webhookPath: string | null;
   allocationCount: number;
   createdAt: string;
@@ -80,6 +82,7 @@ export function useUpdateChannel() {
       enabled?: boolean;
       config?: Record<string, unknown>;
       secrets?: Record<string, string>;
+      reconcileAutoCorrect?: boolean;
     }) => apiFetch<Channel>(`/channels/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   );
 }
@@ -88,6 +91,64 @@ export function useDeleteChannel() {
   return useChannelMutation((id: string) =>
     apiFetch<void>(`/channels/${id}`, { method: 'DELETE' }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation (§6)
+// ---------------------------------------------------------------------------
+
+export type DriftKind = 'quantity' | 'price' | 'inactive' | 'missing';
+
+export interface Drift {
+  allocationId: string;
+  externalListingId: string;
+  kind: DriftKind;
+  ours: number | null;
+  theirs: number | null;
+  detail: string;
+}
+
+export interface ReconcileOutcome {
+  channelInstanceId: string;
+  channelName: string;
+  summary: string;
+  corrected: number;
+  ranAt: string;
+  report: {
+    checked: number;
+    drifts: Drift[];
+    pending: Array<{
+      allocationId: string;
+      externalListingId: string;
+      listedQuantity: number;
+      desiredListedQuantity: number;
+    }>;
+    unmanaged: string[];
+  };
+}
+
+export function useReconcileChannel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (channelId: string) =>
+      apiFetch<ReconcileOutcome>(`/channels/${channelId}/reconcile`, { method: 'POST' }),
+    // The run stamps lastReconciledAt and may raise or clear an alert.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: channelKeys.list }),
+  });
+}
+
+/** Plain-language name for a finding, since "kind" is our word, not an operator's. */
+export function describeDriftKind(kind: DriftKind): string {
+  switch (kind) {
+    case 'quantity':
+      return 'Quantity differs';
+    case 'price':
+      return 'Price differs';
+    case 'inactive':
+      return 'Inactive on the channel';
+    case 'missing':
+      return 'Not found on the channel';
+  }
 }
 
 // ---------------------------------------------------------------------------

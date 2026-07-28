@@ -4,8 +4,9 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { join } from 'node:path';
 import { AppModule } from './app.module';
-import { configureApp } from './bootstrap';
+import { configureApp, serveSpa } from './bootstrap';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -41,6 +42,16 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, openapi), {
     jsonDocumentUrl: 'api/docs/openapi.json',
   });
+
+  // The API container also serves the built SPA (§2), so a self-hoster runs one
+  // image. In development Vite serves it on its own port and this is skipped.
+  // Registered after init() so Nest's routes win over the fallback.
+  await app.init();
+  const webRoot = config.get<string>('WEB_ROOT') ?? join(__dirname, '..', '..', 'web', 'dist');
+  Logger.log(
+    serveSpa(app, webRoot) ? `Serving SPA from ${webRoot}` : `No SPA build at ${webRoot}`,
+    'Bootstrap',
+  );
 
   // 0.0.0.0 so the container is reachable from outside it.
   await app.listen({ port, host: '0.0.0.0' });

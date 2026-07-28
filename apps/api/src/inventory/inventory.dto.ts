@@ -203,6 +203,55 @@ export class AllocationWriteDto {
   currency?: string;
 }
 
+/**
+ * Intake references a catalog product by source and id only.
+ *
+ * Deliberately does not accept the product's name, image or external ids: the
+ * server re-fetches those from the source. Trusting them would let a client
+ * write arbitrary values into CatalogExternalRef, which is what every future
+ * listing is keyed on.
+ */
+export class IntakeDto {
+  @ApiProperty({ example: 'scryfall' })
+  @IsString()
+  @MaxLength(50)
+  sourceKey!: string;
+
+  @ApiProperty({ description: "The source's own product id." })
+  @IsString()
+  @MaxLength(200)
+  sourceId!: string;
+
+  @ApiProperty({ enum: SKU_CONDITIONS })
+  @IsIn(SKU_CONDITIONS as unknown as string[])
+  condition!: string;
+
+  @ApiPropertyOptional({ default: 'NORMAL', example: 'FOIL' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  printing?: string;
+
+  @ApiPropertyOptional({ default: 'EN' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  language?: string;
+
+  @ApiProperty({ minimum: 1 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  quantity!: number;
+
+  @ApiPropertyOptional({ description: 'Cents, per unit.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  costBasis?: number;
+}
+
 /** Body for the dry-run endpoint backing the allocation editor's live validation. */
 export class PreviewLedgerDto {
   @ApiPropertyOptional()

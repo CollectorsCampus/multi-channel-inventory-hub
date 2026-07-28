@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { join } from 'node:path';
 import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/bootstrap';
+import { configureApp, serveSpa } from '../src/bootstrap';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -37,6 +38,11 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
   await configureApp(app, { sessionSecret: Buffer.alloc(32, 3).toString('base64') });
   await app.init();
+
+  // Mirrors main.ts: the fallback goes on after Nest's routes exist. The SPA
+  // build is a CI prerequisite for this suite (see .github/workflows/ci.yml).
+  serveSpa(app, join(__dirname, '..', '..', 'web', 'dist'));
+
   await app.getHttpAdapter().getInstance().ready();
 });
 
@@ -84,6 +90,49 @@ describe('HTTP application', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.stringify(res.json())).toMatch(/role should not exist/);
+  });
+
+  /**
+   * A single-page app owns its own routes, so `/intake` has no file behind it
+   * and no controller to match. Without a history-API fallback it 404s, and
+   * every bookmark, refresh and shared link into the app is broken — while
+   * client-side navigation hides it completely. It shipped broken once.
+   */
+  describe('SPA fallback', () => {
+    it('serves index.html for a client-side route', async () => {
+      const res = await app.inject({ method: 'GET', url: '/intake' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toMatch(/text\/html/);
+      expect(res.body).toContain('<div id="root">');
+    });
+
+    it('serves index.html for a nested client-side route', async () => {
+      const res = await app.inject({ method: 'GET', url: '/items/some-id' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<div id="root">');
+    });
+
+    /**
+     * The other half of the bug: handing index.html to a missing API endpoint
+     * would turn a 404 into a 200 full of HTML, which is far harder to
+     * diagnose than the 404 it replaced.
+     */
+    it('still 404s an unknown API route rather than returning HTML', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/does-not-exist' });
+      expect(res.statusCode).toBe(404);
+      expect(res.headers['content-type']).toMatch(/application\/json/);
+    });
+
+    it('still 404s an unknown health route', async () => {
+      const res = await app.inject({ method: 'GET', url: '/health/nope' });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('does not hand HTML to a non-GET request', async () => {
+      const res = await app.inject({ method: 'POST', url: '/not-a-route' });
+      expect(res.statusCode).toBe(404);
+      expect(res.headers['content-type']).toMatch(/application\/json/);
+    });
   });
 
   it('requires a CSRF token on cookie-authenticated writes', async () => {

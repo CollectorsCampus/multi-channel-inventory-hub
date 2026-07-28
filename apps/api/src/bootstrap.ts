@@ -2,6 +2,8 @@ import { ValidationPipe } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyHelmet from '@fastify/helmet';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Everything that turns a bare Nest application into *this* application.
@@ -46,4 +48,54 @@ export async function configureApp(
   );
 
   return app;
+}
+
+/**
+ * Serve the built SPA, with a history-API fallback.
+ *
+ * The fallback is the whole point. A single-page app owns its own routes, so a
+ * request for `/intake` or `/items/abc` has no file behind it and no controller
+ * to match — without this it 404s, and every bookmark, refresh and shared link
+ * into the app is broken. Client-side navigation hides that completely, so it
+ * only shows up when someone types a URL.
+ *
+ * Registered explicitly rather than through ServeStaticModule because that
+ * module's Fastify path did not install a fallback with our route layout, and
+ * an SPA silently losing deep links is not something to leave to a
+ * configuration flag whose behaviour we cannot see.
+ *
+ * Must be called after `app.init()`, so Nest's own routes are registered first
+ * and only genuinely unmatched requests reach here.
+ */
+export function serveSpa(app: NestFastifyApplication, webRoot: string): boolean {
+  const indexPath = join(webRoot, 'index.html');
+  if (!existsSync(indexPath)) return false;
+
+  // Read once. The build is immutable inside the container, and this avoids a
+  // disk read on every deep link.
+  const indexHtml = readFileSync(indexPath, 'utf8');
+
+  app.useStaticAssets({ root: webRoot, wildcard: false });
+
+  const fastify = app.getHttpAdapter().getInstance();
+
+  // A wildcard GET rather than setNotFoundHandler: Nest already owns Fastify's
+  // not-found handler, and replacing it throws. Fastify's router gives static
+  // routes precedence over wildcards regardless of registration order, so every
+  // real route still wins — this only catches what nothing else claimed.
+  fastify.get('/*', (request, reply) => {
+    const path = request.url.split('?')[0] ?? '';
+
+    // API and health routes must keep returning a real 404. Handing them
+    // index.html would turn a missing endpoint into a 200 full of HTML, which
+    // is far harder to diagnose than the 404 it replaced.
+    if (path.startsWith('/api') || path.startsWith('/health')) {
+      void reply.status(404).send({ message: 'Not Found', statusCode: 404 });
+      return;
+    }
+
+    void reply.type('text/html').send(indexHtml);
+  });
+
+  return true;
 }

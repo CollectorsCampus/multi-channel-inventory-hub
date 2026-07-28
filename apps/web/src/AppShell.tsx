@@ -12,6 +12,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Link to="/" className="brand">
           Inventory&nbsp;Hub
         </Link>
+        <div className="topbar-nav">
+          <Link to="/">Inventory</Link>
+          <Link to="/intake">Add stock</Link>
+        </div>
         <div className="topbar-right">
           {user && (
             <span className="muted">

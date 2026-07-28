@@ -14,10 +14,12 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, RequireRole } from '../auth/decorators';
 import type { AuthenticatedPrincipal } from '../auth/auth-provider.interface';
 import { InventoryService } from './inventory.service';
+import { IntakeService } from './intake.service';
 import {
   AdjustQuantityDto,
   AllocationWriteDto,
   CreateInventoryItemDto,
+  IntakeDto,
   ListInventoryQueryDto,
   PreviewLedgerDto,
   SetReserveDto,
@@ -33,7 +35,10 @@ import {
 @ApiTags('inventory')
 @Controller('inventory')
 export class InventoryController {
-  constructor(private readonly inventory: InventoryService) {}
+  constructor(
+    private readonly inventory: InventoryService,
+    private readonly intakeService: IntakeService,
+  ) {}
 
   @Get()
   @RequireRole('viewer')
@@ -48,6 +53,21 @@ export class InventoryController {
   @ApiOperation({ summary: 'Create a catalog item, SKU and inventory row together.' })
   create(@Body() body: CreateInventoryItemDto, @CurrentUser() user: AuthenticatedPrincipal) {
     return this.inventory.createInventoryItem({ ...body, actorUserId: user.userId });
+  }
+
+  /**
+   * Catalog result to stock on the shelf.
+   *
+   * Lands as unallocated: recording that stock exists is a separate act from
+   * deciding where it goes. Intaking the same SKU again adds to it rather than
+   * creating a second row.
+   */
+  @Post('intake')
+  @RequireRole('editor')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Add stock from a catalog product. Lands unallocated.' })
+  intake(@Body() body: IntakeDto, @CurrentUser() user: AuthenticatedPrincipal) {
+    return this.intakeService.intake({ ...body, actorUserId: user.userId });
   }
 
   @Get(':id')

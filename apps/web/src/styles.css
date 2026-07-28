@@ -78,11 +78,63 @@ body {
   color: var(--text);
 }
 
+.topbar-nav {
+  display: flex;
+  gap: 1rem;
+  margin-right: auto;
+  margin-left: 1.5rem;
+  font-size: 0.9rem;
+}
+
 .topbar-right {
   display: flex;
   align-items: center;
   gap: 1rem;
   font-size: 0.9rem;
+}
+
+/* --- intake --- */
+
+.candidates {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
+.candidate {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-align: left;
+  font-weight: 400;
+}
+
+.candidate-selected {
+  border-color: var(--accent);
+}
+
+.candidate img {
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.candidate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
 }
 
 .content {

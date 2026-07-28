@@ -2,6 +2,7 @@ import { Outlet, createRootRoute, createRoute, createRouter } from '@tanstack/re
 import { AppShell } from './AppShell';
 import { InventoryListPage } from './pages/InventoryListPage';
 import { ItemDetailPage } from './pages/ItemDetailPage';
+import { IntakePage } from './pages/IntakePage';
 
 /**
  * Code-based routes rather than the file-based convention.
@@ -62,7 +63,13 @@ const itemRoute = createRoute({
   component: ItemDetailPage,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, itemRoute]);
+const intakeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/intake',
+  component: IntakePage,
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, itemRoute, intakeRoute]);
 
 export const router = createRouter({ routeTree });
 

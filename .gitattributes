@@ -8,3 +8,9 @@
 
 pnpm-lock.yaml linguist-generated=true -diff
 packages/db/prisma/migrations/** linguist-generated=true
+
+# Marketplace export fixtures are byte-exact reproductions of real files, and
+# their line endings are part of what they test: TCGPlayer's MyPricing export
+# is CRLF while its PullSheet export is LF. Normalising them would quietly
+# delete the difference the parser has to cope with.
+packages/*/test/fixtures/*.csv -text

@@ -24,6 +24,12 @@ Thumbs.db
 # Local agent/tooling config
 .claude/
 
+# Real marketplace exports: live business data (what you own, quantities,
+# prices, seller identifiers). Never committed — this repo is going public.
+# Drop real files here; redacted fixtures derived from them live in the
+# relevant package's test directory instead.
+/private/
+
 *.log
 npm-debug.log*
 pnpm-debug.log*

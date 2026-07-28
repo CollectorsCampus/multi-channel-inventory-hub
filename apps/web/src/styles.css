@@ -93,6 +93,57 @@ body {
   font-size: 0.9rem;
 }
 
+/* --- channels + generated forms --- */
+
+.channel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.channel-head h2 {
+  margin-bottom: 0.1rem;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 1.05rem;
+  color: var(--text);
+}
+
+.schema-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.85rem;
+  margin: 1rem 0;
+}
+
+.schema-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.schema-field input[type='checkbox'] {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.field-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 0.15rem 0 0;
+}
+
+.req {
+  color: var(--error);
+}
+
+ul.error {
+  margin: 0.35rem 0;
+  padding-left: 1.1rem;
+}
+
 /* --- intake --- */
 
 .candidates {

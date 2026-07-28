@@ -3,6 +3,7 @@ import { AppShell } from './AppShell';
 import { InventoryListPage } from './pages/InventoryListPage';
 import { ItemDetailPage } from './pages/ItemDetailPage';
 import { IntakePage } from './pages/IntakePage';
+import { ChannelsPage } from './pages/ChannelsPage';
 
 /**
  * Code-based routes rather than the file-based convention.
@@ -69,7 +70,13 @@ const intakeRoute = createRoute({
   component: IntakePage,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, itemRoute, intakeRoute]);
+const channelsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/channels',
+  component: ChannelsPage,
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, itemRoute, intakeRoute, channelsRoute]);
 
 export const router = createRouter({ routeTree });
 

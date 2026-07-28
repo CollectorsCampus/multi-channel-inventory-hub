@@ -13,9 +13,24 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * The full error payload.
+     *
+     * Kept because the API returns structured detail alongside the summary —
+     * per-field `issues` for an invalid channel config, ledger `issues` for a
+     * breached allocation invariant. Reducing an error to its `message` throws
+     * away exactly the part worth showing an operator.
+     */
+    readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
+  }
+
+  /** Per-field validation issues, when the endpoint reported any. */
+  get issues(): Array<{ field?: string; code?: string; message: string }> {
+    const issues = (this.body as { issues?: unknown } | undefined)?.issues;
+    return Array.isArray(issues) ? issues : [];
   }
 }
 
@@ -53,11 +68,15 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const payload = isJson ? await response.json() : await response.text();
 
   if (!response.ok) {
-    const message =
-      typeof payload === 'object' && payload && 'message' in payload
-        ? String((payload as { message: unknown }).message)
+    const raw = (payload as { message?: unknown } | undefined)?.message;
+    // NestJS reports ValidationPipe failures as an array of messages.
+    const message = Array.isArray(raw)
+      ? raw.join(', ')
+      : raw !== undefined
+        ? String(raw)
         : `Request failed with status ${response.status}`;
-    throw new ApiError(response.status, message);
+
+    throw new ApiError(response.status, message, payload);
   }
 
   return payload as T;

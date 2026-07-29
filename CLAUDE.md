@@ -106,6 +106,26 @@ own client and token source against a real shop. Everything passed:
 - `priceToCents` is right on real data: $104.99 → `10499`, $7.99 → `799`.
 - The token is cached across calls rather than re-minted.
 
+**The write path is proven too, and cost three schema fixes.** A probe pushed a quantity
+and a price to one nominated variant and restored both. Nothing about these was
+discoverable without a real store — each one only appeared after the previous was fixed:
+
+1. **`ignoreCompareQuantity` no longer exists** on `InventorySetQuantitiesInput`.
+2. **`changeFromQuantity` is required at runtime** although the schema types it nullable.
+   It replaced that flag, turning an opt-out into a **mandatory compare-and-swap**. So
+   `setQuantity` now reads before it writes, in one query that fetches the inventory item
+   id and the current quantity together — reading them separately would open exactly the
+   gap the compare exists to close. A stale compare re-reads and retries once; a second
+   failure is contention the queue should back off from rather than a loop here.
+3. **`@idempotent(key: String!)` is mandatory** on `inventorySetQuantities`. The key is a
+   fresh UUID per attempt, not a hash of the operation: a deterministic key would let
+   Shopify replay an old result for a genuinely new identical push while the key is still
+   in their retention window, which is a silent no-op on someone's stock. The protection a
+   stable key would buy is already covered by reading first.
+
+`productVariantsBulkUpdate` was unaffected — `price` is unchanged on
+`ProductVariantsBulkInput`.
+
 Two operational notes that cost real time to work out:
 
 1. **Releasing a version is not installing it.** Client credentials fail with "The
@@ -506,11 +526,11 @@ TCG Project`) — use `-LiteralPath`; some deletion commands are blocked by the 
 
 Worth stating plainly, because the README is optimistic by nature:
 
-- **Shopify's write path and webhooks are unproven.** The read half is now confirmed
-  against the real store — authentication, the `2026-07` schema, `fetchLiveState`, price
-  decoding and location scoping all work. What has never run is the half that changes
-  something: `inventorySetQuantities` and `productVariantsBulkUpdate` on the new schema,
-  and HMAC verification against a webhook Shopify actually sent.
+- **Shopify webhooks are unproven.** Everything else is now confirmed against the real
+  store — authentication, the `2026-07` schema, `fetchLiveState`, price decoding, location
+  scoping, and both mutations writing and being read back. What has never run is
+  `verifyWebhook` against a delivery Shopify actually sent, which needs the hub reachable
+  from the internet.
 - **TCGPlayer is now proven in both directions** — imports against the account's real
   exports, and a generated file accepted through `Import To Staged` on the live account.
   What remains untried is `Move To Live`, which was deliberately not pressed: with

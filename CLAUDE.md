@@ -34,15 +34,18 @@ Tagged at `35ecf98`. `release.yml` published a multi-arch image — `linux/amd64
 the licence as AGPL-3.0, and the repo, the `v0.1.0` release and the source are all readable
 anonymously.
 
-**The container package is a separate switch, and is still private.** Repository visibility
-does not propagate to GHCR: an anonymous pull of
-`ghcr.io/collectorscampus/multi-channel-inventory-hub` is refused with `DENIED: invalid
-token`, so the image referenced in the release notes cannot yet be pulled by a visitor.
-There is no REST endpoint to change it for a **user**-owned container package — it is done
-at
-`https://github.com/users/CollectorsCampus/packages/container/multi-channel-inventory-hub/settings`.
-Worth re-testing anonymously after flipping it rather than assuming, since the failure is
-silent from the owner's side: an authenticated pull succeeds either way.
+**The container package is a separate switch**, and had to be flipped by hand after the
+repository — repository visibility does not propagate to GHCR. There is no REST endpoint to
+change it for a **user**-owned container package; it is done at
+`https://github.com/users/<user>/packages/container/<package>/settings`. Both are now
+public, verified with an anonymous registry token: the tag list returns `0.1.0`, `0.1` and
+`latest`, and the `0.1.0` manifest resolves to real `linux/amd64` and `linux/arm64`
+children.
+
+**Test that anonymously, never from your own session.** The failure is silent from the
+owner's side — an authenticated pull succeeds whether or not the package is public, so
+checking it while logged in reports success for every visitor who is actually being
+refused.
 
 Four things learned doing it, none of them guessable:
 

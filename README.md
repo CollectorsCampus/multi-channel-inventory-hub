@@ -76,6 +76,21 @@ starts in seconds. It brings up the app, Postgres and Redis, and applies migrati
 Open <http://localhost:3000>. The first visit prompts you to create an admin account — no
 default credentials ship with the image.
 
+### Using the published image instead
+
+To skip the build, pull the released image rather than compiling from source:
+
+```bash
+docker pull ghcr.io/collectorscampus/multi-channel-inventory-hub:0.1.0
+```
+
+Multi-arch (`linux/amd64`, `linux/arm64`), also tagged `0.1` and `latest`. Point
+`docker-compose.yml`'s `app` service at it — replace the `build:` block with
+`image: ghcr.io/collectorscampus/multi-channel-inventory-hub:0.1.0`.
+
+Pin the exact version rather than `latest` for anything you rely on. While this is `0.x`, a
+minor bump may carry breaking changes; `0.1` tracks patches within the current minor.
+
 ## Connecting Shopify
 
 **Shopify retired legacy custom apps on 1 January 2026.** There is no permanent Admin API

@@ -21,14 +21,12 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                               |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — alerting polish and release left |
 
-`main` is green: **551 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **590 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
-### Unmerged work — read this first
+### Unmerged work
 
-**`shopify-client-credentials`** — 3 commits, **580 tests**, green. The whole Shopify
-authentication rework plus three schema fixes found by writing to the live store. Held
-back only because webhook verification has never seen a real delivery; everything else in
-it is confirmed against the real shop. Merging is a judgement call, not a blocked task.
+None. `shopify-client-credentials` was merged on 2026-07-29 once webhook delivery was
+proven against the live store (below), which was the one thing holding it back.
 
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.
@@ -135,6 +133,33 @@ discoverable without a real store — each one only appeared after the previous 
 
 `productVariantsBulkUpdate` was unaffected — `price` is unchanged on
 `ProductVariantsBulkInput`.
+
+**Webhooks are proven too, against a real delivery (2026-07-29).** This was the last
+unverified assumption in the connector: that Shopify signs an app's webhooks with that
+app's **client secret**, so `verifyWebhook`'s fallback from `webhookSecret` is correct. If
+it had been wrong, every delivery would have been silently rejected.
+
+The hub was exposed with a `cloudflared` quick tunnel, a `products/update` subscription
+registered through the Admin API, and a product's tags touched and immediately reverted.
+Two genuine deliveries arrived (`user-agent: Shopify-Captain-Hook`,
+`x-shopify-api-version: 2026-07`), both verified, persisted and processed — on a channel
+configured with **only** `clientSecret`, so the fallback is what accepted them.
+
+Closed arithmetically rather than by inference: recomputing
+`base64(HMAC-SHA256(stored_body, clientSecret))` over the 5170-byte body reproduces the
+`x-shopify-hmac-sha256` Shopify sent, exactly. That also proves the stored body is
+byte-exact, since a single altered byte would change the digest.
+
+An unsigned POST to the same public URL was rejected 401, so the endpoint is not merely
+accepting everything.
+
+Two things worth knowing before repeating this:
+
+- **Registering the subscription needs no extra scope** beyond what the connector already
+  declares, and `webhookSubscriptionCreate` accepts the quick-tunnel URL directly.
+- **Rotating the client secret takes up to an hour to take effect** on webhook signing,
+  per Shopify's documentation. So a rotation is not instantly consistent with verification,
+  and deliveries in that window may verify against the *old* secret.
 
 Two operational notes that cost real time to work out:
 
@@ -504,6 +529,21 @@ owns that.
 - **Contract suites must have teeth.** The SDK's own tests prove a connector that fabricates
   ids, uses unstable idempotency keys, or throws on malformed input _fails_ checks the
   reference implementation passes. A green suite that can't fail is worse than none.
+- **Assert the success path, not just rejection.** Webhook ingress had two green tests that
+  asserted only `not 403` and `>= 400` — and the harness built the app without `rawBody`,
+  so every request died at "Missing request body" before verification ran. Both tests
+  passed for a reason unrelated to what they claimed to check, and the endpoint's entire
+  accept path was unexercised. `webhook-ingress.spec.ts` now asserts the other direction
+  and is mutation-checked both ways. A test that only ever asserts failure will pass on a
+  component that cannot succeed.
+- **Options passed to `NestFactory.create` cannot live in `configureApp`.** Nest reads them
+  while building the application. `NEST_APP_OPTIONS` is exported from `bootstrap.ts` and
+  used by main.ts and the tests so they cannot drift again — that drift is what hid the
+  above.
+- **`apps/api` tests import connectors from `dist/`, not `src/`.** A connector source change
+  has no effect on an API test until that package is rebuilt. CI builds packages first so
+  it is correct there; locally it is a genuine footgun — a mutation to connector source
+  appeared to change nothing until `tsc -p tsconfig.json` was run in the package.
 - Connector tests run against **mocks, never live accounts**. Catalog tests use recorded
   shapes — hammering Scryfall on every CI run is how projects get blocked.
 
@@ -548,7 +588,7 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Open decisions, not open bugs
 
-Three things are deliberately unfinished. Each is a choice someone should make rather than
+Two things are deliberately unfinished. Each is a choice someone should make rather than
 a defect to fix, and none blocks anything else.
 
 1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
@@ -556,19 +596,19 @@ a defect to fix, and none blocks anything else.
    Restoring it means tracking per allocation how much has already been sent — a real
    feature, not a tweak. Price sync plus drift reporting may well be enough, given intake
    happens on TCGPlayer's side anyway.
-2. **Whether to merge `shopify-client-credentials`** before webhooks are proven.
-3. **The query console's audit trail is a log line, not a table.** Deliberate; a queryable
+2. **The query console's audit trail is a log line, not a table.** Deliberate; a queryable
    trail needs its own model and retention story.
 
 ## What has never been tested
 
 Worth stating plainly, because the README is optimistic by nature:
 
-- **Shopify webhooks are unproven.** Everything else is now confirmed against the real
-  store — authentication, the `2026-07` schema, `fetchLiveState`, price decoding, location
-  scoping, and both mutations writing and being read back. What has never run is
-  `verifyWebhook` against a delivery Shopify actually sent, which needs the hub reachable
-  from the internet.
+- **Shopify is now proven end to end**, including webhooks — authentication, the `2026-07`
+  schema, `fetchLiveState`, price decoding, location scoping, both mutations writing and
+  being read back, and two real signed deliveries verified through a tunnel. What has
+  still never run is `parseWebhook` on a real **`orders/create`** payload: the live proof
+  used `products/update`, because HMAC verification is topic-independent and that avoided
+  creating a real order. Order parsing is covered by unit tests against recorded shapes.
 - **TCGPlayer is now proven in both directions** — imports against the account's real
   exports, and a generated file accepted through `Import To Staged` on the live account.
   What remains untried is `Move To Live`, which was deliberately not pressed: with

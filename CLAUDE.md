@@ -21,7 +21,17 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                               |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — alerting polish and release left |
 
-`main` is green: **576 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **551 tests**, lint/typecheck/build clean, all four CI jobs passing.
+
+### Unmerged work — read this first
+
+**`shopify-client-credentials`** — 3 commits, **580 tests**, green. The whole Shopify
+authentication rework plus three schema fixes found by writing to the live store. Held
+back only because webhook verification has never seen a real delivery; everything else in
+it is confirmed against the real shop. Merging is a judgement call, not a blocked task.
+
+`main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
+latest.
 
 ### What Phase 4 actually shipped
 
@@ -511,9 +521,23 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Environment notes
 
-- **Windows / PowerShell 5.1.** No `&&` chaining. Paths contain a space (`D:\Claude Shopify
-TCG Project`) — use `-LiteralPath`; some deletion commands are blocked by the sandbox.
-- Node 24 via winget, pnpm via `npm -g` (corepack needs admin here).
+- **Windows / PowerShell.** Paths contain a space (`D:\Claude Shopify TCG Project`) — use
+  `-LiteralPath`; some deletion commands are blocked by the sandbox.
+- **Nothing is on PATH by default in an agent shell.** Prefix commands with
+  `$env:PATH = "C:\Program Files\nodejs;$env:PATH"`. `pnpm` is not installed globally:
+  reach it via `& "C:\Program Files\nodejs\corepack.cmd" pnpm ...`, or run each package's
+  own `node_modules\.bin\{vitest,tsc,prisma}.CMD` directly. `gh` lives at
+  `C:\Program Files\GitHub CLI\gh.exe`.
+- **Real marketplace data lives in `private/`**, which is gitignored: the operator's own
+  TCGPlayer exports, and `shopify.local.json` holding live Shopify credentials. Useful for
+  verifying against reality; `ShippingExport` and `PackingSlips` must never be opened, as
+  they carry customers' names and addresses.
+- **`prisma migrate reset` is blocked** for AI agents without explicit per-invocation
+  consent passed in `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION`. Ask first; do not work
+  around it.
+- Throwaway services for integration tests are `hub-test-db` on **5433** and
+  `hub-test-redis` on **6380** (see the docker commands above). The application's own
+  compose stack publishes no host ports, so those two are unambiguous.
 - Git identity is set **repo-local**: `collectorscampus <nick@collectorscampus.com>`.
 - Docker Desktop has wedged once (container unkillable) and a build segfaulted once
   (exit 139). Both were transient; verification fell back to running the API directly.
@@ -521,6 +545,20 @@ TCG Project`) — use `-LiteralPath`; some deletion commands are blocked by the 
   two lines added there or the image build breaks.
 
 ---
+
+## Open decisions, not open bugs
+
+Three things are deliberately unfinished. Each is a choice someone should make rather than
+a defect to fix, and none blocks anything else.
+
+1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
+   CSV can express a delta but never an absolute, and a delta is not safe to re-upload.
+   Restoring it means tracking per allocation how much has already been sent — a real
+   feature, not a tweak. Price sync plus drift reporting may well be enough, given intake
+   happens on TCGPlayer's side anyway.
+2. **Whether to merge `shopify-client-credentials`** before webhooks are proven.
+3. **The query console's audit trail is a log line, not a table.** Deliberate; a queryable
+   trail needs its own model and retention story.
 
 ## What has never been tested
 

@@ -66,6 +66,44 @@ version from `apps/api/package.json` rather than repeating it. `0.x` is delibera
 and SQLite have no migration history, no real IdP has completed a login, and there is one
 store's worth of production evidence.
 
+### v0.1.0 ships known vulnerabilities — fix and cut v0.1.1
+
+Enabling Dependabot alerts on 2026-07-29 immediately surfaced **18 open advisories**. They
+were all present before that switch; turning it on is what made them visible, which is the
+whole argument for having done it. But they were present in the image published as v0.1.0.
+
+**In the runtime image, so in the shipped product:**
+
+| Package           | Severity | Issue                                      | Installed | Patched |
+| ----------------- | -------- | ------------------------------------------ | --------- | ------- |
+| `@fastify/static` | high     | Route guard bypass via **path traversal**  | ^9.3.0    | 10.1.1  |
+| `@fastify/static` | medium   | Authorization bypass, non-canonical paths  | ^9.3.0    | 10.1.2  |
+| `find-my-way`     | high     | HTTP/2 denial of service                   | 9.6.0     | 9.7.0   |
+| `js-yaml`         | high     | Exponential parse time → denial of service | 5.2.1     | 5.2.2   |
+
+`@fastify/static` is the one to take seriously: it is a **production** dependency of
+`apps/api`, it is what `serveSpa` uses to serve the SPA out of the container, and path
+traversal there is precisely the surface it is exposed on. Not theoretical.
+
+**Development-scope only** (the test runner, not in the image): seven `vitest` advisories,
+all the same critical — the Vitest UI server can read and execute arbitrary files. Worth
+fixing, but it does not ship.
+
+**`esbuild` cannot be auto-fixed.** Dependabot reports `security_update_not_possible`: the
+lowest non-vulnerable version is 0.28.1 but the tree only resolves to 0.21.5, because Vite 5
+pins it. The fix is the Vite major, which is why PR #3 exists — a security update overrides
+the `ignore` rule in `dependabot.yml`, so ignoring vite majors does not block it.
+
+**Suggested order:** `@fastify/static` first and alone, since it is the shipped high; then
+`vitest`; then the Vite major, which needs the build actually exercised rather than just a
+green test run. Then cut **v0.1.1** — the published `0.1.0`, `0.1` and `latest` tags all
+carry these, and `latest` is what a new user pulls.
+
+Dependabot opened **8 PRs** on its first run, 7 of them majors. The `ignore` list in
+`dependabot.yml` covers only Prisma, NestJS, Vite and React; TypeScript 5→6, ESLint 9→10,
+Zod 3→4, vitest 2→3 and `@vitejs/plugin-react` 4→6 all came through. That is real accumulated
+drift rather than noise, but the list may want extending once the security ones are cleared.
+
 ### Pre-publication audit (2026-07-29)
 
 Git history was audited before any decision to go public — all 42 commits and every object

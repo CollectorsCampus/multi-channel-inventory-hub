@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { decodeJson, encodeJson } from '@hub/db';
 import { hasCapability, type Connector, type Ctx } from '@hub/connector-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChannelContextFactory } from '../connectors/channel-context.service';
@@ -8,6 +7,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { OutboundQueue } from '../queue/outbound-queue.service';
 import { MinIntervalLimiter, intervalFor } from '../catalog/rate-limiter';
 import { SyncEventService } from './sync-event.service';
+import { AlertsService } from './alerts.service';
 import {
   correctableDrifts,
   diffLiveState,
@@ -79,6 +79,7 @@ export class ReconcileService {
     private readonly inventory: InventoryService,
     private readonly syncEvents: SyncEventService,
     private readonly outbound: OutboundQueue,
+    private readonly alerts: AlertsService,
   ) {}
 
   /**
@@ -325,24 +326,10 @@ export class ReconcileService {
     report: ReconcileReport,
     corrected: number,
   ): Promise<void> {
-    const open = await this.prisma.alert.findMany({
-      where: { kind: 'reconcile_drift', channelInstanceId, status: 'open' },
-      select: { id: true, context: true },
-    });
-
-    const ours = open.find(
-      (alert) => decodeJson<{ source?: string }>(alert.context, {}).source === ALERT_SOURCE,
-    );
-
     if (report.drifts.length === 0) {
       // Self-clearing. A flag that stays raised after the problem is gone is a
       // flag nobody trusts.
-      if (ours) {
-        await this.prisma.alert.update({
-          where: { id: ours.id },
-          data: { status: 'resolved', resolvedAt: new Date() },
-        });
-      }
+      await this.alerts.clearFlag('reconcile_drift', channelInstanceId, ALERT_SOURCE);
       return;
     }
 
@@ -353,37 +340,24 @@ export class ReconcileService {
         ? ` ${report.unmanaged.length} listing(s) on the channel are not managed here.`
         : '');
 
-    const context = encodeJson({
-      source: ALERT_SOURCE,
-      driftCount: report.drifts.length,
-      corrected,
-      // Enough to act on without opening the sync log, but not the whole run.
-      examples: report.drifts.slice(0, 20),
-    });
-
     const title = `${channelName} differs on ${report.drifts.length} listing${
       report.drifts.length === 1 ? '' : 's'
     }`;
 
-    if (ours) {
-      await this.prisma.alert.update({
-        where: { id: ours.id },
-        data: { title, detail, context },
-      });
-      return;
-    }
-
-    await this.prisma.alert.create({
-      data: {
-        kind: 'reconcile_drift',
-        // Warning, not critical. Drift means the two sides disagree, which is
-        // worth a human's attention but is not the active harm an oversell is.
-        severity: 'warning',
-        channelInstanceId,
-        title,
-        detail,
-        context,
-        status: 'open',
+    await this.alerts.raiseFlag({
+      kind: 'reconcile_drift',
+      source: ALERT_SOURCE,
+      // Warning, not critical. Drift means the two sides disagree, which is
+      // worth a human's attention but is not the active harm an oversell is.
+      severity: 'warning',
+      channelInstanceId,
+      title,
+      detail,
+      context: {
+        driftCount: report.drifts.length,
+        corrected,
+        // Enough to act on without opening the sync log, but not the whole run.
+        examples: report.drifts.slice(0, 20),
       },
     });
   }

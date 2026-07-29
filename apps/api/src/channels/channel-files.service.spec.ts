@@ -11,6 +11,7 @@ import { INBOUND_QUEUE, OutboundQueue } from '../queue/outbound-queue.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { InboundWorker } from '../sync/inbound.worker';
 import { SyncEventService } from '../sync/sync-event.service';
+import { AlertsService } from '../sync/alerts.service';
 import { ChannelFilesService } from './channel-files.service';
 import { parseCsv } from '@hub/connector-tcgplayer';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -95,6 +96,7 @@ async function runQueuedJobs(instanceId: string): Promise<void> {
     inventory,
     prisma as unknown as PrismaService,
     new SyncEventService(prisma as unknown as PrismaService),
+    new AlertsService(prisma as unknown as PrismaService),
   );
 
   const pending = await prisma.webhookEvent.findMany({

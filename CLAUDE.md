@@ -19,9 +19,9 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                               |
 | 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                               |
 | 4     | TCGPlayer file-based connector                                          | Done                                               |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — alerting polish and release left |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — release is all that is left      |
 
-`main` is green: **590 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **605 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### Unmerged work
 
@@ -208,6 +208,47 @@ sale against an unmapped listing, which is a different fact.
 
 Manual channels never reach any of this: they do not declare `reconcile`, so
 their expected staleness cannot be mistaken for drift.
+
+### Phase 5 so far: alerting
+
+`apps/api/src/sync/alerts.service.ts` is now the **only** writer of alerts, the
+way `InventoryService` owns quantities. It was written to fix two real defects,
+not as tidying.
+
+- **The inbox was ordered alphabetically.** `orderBy: { severity: 'asc' }` on a
+  string sorts `critical, info, warning` — so routine info notices outranked
+  every warning, which is the exact inversion the ordering existed to prevent.
+  Postgres cannot express a custom order without raw SQL (rule 1), so
+  `Alert.severityRank` stores it: critical 0, warning 1, info 2. The migration
+  backfills, because defaulting every existing row to warning would have
+  silently demoted open criticals. It is a derived column and therefore only
+  safe while one writer owns it — hence the service, and a test asserting the
+  two can never disagree.
+- **Unmapped-listing alerts were unbounded.** The inbound worker called
+  `alert.create` per sale, so one unmapped listing that kept selling produced an
+  alert per sale — the precise flood the outbound worker's own comment warns
+  about, in the file next to it. It is now a flag with an occurrence count.
+
+`raiseFlag` is the "alerts are flags, not tallies" rule made reusable: one open
+alert per `(kind, channelInstanceId, source)`, refreshed in place, with the
+count kept in context so the detail can still say how often. It replaced two
+hand-rolled copies of that logic (outbound, reconcile) and supplied the third.
+
+Two things about it worth not re-deriving:
+
+- **`source` is a discriminator inside `context`, not a column.** Two different
+  facts legitimately share a kind — the reconcile sweep and the inbound worker
+  both file `reconcile_drift` on the same channel — and each must raise and
+  clear without discarding the other. It is filtered in memory because the set
+  is bounded by "open alerts of one kind on one channel", which flag semantics
+  keep at a handful.
+- **Oversells stay one row per occurrence, deliberately.** Each is a different
+  customer whose order someone has to deal with, so collapsing them would hide
+  work rather than reduce noise. `raise` is for those; `raiseFlag` is for a
+  condition that simply stays true.
+
+Severity is refreshed when a flag is re-raised, so a condition that worsens
+moves up the inbox instead of staying where it was first filed.
 
 ### Phase 5 so far: the query console
 
@@ -502,6 +543,8 @@ ciphertext onto another and authenticate to the wrong platform.
 
 **Alerts are flags, not tallies.** One open `sync_failure` per channel, refreshed with the
 latest reason. An alert per failed push floods the inbox and trains operators to ignore it.
+`AlertsService.raiseFlag` is the only way to honour this; `raise` is the deliberate
+exception, for facts like an oversell that each need their own resolution.
 
 **Uploaded files ride the webhook path.** An order import is stored as a `WebhookEvent` with
 topic `file:orders` and queued; the inbound worker parses and applies it exactly as it does
@@ -588,7 +631,7 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Open decisions, not open bugs
 
-Two things are deliberately unfinished. Each is a choice someone should make rather than
+Three things are deliberately unfinished. Each is a choice someone should make rather than
 a defect to fix, and none blocks anything else.
 
 1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
@@ -598,6 +641,12 @@ a defect to fix, and none blocks anything else.
    happens on TCGPlayer's side anyway.
 2. **The query console's audit trail is a log line, not a table.** Deliberate; a queryable
    trail needs its own model and retention story.
+3. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
+   as a generic `sync_failure` warning, so an operator cannot tell "your secret is wrong,
+   go fix it" — which fails forever and is deliberately not retried — from "the platform
+   hiccuped", which will clear on its own. Separating them properly means the SDK giving
+   the core a way to classify a failure as authentication, which is a contract change
+   rather than polish, and every connector then has to mean the same thing by it.
 
 ## What has never been tested
 

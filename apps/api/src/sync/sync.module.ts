@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConnectorsModule } from '../connectors/connectors.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { SyncEventService } from './sync-event.service';
+import { AlertsService } from './alerts.service';
 import { OutboundWorker } from './outbound.worker';
 import { InboundWorker } from './inbound.worker';
 import { ReconcileService } from './reconcile.service';
@@ -22,11 +23,12 @@ import { SyncActivityController } from './sync-activity.controller';
   providers: [
     SyncEventService,
     SyncActivityService,
+    AlertsService,
     ReconcileService,
     OutboundWorker,
     InboundWorker,
     ReconcileWorker,
   ],
-  exports: [SyncEventService, ReconcileService],
+  exports: [SyncEventService, ReconcileService, AlertsService],
 })
 export class SyncModule {}

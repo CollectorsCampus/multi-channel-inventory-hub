@@ -329,6 +329,18 @@ model Alert {
   /// AlertSeverity: info | warning | critical
   severity String @default("warning")
 
+  /// Numeric mirror of `severity`, ascending by urgency: critical 0, warning 1,
+  /// info 2.
+  ///
+  /// Ordering the inbox by the *string* sorts alphabetically — critical, info,
+  /// warning — which floats routine info notices above real warnings. Postgres
+  /// cannot express a custom order without raw SQL, which is banned in core
+  /// (rule 1), so the order is stored rather than computed.
+  ///
+  /// Derived, and therefore only safe while one writer owns it: `AlertsService`
+  /// is that writer, and a test asserts the two never disagree.
+  severityRank Int @default(1) @map("severity_rank")
+
   channelInstanceId String? @map("channel_instance_id")
   inventoryItemId   String? @map("inventory_item_id")
   skuId             String? @map("sku_id")
@@ -350,6 +362,8 @@ model Alert {
   channelInstance ChannelInstance? @relation(fields: [channelInstanceId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
+  // Covers the inbox's own ordering: urgency first, then newest.
+  @@index([status, severityRank, createdAt])
   @@index([kind, status])
   @@index([inventoryItemId])
   @@map("alerts")

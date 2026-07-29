@@ -92,9 +92,13 @@ export class SyncActivityService {
       this.prisma.alert.count({ where }),
       this.prisma.alert.findMany({
         where,
-        // Critical first, then newest. An oversell buried under a page of
+        // Most urgent first, then newest. An oversell buried under a page of
         // routine drift notices is an alert nobody acts on.
-        orderBy: [{ severity: 'asc' }, { createdAt: 'desc' }],
+        //
+        // By `severityRank`, not `severity`: the string sorts alphabetically —
+        // critical, info, warning — which floated info notices above warnings,
+        // the exact inversion this ordering exists to prevent.
+        orderBy: [{ severityRank: 'asc' }, { createdAt: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: { channelInstance: { select: { displayName: true } } },

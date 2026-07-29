@@ -17,6 +17,14 @@ import { fileTopicKind, isFileTopic } from '../channels/file-transport';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { SyncEventService } from './sync-event.service';
+import { AlertsService } from './alerts.service';
+
+/**
+ * Distinguishes this worker's `reconcile_drift` flag from the reconcile
+ * sweep's. Both are legitimately that kind on the same channel, and each must
+ * be able to clear without discarding the other.
+ */
+const UNMAPPED_LISTING_SOURCE = 'inbound:unmapped-listing';
 
 /**
  * Processes inbound platform events (§6).
@@ -40,6 +48,7 @@ export class InboundWorker implements OnModuleInit, OnModuleDestroy {
     private readonly inventory: InventoryService,
     private readonly prisma: PrismaService,
     private readonly syncEvents: SyncEventService,
+    private readonly alerts: AlertsService,
   ) {}
 
   onModuleInit(): void {
@@ -204,17 +213,22 @@ export class InboundWorker implements OnModuleInit, OnModuleDestroy {
         payload: event,
       });
 
-      await this.prisma.alert.create({
-        data: {
-          kind: 'reconcile_drift',
-          severity: 'info',
-          channelInstanceId,
-          title: 'Sale for an unmapped listing',
-          detail:
-            `A sale arrived for listing ${event.externalListingId}, which is not linked to ` +
-            `any inventory item. Stock was not adjusted.`,
-          status: 'open',
-        },
+      // A flag, not a row per sale. An unmapped listing that keeps selling is
+      // one problem — the mapping — and the previous `create` here produced an
+      // alert every time it sold, which is precisely the flood the outbound
+      // worker's own comment warns about.
+      await this.alerts.raiseFlag({
+        kind: 'reconcile_drift',
+        source: UNMAPPED_LISTING_SOURCE,
+        severity: 'info',
+        channelInstanceId,
+        title: (n) =>
+          n === 1 ? 'Sale for an unmapped listing' : `Sales for ${n} unmapped listings`,
+        detail: (n) =>
+          `A sale arrived for listing ${event.externalListingId}, which is not linked to ` +
+          `any inventory item. Stock was not adjusted.` +
+          (n > 1 ? ` This has now happened ${n} times on this channel.` : ''),
+        context: { latestExternalListingId: event.externalListingId },
       });
       return;
     }
@@ -275,18 +289,18 @@ export class InboundWorker implements OnModuleInit, OnModuleDestroy {
     for (const conflict of conflicts) {
       const oversell = conflict.code.startsWith('oversell');
 
-      await this.prisma.alert.create({
-        data: {
-          kind: oversell ? 'oversell' : 'invariant_violation',
-          severity: oversell ? 'critical' : 'warning',
-          channelInstanceId,
-          title: oversell
-            ? `Oversold by ${conflict.shortfall}`
-            : 'Committed stock reduced to match reality',
-          detail: conflict.message,
-          context: JSON.stringify({ allocationId, ...conflict }),
-          status: 'open',
-        },
+      // Deliberately one row per occurrence, not a flag: each oversell is a
+      // different customer whose order someone has to deal with individually,
+      // so collapsing them would hide work rather than reduce noise.
+      await this.alerts.raise({
+        kind: oversell ? 'oversell' : 'invariant_violation',
+        severity: oversell ? 'critical' : 'warning',
+        channelInstanceId,
+        title: oversell
+          ? `Oversold by ${conflict.shortfall}`
+          : 'Committed stock reduced to match reality',
+        detail: conflict.message,
+        context: { allocationId, ...conflict },
       });
     }
   }

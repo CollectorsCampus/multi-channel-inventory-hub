@@ -8,6 +8,7 @@ import { OutboundQueue, outboundQueueName } from '../queue/outbound-queue.servic
 import { InventoryService } from '../inventory/inventory.service';
 import { InboundWorker } from './inbound.worker';
 import { SyncEventService } from './sync-event.service';
+import { AlertsService } from './alerts.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -80,6 +81,7 @@ function makeWorker(connector: Connector): InboundWorker {
     inventory,
     prisma as unknown as PrismaService,
     new SyncEventService(prisma as unknown as PrismaService),
+    new AlertsService(prisma as unknown as PrismaService),
   );
 }
 

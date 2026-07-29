@@ -16,6 +16,10 @@ import { ChannelContextFactory } from '../connectors/channel-context.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { SyncEventService } from './sync-event.service';
+import { AlertsService } from './alerts.service';
+
+/** Distinguishes this worker's `sync_failure` flag from any other source's. */
+const PUSH_FAILURE_SOURCE = 'outbound:push-failure';
 
 /**
  * Performs outbound pushes (§6).
@@ -51,6 +55,7 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
     private readonly inventory: InventoryService,
     private readonly prisma: PrismaService,
     private readonly syncEvents: SyncEventService,
+    private readonly alerts: AlertsService,
   ) {}
 
   onModuleInit(): void {
@@ -246,31 +251,16 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
     // failure is already in the sync log with its own detail; the alert only
     // has to say "this channel is broken", and be refreshed with the latest
     // reason while it stays broken.
-    const existing = await this.prisma.alert.findFirst({
-      where: { kind: 'sync_failure', channelInstanceId, status: 'open' },
-      select: { id: true },
-    });
-
-    if (existing) {
-      await this.prisma.alert.update({
-        where: { id: existing.id },
-        data: {
-          title: `Could not push ${operation} to the channel`,
-          detail: message.slice(0, 2000),
-        },
-      });
-      return;
-    }
-
-    await this.prisma.alert.create({
-      data: {
-        kind: 'sync_failure',
-        severity: 'warning',
-        channelInstanceId,
-        title: `Could not push ${operation} to the channel`,
-        detail: message.slice(0, 2000),
-        status: 'open',
-      },
+    await this.alerts.raiseFlag({
+      kind: 'sync_failure',
+      source: PUSH_FAILURE_SOURCE,
+      severity: 'warning',
+      channelInstanceId,
+      title: `Could not push ${operation} to the channel`,
+      // The count is what distinguishes "one bad push" from "this channel has
+      // been failing all night", which the previous refresh-in-place lost.
+      detail: (n) =>
+        message.slice(0, 2000) + (n > 1 ? ` (${n} consecutive failures on this channel.)` : ''),
     });
   }
 }

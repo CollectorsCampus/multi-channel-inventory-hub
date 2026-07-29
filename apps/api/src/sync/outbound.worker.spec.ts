@@ -10,6 +10,7 @@ import {
 } from '../queue/outbound-queue.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { SyncEventService } from './sync-event.service';
+import { AlertsService } from './alerts.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -345,6 +346,7 @@ describeQueue('outbound queue round trip', () => {
       inventory,
       prisma as unknown as PrismaService,
       new SyncEventService(prisma as unknown as PrismaService),
+      new AlertsService(prisma as unknown as PrismaService),
     );
 
     // Reach past onModuleInit so the test drives one job deterministically

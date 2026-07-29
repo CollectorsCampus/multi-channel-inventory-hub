@@ -8,6 +8,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { ConnectorRegistry } from '../connectors/connector-registry.service';
 import { ReconcileService } from './reconcile.service';
 import { SyncEventService } from './sync-event.service';
+import { AlertsService } from './alerts.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -82,6 +83,7 @@ function makeService(connector: Connector): ReconcileService {
     inventory,
     new SyncEventService(prisma as unknown as PrismaService),
     outbound,
+    new AlertsService(prisma as unknown as PrismaService),
   );
 }
 

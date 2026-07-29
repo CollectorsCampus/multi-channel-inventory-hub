@@ -12,16 +12,47 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 
 ## Where things stand
 
-| Phase | Scope                                                                   | Status                                        |
-| ----- | ----------------------------------------------------------------------- | --------------------------------------------- |
-| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                                          |
-| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                                          |
-| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                          |
-| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                          |
-| 4     | TCGPlayer file-based connector                                          | Done                                          |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — release is all that is left |
+| Phase | Scope                                                                   | Status                                |
+| ----- | ----------------------------------------------------------------------- | ------------------------------------- |
+| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                                  |
+| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                                  |
+| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
+| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
+| 4     | TCGPlayer file-based connector                                          | Done                                  |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.1.0 released 2026-07-29** |
 
 `main` is green: **605 tests**, lint/typecheck/build clean, all four CI jobs passing.
+
+### v0.1.0 (2026-07-29)
+
+Tagged at `35ecf98`. `release.yml` published a multi-arch image — `linux/amd64` and
+`linux/arm64` — as `ghcr.io/collectorscampus/multi-channel-inventory-hub`, tagged `0.1.0`,
+`0.1` and `latest`, digest `sha256:42ead987…`. A GitHub Release carries the CHANGELOG's
+0.1.0 section.
+
+**The repository is still private**, so this is a versioned artifact rather than a public
+release: nobody can read the AGPL terms, the connector guide or the source. Going public is
+a separate, deliberate step — and one to take only after scanning the _history_, not just
+the working tree, since history is published too.
+
+Four things learned doing it, none of them guessable:
+
+- **`latest` is applied by `docker/metadata-action`'s default `flavor: latest=auto`**, not
+  by the workflow's `type=raw,value=latest,enable={{is_default_branch}}` rule — that rule is
+  false on a tag push and never fires. The explicit line is redundant; the tag appears
+  anyway.
+- **The multi-arch build takes ~14 minutes**, nearly all of it `arm64` under QEMU. It is not
+  hung.
+- **`gh` needs the `read:packages` scope** to list published container versions. Without it
+  the tags have to be read out of the build log, which does show them.
+- **Do not pass non-ASCII through `gh --title` from bash** — an em dash arrived as `â€"`.
+  Pass a UTF-8 JSON file to `gh api --input` instead. `--notes-file` was unaffected, so only
+  argv is the problem.
+
+Versions are unified at 0.1.0 across every manifest, and the OpenAPI document reads its
+version from `apps/api/package.json` rather than repeating it. `0.x` is deliberate: MySQL
+and SQLite have no migration history, no real IdP has completed a login, and there is one
+store's worth of production evidence.
 
 ### Unmerged work
 

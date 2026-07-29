@@ -30,10 +30,19 @@ Tagged at `35ecf98`. `release.yml` published a multi-arch image — `linux/amd64
 `0.1` and `latest`, digest `sha256:42ead987…`. A GitHub Release carries the CHANGELOG's
 0.1.0 section.
 
-**The repository is still private**, so this is a versioned artifact rather than a public
-release: nobody can read the AGPL terms, the connector guide or the source. Going public is
-a separate, deliberate step — and one to take only after scanning the _history_, not just
-the working tree, since history is published too.
+**The repository went public on 2026-07-29**, after the history audit below. GitHub detects
+the licence as AGPL-3.0, and the repo, the `v0.1.0` release and the source are all readable
+anonymously.
+
+**The container package is a separate switch, and is still private.** Repository visibility
+does not propagate to GHCR: an anonymous pull of
+`ghcr.io/collectorscampus/multi-channel-inventory-hub` is refused with `DENIED: invalid
+token`, so the image referenced in the release notes cannot yet be pulled by a visitor.
+There is no REST endpoint to change it for a **user**-owned container package — it is done
+at
+`https://github.com/users/CollectorsCampus/packages/container/multi-channel-inventory-hub/settings`.
+Worth re-testing anonymously after flipping it rather than assuming, since the failure is
+silent from the owner's side: an authenticated pull succeeds either way.
 
 Four things learned doing it, none of them guessable:
 

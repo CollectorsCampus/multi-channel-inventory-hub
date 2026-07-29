@@ -39,7 +39,7 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.1.28",
-    "@swc/core": "^1.15.46",
+    "@swc/core": "^1.15.47",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "unplugin-swc": "^1.5.9",

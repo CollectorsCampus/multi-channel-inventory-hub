@@ -709,7 +709,7 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Open decisions, not open bugs
 
-Three things are deliberately unfinished. Each is a choice someone should make rather than
+Four things are deliberately unfinished. Each is a choice someone should make rather than
 a defect to fix, and none blocks anything else.
 
 1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
@@ -719,7 +719,13 @@ a defect to fix, and none blocks anything else.
    happens on TCGPlayer's side anyway.
 2. **The query console's audit trail is a log line, not a table.** Deliberate; a queryable
    trail needs its own model and retention story.
-3. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
+3. **Which marketplace to connect next.** Candidates and the questions to settle before
+   building any of them are in [docs/CONNECTOR_ROADMAP.md](docs/CONNECTOR_ROADMAP.md) —
+   eBay, Cardmarket, CardTrader, Mana Pool, CardNexus and others. Nothing there is
+   verified; the first question for each is not "is there an API" but "is it open to a new
+   applicant at this account tier", which is what ADR 0002 and the Shopify rework both
+   turned on.
+4. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
    as a generic `sync_failure` warning, so an operator cannot tell "your secret is wrong,
    go fix it" — which fails forever and is deliberately not retried — from "the platform
    hiccuped", which will clear on its own. Separating them properly means the SDK giving

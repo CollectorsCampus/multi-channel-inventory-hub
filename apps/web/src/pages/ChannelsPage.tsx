@@ -515,11 +515,20 @@ function FileTransport({ channel }: { channel: Channel }) {
     <div className="file-transport">
       <h3>Manual sync</h3>
       <p className="muted">
-        This channel has no API, so stock moves by file. Upload the sales export{' '}
+        This channel has no API, so data moves by file. Upload the sales export{' '}
         <strong>before</strong> you ship — a pull sheet only lists orders still awaiting fulfilment,
         so anything already shipped has dropped off it and will never be recorded. Re-uploading the
         same file is always safe.
       </p>
+
+      {canExport && (
+        <p className="field-hint">
+          The download sets <strong>prices only</strong>. TCGPlayer&apos;s import can add to or
+          subtract from a quantity but cannot set one, and a file that added stock every time you
+          sent it would not be safe to re-upload — so quantities stay yours to manage there. Upload
+          their inventory export back here to see where the two disagree.
+        </p>
+      )}
 
       <div className="inline-form">
         {canExport && (
@@ -531,7 +540,7 @@ function FileTransport({ channel }: { channel: Channel }) {
             }}
             disabled={exportFile.isPending}
           >
-            {exportFile.isPending ? 'Preparing…' : 'Download listings'}
+            {exportFile.isPending ? 'Preparing…' : 'Download prices'}
           </button>
         )}
 

@@ -83,17 +83,26 @@ export function createTcgPlayerConnector(): Connector {
      * Render current listings as a `MyPricing`-shaped CSV for the operator to
      * upload to TCGPlayer Pro.
      *
-     * Emits the full documented column set, values quoted and CRLF line
-     * endings, so the file is one TCGPlayer produced in every respect we can
-     * observe. Columns we have no authority over — their market and low prices,
-     * the photo URL — are left empty rather than filled with our guesses.
+     * **This is a price export. It deliberately moves no stock.**
      *
-     * **`Add to Quantity` is always 0.** Which of the two quantity columns
-     * TCGPlayer acts on when a file is uploaded is not verified against a live
-     * account. If it is the additive one, a zero is a no-op; if it is
-     * `Total Quantity`, the absolute value there is correct. The worst outcome
-     * of that choice is an export that changes nothing, which is the right way
-     * round for a mistake about somebody's live stock.
+     * TCGPlayer's own documentation settles why (read 2026-07-29, and recorded
+     * in CLAUDE.md): `Add to Quantity` is the only editable quantity field and
+     * it is a *delta* — "a positive number will add that amount to your
+     * quantity" — while `Total Quantity` sits under "do not change any of the
+     * values in the columns underneath these headings". There is no way to say
+     * "set this listing to 4" in their CSV format at all.
+     *
+     * A delta could be computed, and is refused on purpose: it would not be
+     * idempotent. Uploading the same file twice would apply it twice, and the
+     * whole file-transport design — down to the wording on the channel card —
+     * rests on re-uploading being harmless. An operator who cannot re-upload
+     * safely has to remember what they have already sent, which is precisely
+     * the bookkeeping this application exists to remove.
+     *
+     * So `Add to Quantity` is a literal `0`, which their documentation defines
+     * as "no changes to your quantity", and the file's job is price. Quantity
+     * flows the other way: `inventory.import` reads what TCGPlayer holds, and
+     * reconciliation reports the difference.
      */
     async exportListings(ctx: Ctx, req: ExportListingsRequest): Promise<ExportedFile> {
       const rows: Array<Record<string, string>> = [];
@@ -104,6 +113,20 @@ export function createTcgPlayerConnector(): Connector {
         // listing. Matching on name would be a guess about which of several
         // printings and conditions the seller meant, so it is skipped.
         if (!listing.externalListingId) {
+          skipped++;
+          continue;
+        }
+
+        // `TCG Marketplace Price` is required by their validator and must be
+        // 0.01 or greater. A row without one fails validation, and one bad row
+        // is enough to make an operator fix the file by hand — so an unpriced
+        // allocation is left out rather than sent to be rejected.
+        if (listing.price === null || listing.price < 1) {
+          ctx.logger.warn(
+            `Skipping listing ${listing.externalListingId}: TCGPlayer requires a price of at ` +
+              `least 0.01 and this allocation has none.`,
+            { allocationId: listing.allocationId },
+          );
           skipped++;
           continue;
         }
@@ -132,8 +155,12 @@ export function createTcgPlayerConnector(): Connector {
           'TCG Direct Low': '',
           'TCG Low Price With Shipping': '',
           'TCG Low Price': '',
-          // The quantity the core decided. Connectors never compute one.
-          'Total Quantity': String(listing.quantity),
+          // Reference-only on their side and ignored on import. Filled with what
+          // we believe they are already showing, which is what the column means
+          // — putting our *desired* quantity here would read, to anyone opening
+          // the file in a spreadsheet, as a change that is never going to happen.
+          'Total Quantity': String(listing.listedQuantity),
+          // Their documentation: "A 0 will result in no changes to your quantity."
           'Add to Quantity': '0',
           'TCG Marketplace Price': listing.price === null ? '' : formatMoney(listing.price),
           'Photo URL': '',
@@ -141,7 +168,10 @@ export function createTcgPlayerConnector(): Connector {
       }
 
       if (skipped > 0) {
-        ctx.logger.info(`Export omitted ${skipped} listing(s) with no usable TCGPlayer mapping.`);
+        ctx.logger.info(
+          `Export omitted ${skipped} listing(s): no TCGPlayer id, no price, or a condition ` +
+            `TCGPlayer has no spelling for.`,
+        );
       }
 
       const seller = String(ctx.config.sellerName ?? '').trim();

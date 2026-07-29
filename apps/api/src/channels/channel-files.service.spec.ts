@@ -238,18 +238,41 @@ describeFiles('channel file transport', () => {
       expect(unmapped).toBe(1);
     });
 
-    it('exports the quantity the ledger says, not the one we last pushed', async () => {
+    /**
+     * The export moves no stock, and that is the documented behaviour rather
+     * than a limitation of this test. TCGPlayer's CSV import can only add to or
+     * subtract from a quantity, never set one, so a file that carried a delta
+     * would apply it again on every re-upload — and re-uploading being harmless
+     * is what the whole manual loop rests on.
+     */
+    it('never asks TCGPlayer to move stock, however far the ledger has drifted', async () => {
       const { channel, land } = await seed();
 
-      // Stock arrives but nothing has been pushed yet: listedQuantity is stale
-      // by construction, and exporting it would send our own old guess back.
+      // Stock arrives and nothing has been pushed, so the ledger now wants 15
+      // where we believe 10 is listed.
       await inventory.adjustQuantityOnHand(land.id, 5, { reason: 'intake' });
 
       const { file } = await files.exportListings(channel.id);
       const table = parseCsv(file.content.toString('utf8'));
       const row = table.rows.find((r) => r['TCGplayer Id'] === SKU_LAND);
 
-      expect(row?.['Total Quantity']).toBe('15');
+      expect(row?.['Add to Quantity']).toBe('0');
+      // The reference column carries what we believe is live, not the 15 the
+      // ledger wants — writing that would read as a change that cannot happen.
+      expect(row?.['Total Quantity']).toBe('10');
+    });
+
+    it('omits an allocation their validator would reject for having no price', async () => {
+      const { channel } = await seed();
+      await prisma.channelAllocation.updateMany({
+        where: { channelInstanceId: channel.id, externalListingId: SKU_LAND },
+        data: { price: null },
+      });
+
+      const { file } = await files.exportListings(channel.id);
+      const table = parseCsv(file.content.toString('utf8'));
+
+      expect(table.rows.map((r) => r['TCGplayer Id'])).toEqual([SKU_CREATURE]);
     });
 
     it('recombines our three SKU fields into one Condition string', async () => {

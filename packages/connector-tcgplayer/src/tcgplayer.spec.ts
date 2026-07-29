@@ -356,6 +356,7 @@ describe('listing.export', () => {
       setName?: string;
     };
     quantity: number;
+    listedQuantity: number;
     price: number | null;
     currency: string;
   }
@@ -373,6 +374,7 @@ describe('listing.export', () => {
       setName: 'Example Set One',
     },
     quantity: 3,
+    listedQuantity: 3,
     price: 499,
     currency: 'USD',
     ...overrides,
@@ -421,24 +423,44 @@ describe('listing.export', () => {
     expect(table.rows[0]!.Condition).toBe('Moderately Played Unlimited Holofoil - Japanese');
   });
 
-  it('writes the quantity the core decided, and adds nothing', async () => {
-    // Which column TCGPlayer acts on when a file is uploaded is unverified
-    // against a live account. A zero in the additive column is a no-op under
-    // either reading, which is the right way round for a mistake about
-    // somebody's live stock.
-    const table = await exportRows([listing({ quantity: 7 })]);
-    expect(table.rows[0]!['Total Quantity']).toBe('7');
+  /**
+   * TCGPlayer's documented import semantics: `Add to Quantity` is the only
+   * editable quantity field and it is a delta — "a 0 will result in no changes
+   * to your quantity" — while `Total Quantity` is reference-only.
+   *
+   * So this export moves no stock, on purpose. A delta could be computed and is
+   * refused because it would not be idempotent, and re-uploading being harmless
+   * is a property the whole file-transport design depends on.
+   */
+  it('never moves stock, whatever the ledger says', async () => {
+    const table = await exportRows([listing({ quantity: 7, listedQuantity: 2 })]);
+
     expect(table.rows[0]!['Add to Quantity']).toBe('0');
+    // Reference-only on their side; it carries what we believe is already
+    // listed, not the desired figure, which would read as a change that is
+    // never going to happen.
+    expect(table.rows[0]!['Total Quantity']).toBe('2');
+  });
+
+  /**
+   * `TCG Marketplace Price` is required by their validator and must be 0.01 or
+   * greater. One invalid row makes an operator repair the file by hand, so an
+   * unpriced allocation is left out rather than sent to be rejected.
+   */
+  it('omits an allocation with no price, since their validator requires one', async () => {
+    const table = await exportRows([listing({ price: null }), listing({ price: 0 })]);
+    expect(table.rows).toHaveLength(0);
+    expect(logged.join(' ')).toMatch(/at least 0\.01/);
+  });
+
+  it('keeps a one-cent price, which is their documented minimum', async () => {
+    const table = await exportRows([listing({ price: 1 })]);
+    expect(table.rows[0]!['TCG Marketplace Price']).toBe('0.01');
   });
 
   it('renders cents as a decimal string without touching a float', async () => {
     const table = await exportRows([listing({ price: 127500 })]);
     expect(table.rows[0]!['TCG Marketplace Price']).toBe('1275.00');
-  });
-
-  it('leaves an unpriced allocation blank rather than sending zero', async () => {
-    const table = await exportRows([listing({ price: null })]);
-    expect(table.rows[0]!['TCG Marketplace Price']).toBe('');
   });
 
   /**
@@ -471,9 +493,10 @@ describe('listing.export', () => {
 
   it('round-trips its own export back through inventory.import', async () => {
     // The strongest available check that the emitted shape is the shape we
-    // read, short of a live account.
+    // read, short of a live account. The quantity that comes back is the one we
+    // believed was listed, because that is what the reference column carries.
     const file = await connector.exportListings!(makeCtx(), {
-      listings: [listing({ quantity: 4, price: 1333 })],
+      listings: [listing({ quantity: 9, listedQuantity: 4, price: 1333 })],
     });
     const result = await connector.importInventory!(makeCtx(), {
       filename: file.filename,

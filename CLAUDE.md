@@ -21,7 +21,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                               |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — alerting polish and release left |
 
-`main` is green: **549 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **551 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### What Phase 4 actually shipped
 
@@ -52,13 +52,11 @@ extending:**
    token — `HOLOFOIL`, `1ST_EDITION_HOLOFOIL`, `UNLIMITED_HOLOFOIL`. Lossless and
    reversible, but a real `edition` column would mean changing `Sku`'s natural key, which
    was too large a change to make mid-phase.
-2. **`Total Quantity` vs `Add to Quantity` on _upload_ is unverified.** Both columns are
-   documented below as they appear in an export; which one TCGPlayer acts on when a file is
-   uploaded back is not known. The export writes the desired quantity to `Total Quantity`
-   and a literal `0` to `Add to Quantity` — a no-op under the additive reading, correct
-   under the absolute one. Worst case the export changes nothing; it cannot overstate
-   stock. **Confirm this against a real Pro account before anyone relies on the outbound
-   half.**
+2. **`listing.export` is a _price_ export and deliberately moves no stock.** See "Upload
+   semantics" below for why: TCGPlayer's CSV can only add to or subtract from a quantity,
+   never set one, and a delta would stop the file being safe to re-upload. Prices are
+   absolute and idempotent, so those are what it carries. Quantity flows the other way —
+   `inventory.import` plus reconciliation reports where the two disagree.
 
 ### Phase 5 so far: reconciliation
 
@@ -254,7 +252,50 @@ row; 218 of 219 pull-sheet ids appear in the pricing export; and 21 product line
 far more than Magic and Pokémon — One Piece, Lorcana, Flesh & Blood, Union Arena,
 Gundam, sleeves, deck boxes and playmats all round-trip.
 
-Nothing about the **upload** direction is verified by any of this. See Phase 4 above.
+### Upload semantics (from TCGPlayer's own documentation, read 2026-07-29)
+
+Settled by the Level 4 seller help pages, not by experiment. Sources: _Importing and
+Exporting CSVs to Mass Update Prices and Quantities_, _Using Our Pricing Tools_, and
+_How do I clear my live inventory_.
+
+- **`Add to Quantity` is the only editable quantity field, and it is a _delta_.**
+  Verbatim: "A positive number will add that amount to your quantity. A 0 will result in
+  no changes to your quantity. If you place a negative number in this field, it will
+  remove that amount from your existing quantity." Quantity floors at 0.
+- **`Total Quantity` is reference-only.** It sits under a heading reading "Do not change
+  any of the values in the columns underneath these headings." There is **no way to set
+  an absolute quantity by CSV.** Our export writes the desired quantity there and `0` to
+  `Add to Quantity`, so today it changes nothing at all.
+- **`TCG Marketplace Price` is required and must be ≥ 0.01.** Our export emits an empty
+  string for an unpriced allocation, which fails their validation — a real bug.
+- **Import merges; it never replaces.** Rows absent from the file are untouched. Clearing
+  is a separate `Delete Inventory` action behind a product-line/set picker and an email
+  confirmation. The fear that a one-row test file could zero an inventory was unfounded.
+- **There is a staging and preview flow.** `Import To Staged` validates headers, records
+  and duplicates, then `Save Updates`, and only an explicit `Move to Live` commits.
+  Testing against a real account is therefore safe if you stop at staged.
+- **Duplicate `TCGplayer Id` values are rejected** for the whole file.
+- **Some accounts carry extra columns:** `My Store Reserve Quantity` and `My Store Price`
+  when the My Store channel is on, and `Pending Quantity` appears in their glossary. Add
+  these to the connector's `known` set or every such export reports unrecognised columns.
+
+**What the export therefore does.** An additive-only column makes "set the quantity to N"
+inexpressible, and a delta (`desired − listedQuantity`) would **not be idempotent** —
+uploading the same file twice applies it twice, contradicting the "re-uploading is always
+safe" property the design and its UI copy both rest on. So:
+
+- `Add to Quantity` is always the literal `0`, which their documentation defines as "no
+  changes to your quantity".
+- `TCG Marketplace Price` carries our price. Absolute, idempotent, and a real job on its
+  own. An allocation with no price, or under one cent, is **omitted** rather than sent to
+  fail their validator.
+- `Total Quantity` carries `listedQuantity` — what we believe is already live. It is
+  reference-only and ignored on import; writing the _desired_ figure there would read, to
+  anyone opening the file in a spreadsheet, as a change that is never going to happen.
+
+Reinstating quantity sync would mean tracking per allocation how much has already been
+exported, so a re-upload sends nothing twice. That is a real feature, not a tweak, and it
+has not been built.
 
 **Operational caveat for `orders.import`:** a pull sheet lists orders _awaiting
 fulfilment_, not a sales history. Shipped orders drop off it, so an operator who ships

@@ -70,6 +70,13 @@ export const MY_PRICING = {
     'TCG Low Price',
     'Add to Quantity',
     'Photo URL',
+    // Present only on some accounts, per TCGPlayer's own column glossary: the
+    // My Store pair appears when that channel is enabled, and Pending Quantity
+    // covers stock committed to an order but not yet shipped. Listing them here
+    // stops a perfectly healthy export from reporting unrecognised columns.
+    'My Store Reserve Quantity',
+    'My Store Price',
+    'Pending Quantity',
   ],
 } as const satisfies FileFormat;
 

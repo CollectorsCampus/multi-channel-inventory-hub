@@ -168,7 +168,18 @@ export interface ExportListingsRequest {
   listings: Array<
     ListingRef & {
       sku: SkuDescriptor;
+      /** What the core has decided this channel should be advertising. */
       quantity: number;
+      /**
+       * What we believe it is advertising now, written only after a successful
+       * push.
+       *
+       * Carried alongside `quantity` because some platforms accept only a
+       * *change* rather than an absolute value — TCGPlayer's CSV import has no
+       * way to express "set this to 4" — so a connector may need both to say
+       * anything truthful, or to decide it cannot.
+       */
+      listedQuantity: number;
       price: number | null;
       currency: string;
     }

@@ -96,6 +96,28 @@ Scopes the connector actually needs, derived from its own documents:
 `read_products,write_products,read_inventory,write_inventory,read_locations,read_orders`.
 Not `write_orders` — §6 is explicit that we never cancel or modify an order.
 
+**Confirmed against the live store (2026-07-29).** A read-only probe drove the connector's
+own client and token source against a real shop. Everything passed:
+
+- The client-credentials exchange returns a `shpat_` token with `expires_in` 86399.
+- `2026-07` is a live version, and `fetchLiveState` — the nested
+  `inventoryItem → inventoryLevels → quantities(names:["available"])` read with location
+  scoping, the most complex query we make — returns what it should.
+- `priceToCents` is right on real data: $104.99 → `10499`, $7.99 → `799`.
+- The token is cached across calls rather than re-minted.
+
+Two operational notes that cost real time to work out:
+
+1. **Releasing a version is not installing it.** Client credentials fail with "The
+   application is not installed on this shop" until you go to the app's **Home** page in
+   the Dev Dashboard, scroll down, and use **Install app**. The failure is correctly
+   non-retryable, so a channel in this state alerts once rather than retrying into a wall.
+2. **`shop.myshopifyDomain` may not be the domain you connected with.** This store answers
+   on both `midwestgamingandcollectibles.myshopify.com` and the permanent
+   `0tq4bx-09.myshopify.com` that Shopify reports as canonical. Prefer the canonical one in
+   channel config: a store-name change would break the alias but never the permanent
+   domain.
+
 ### Phase 5 so far: reconciliation
 
 `apps/api/src/sync/reconcile.ts` holds the judgement as pure functions, the way
@@ -484,13 +506,11 @@ TCG Project`) — use `-LiteralPath`; some deletion commands are blocked by the 
 
 Worth stating plainly, because the README is optimistic by nature:
 
-- **No live Shopify store.** The connector has only ever run against a mock and a fake
-  domain. HMAC verification, the GraphQL shapes and the location scoping are unproven
-  against the real Admin API — and now so is the client-credentials exchange, whose
-  request shape comes from Shopify's documentation rather than from a successful call.
-  The API version bump to `2026-07` also means the two mutations
-  (`inventorySetQuantities`, `productVariantsBulkUpdate`) are running against a schema
-  nothing has been tried on.
+- **Shopify's write path and webhooks are unproven.** The read half is now confirmed
+  against the real store — authentication, the `2026-07` schema, `fetchLiveState`, price
+  decoding and location scoping all work. What has never run is the half that changes
+  something: `inventorySetQuantities` and `productVariantsBulkUpdate` on the new schema,
+  and HMAC verification against a webhook Shopify actually sent.
 - **TCGPlayer is now proven in both directions** — imports against the account's real
   exports, and a generated file accepted through `Import To Staged` on the live account.
   What remains untried is `Move To Live`, which was deliberately not pressed: with

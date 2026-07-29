@@ -1,0 +1,54 @@
+name: CodeQL
+
+# Static analysis, free for public repositories.
+#
+# Deliberately not part of ci.yml: it takes minutes rather than seconds, and
+# gating every push on it would slow the loop that actually catches bugs here —
+# the tests. This runs alongside instead, and on a weekly schedule so newly
+# published queries reach existing code rather than only new commits.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Monday early, so a new finding is waiting at the start of the week rather
+    # than landing mid-change.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Writing the results to the Security tab is the whole point.
+      security-events: write
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          # One language: the SPA and the API are both TypeScript, and CodeQL
+          # analyses them together under this identifier.
+          languages: javascript-typescript
+          # security-and-quality is noisier than the default but includes the
+          # correctness queries, which is the half worth having on a codebase
+          # whose failure mode is someone's stock going wrong rather than a
+          # crash.
+          queries: security-and-quality
+
+      # No build step. CodeQL extracts JavaScript and TypeScript from source,
+      # so compiling first would cost minutes and analyse generated output
+      # instead of the code that is actually reviewed.
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript

@@ -1,0 +1,62 @@
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # npm/pnpm. One entry at the root: this is a pnpm workspace with a single
+  # lockfile, so Dependabot resolves every package from here. Adding a config
+  # entry per workspace package would open duplicate PRs against the same
+  # pnpm-lock.yaml and conflict with each other.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Patch and minor bumps land as one PR per week rather than a dozen. The
+      # test suite is the gate; reviewing twelve identical-looking bumps
+      # individually is how a real breaking change gets rubber-stamped.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Majors are deliberately excluded from automation. Each of these has
+      # broken something here before or would need a migration read first:
+      # Prisma owns the schema and migration history, NestJS majors move DI and
+      # platform adapters, and Vite/React majors move the build.
+      - dependency-name: prisma
+        update-types: [version-update:semver-major]
+      - dependency-name: '@prisma/client'
+        update-types: [version-update:semver-major]
+      - dependency-name: '@nestjs/*'
+        update-types: [version-update:semver-major]
+      - dependency-name: vite
+        update-types: [version-update:semver-major]
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions. This is the one that already bit us: every action was
+  # pinned a major or more behind, all four CI jobs were warning that Node 20
+  # was deprecated, and the fix was a manual eight-action bump (PR #1). Weekly
+  # updates keep that from silently accumulating again.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ['*']
+
+  # ---------------------------------------------------------------------------
+  # The runtime base image. `node:24` in the Dockerfile is what actually ships,
+  # so a CVE in the base image is a CVE in the published container.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

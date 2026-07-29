@@ -1,0 +1,82 @@
+name: Bug report
+description: Something behaves differently from how it is documented.
+labels: [bug]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste credentials.** Shop domains, access tokens, client secrets, API keys
+        and `CREDENTIAL_MASTER_KEY` should all be redacted before anything goes in a public
+        issue. If the bug is a security problem, do not file here — see
+        [SECURITY.md](https://github.com/CollectorsCampus/multi-channel-inventory-hub/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a pooled allocation on ...
+        2. Push a quantity ...
+        3. The channel shows ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag or commit. `/api/docs/openapi.json` reports the running version.
+      placeholder: '0.1.0'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Which channel is involved
+      options:
+        - Not channel-specific
+        - Shopify
+        - TCGPlayer
+        - Other / a connector I wrote
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      description: Only Postgres is supported today — see the README.
+      options:
+        - PostgreSQL
+        - MySQL / MariaDB (unsupported)
+        - SQLite (unsupported)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >
+        API logs around the failure, and the Sync Activity entry if there is one. Redact
+        first. This is automatically formatted as code.
+      render: shell
+
+  - type: textarea
+    id: quantities
+    attributes:
+      label: If quantities are wrong, what are they
+      description: >
+        On-hand, each allocation's mode and cap, `listedQuantity`, and what the channel
+        shows. Quantity bugs are almost impossible to diagnose without all of these,
+        because the invariant involves every allocation on the SKU at once.

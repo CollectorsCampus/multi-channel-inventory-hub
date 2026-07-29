@@ -1,0 +1,39 @@
+name: Feature request
+description: Something this should do and does not.
+labels: [enhancement]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a new marketplace, use the connector request template instead.
+
+        Some gaps are deliberate rather than missing — TCGPlayer quantity sync, the query
+        console's audit trail, MySQL and SQLite support. Those are listed under "Open
+        decisions, not open bugs" in
+        [CLAUDE.md](https://github.com/CollectorsCampus/multi-channel-inventory-hub/blob/main/CLAUDE.md),
+        with the reasoning. Arguing with the reasoning is welcome; it is just a better
+        starting point than the request alone.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: >
+        What you are trying to do and where it breaks down — not the solution yet. Real
+        selling situations are the most useful thing here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you are doing instead today
+      description: Including "nothing, I just recount by hand" — that is useful signal.

@@ -1,0 +1,9 @@
+blank_issues_enabled: true
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/CollectorsCampus/multi-channel-inventory-hub/security/advisories/new
+    about: Do not open a public issue. Report privately here — see SECURITY.md.
+  - name: Question or idea
+    url: https://github.com/CollectorsCampus/multi-channel-inventory-hub/discussions
+    about: For anything that is not yet a specific bug or request.

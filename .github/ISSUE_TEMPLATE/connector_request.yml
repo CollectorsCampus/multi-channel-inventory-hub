@@ -1,0 +1,86 @@
+name: Connector request
+description: Propose a marketplace this should sync with.
+labels: [connector]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Candidates already recorded, and the reasoning behind them, are in
+        [docs/CONNECTOR_ROADMAP.md](https://github.com/CollectorsCampus/multi-channel-inventory-hub/blob/main/docs/CONNECTOR_ROADMAP.md).
+        Please check there first — and if your marketplace is listed, adding what you know
+        about the questions below is more useful than a new issue.
+
+        **The first question is never "does it have an API".** It is whether that API is
+        open to a new applicant today, at the seller tier you actually hold. TCGPlayer has a
+        perfectly good API that is closed to new applicants, which is why its connector is
+        file-based.
+
+  - type: input
+    id: marketplace
+    attributes:
+      label: Marketplace
+      placeholder: 'eBay, Cardmarket, ...'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: access
+    attributes:
+      label: Can a new seller get programmatic access today?
+      options:
+        - 'Yes — open registration'
+        - 'Yes, but it needs an application or review'
+        - 'Only at a higher seller tier'
+        - 'No API, but there are seller CSV exports'
+        - 'No, and no exports'
+        - 'I do not know'
+    validations:
+      required: true
+
+  - type: input
+    id: docs
+    attributes:
+      label: Link to the API or export documentation
+      description: The single most useful thing you can provide.
+
+  - type: dropdown
+    id: quantity
+    attributes:
+      label: Can it set an absolute quantity?
+      description: >
+        A platform that can only add or subtract is a real constraint, not a detail —
+        it is why TCGPlayer quantity sync does not exist.
+      options:
+        - 'Sets an absolute quantity'
+        - 'Delta only (add/subtract)'
+        - 'I do not know'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: orders
+    attributes:
+      label: How would sales arrive?
+      options:
+        - Webhooks
+        - Polling an orders endpoint
+        - A file the seller downloads
+        - 'I do not know'
+    validations:
+      required: true
+
+  - type: textarea
+    id: identity
+    attributes:
+      label: How does it identify a card?
+      description: >
+        Does it have an id per condition/printing/language, or only per product? Does it
+        model edition or finish separately? Our `Sku` is condition + printing + language,
+        so anything beyond that needs a composite token, as TCGPlayer's edition did.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Rate limits, sandbox availability, whether you sell there yourself.

@@ -21,7 +21,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — reconciliation done |
 
-`main` is green: **502 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **547 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### What Phase 4 actually shipped
 
@@ -132,6 +132,48 @@ data an admin can already read through the UI.
 not to a table. A queryable audit trail would need its own model and retention
 story, and `SyncEvent` is the wrong home — it is the log of external mutations,
 and a read is neither.
+
+### Phase 5 so far: OIDC
+
+`apps/api/src/auth/oidc/` — generic OpenID Connect, authorization code flow with
+PKCE, selected by `AUTH_PROVIDER=oidc`. No schema change was needed: Phase 0
+already left `User.provider`, `User.externalId` and `@@unique([provider,
+externalId])` in place.
+
+**ID token verification is the one thing not hand-written.** It goes through
+`jose` with an explicit asymmetric algorithm allow-list, the expected issuer and
+audience, and a clock tolerance. Discovery, the redirect and the code exchange
+are ordinary HTTP and live in the repo where they can be read; JWT signature
+verification against a rotating JWKS is where hand-rolled OIDC fails silently,
+so it is delegated. `jose`'s `customFetch` hook routes the JWKS through the same
+injected fetch as everything else — otherwise it would be a second network seam
+no test could reach, and it is the input that decides whether a token is real.
+
+Four decisions, all confirmed with the operator rather than assumed:
+
+- **Break-glass local login is on by default** (`OIDC_ALLOW_LOCAL_LOGIN`). This is
+  self-hosted software; a mistyped redirect URI locking someone out of their own
+  inventory is a worse failure than a second door. The door only admits accounts
+  that already have a password, and `LocalAuthProvider` refuses any user whose
+  `provider` is not `local`, so an SSO identity cannot be impersonated through it.
+- **The IdP is authoritative when `OIDC_ROLE_CLAIM` is set** — the mapped role is
+  reapplied on every login, so revoking a group takes effect at once. With no
+  claim configured, roles are local after provisioning and are never overwritten.
+- **The first identity to sign in on an empty instance becomes admin**, mirroring
+  first-run local setup. Only ever fires at user count zero.
+- **Users are keyed on `sub`, never email.** Addresses get reassigned between
+  people, and matching on one would hand a new joiner the previous holder's access.
+
+Two properties that are stricter than the specification, on purpose: every
+discovery endpoint must share the issuer's origin (the token endpoint receives
+the client secret), and `returnTo` must be a single-slash absolute path (an open
+redirect on a login endpoint is how a phishing URL gets to start on the victim's
+own domain).
+
+**`jose` is ESM-only and `apps/api` compiles to CommonJS.** That works because
+Node 22.12+ can `require()` an ESM module with no top-level await — which is why
+`engines.node` is `>=22.12.0` rather than the `>=22.11.0` it said before. The
+Dockerfile pins `node:24`.
 
 ## TCGPlayer file formats (verified against a real Pro account, 2026-07-28)
 
@@ -325,6 +367,10 @@ Worth stating plainly, because the README is optimistic by nature:
   acts on (Phase 4 above); everything inbound is exercised against the real shapes.
 - **MySQL and SQLite are not supported yet.** Only the schema is proven portable; there is
   no migration history for them (ADR 0001 §4).
+- **No real identity provider.** OIDC is exercised end to end against a fake issuer
+  with real RSA keys — every forged-token case is a test — but no Keycloak, Entra or
+  Auth0 has ever completed a login. What is unproven is the shape of real discovery
+  documents and claims, not the verification logic.
 - **Reconciliation has never seen a real platform disagree.** The loop is exercised
   end to end against a fake connector that reports whatever a test tells it to, and by
   hand against a running instance — but no live Shopify store has ever drifted and been

@@ -91,6 +91,9 @@ importers:
       ioredis:
         specifier: ^5.11.1
         version: 5.11.1
+      jose:
+        specifier: ^6.2.4
+        version: 6.2.4
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -3980,6 +3983,12 @@ packages:
       }
     hasBin: true
 
+  jose@6.2.4:
+    resolution:
+      {
+        integrity: sha512-N8acGzVsQy6M/fjFcxtysNc4Q379TcM5dM/qKkNtsHFji88yANnXTr7BLeP75iPnFwBfQzM/jg2BZ9+HZrHCZA==,
+      }
+
   js-tokens@4.0.0:
     resolution:
       {
@@ -7668,6 +7677,8 @@ snapshots:
       supports-color: 8.1.1
 
   jiti@2.7.0: {}
+
+  jose@6.2.4: {}
 
   js-tokens@4.0.0: {}
 

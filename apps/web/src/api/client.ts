@@ -86,7 +86,13 @@ export interface AuthStatus {
   needsSetup: boolean;
   providerKey: string;
   providerDisplayName: string;
+  /**
+   * Whether to offer a password form. With SSO active this reports only whether
+   * break-glass local login is still permitted.
+   */
   supportsDirectLogin: boolean;
+  /** Where to send the browser to begin a redirect login, or null when there is none. */
+  ssoStartPath: string | null;
 }
 
 export interface CurrentUser {

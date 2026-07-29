@@ -20,6 +20,15 @@ export function LoginPage() {
   const pending = login.isPending || setup.isPending;
   const serverError = (login.error ?? setup.error)?.message ?? null;
 
+  // The OIDC callback redirects here with ?error=... when a login fails, since
+  // bouncing someone back through their provider to a raw JSON body would be a
+  // dead end.
+  const ssoError = new URLSearchParams(window.location.search).get('error');
+
+  const ssoStartPath = status.data?.ssoStartPath ?? null;
+  // With SSO active this is false only when break-glass local login is off.
+  const showPasswordForm = status.data?.supportsDirectLogin ?? true;
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setLocalError(null);
@@ -56,53 +65,84 @@ export function LoginPage() {
           : status.data?.providerDisplayName}
       </p>
 
-      <form onSubmit={handleSubmit}>
-        <label htmlFor="username">Username</label>
-        <input
-          id="username"
-          name="username"
-          autoComplete="username"
-          required
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-        />
+      {ssoError && (
+        <p className="error" role="alert">
+          {ssoError}
+        </p>
+      )}
 
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete={needsSetup ? 'new-password' : 'current-password'}
-          required
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+      {/* Offered above the password form: where SSO is configured it is the way
+          in, and the form below it is the exception rather than the default. */}
+      {ssoStartPath && !needsSetup && (
+        <>
+          {/* A plain link, not a fetch — the flow is a browser redirect to
+              another origin, which XHR cannot follow. */}
+          <a className="button-link" href={ssoStartPath}>
+            Sign in with {status.data?.providerDisplayName ?? 'single sign-on'}
+          </a>
 
-        {needsSetup && (
-          <>
-            <label htmlFor="confirmPassword">Confirm password</label>
-            <input
-              id="confirmPassword"
-              name="confirmPassword"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-            />
-          </>
-        )}
+          {showPasswordForm && (
+            <p className="muted sso-divider">
+              or sign in with a password. This is kept available so a problem with your identity
+              provider cannot lock you out of your own instance.
+            </p>
+          )}
+        </>
+      )}
 
-        {(localError ?? serverError) && (
-          <p className="error" role="alert">
-            {localError ?? serverError}
-          </p>
-        )}
+      {!showPasswordForm && !needsSetup ? (
+        <p className="muted">
+          This instance requires single sign-on. Password sign-in has been switched off.
+        </p>
+      ) : (
+        <form onSubmit={handleSubmit}>
+          <label htmlFor="username">Username</label>
+          <input
+            id="username"
+            name="username"
+            autoComplete="username"
+            required
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
 
-        <button type="submit" disabled={pending}>
-          {pending ? 'Working…' : needsSetup ? 'Create admin' : 'Sign in'}
-        </button>
-      </form>
+          <label htmlFor="password">Password</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autoComplete={needsSetup ? 'new-password' : 'current-password'}
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          {needsSetup && (
+            <>
+              <label htmlFor="confirmPassword">Confirm password</label>
+              <input
+                id="confirmPassword"
+                name="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </>
+          )}
+
+          {(localError ?? serverError) && (
+            <p className="error" role="alert">
+              {localError ?? serverError}
+            </p>
+          )}
+
+          <button type="submit" disabled={pending}>
+            {pending ? 'Working…' : needsSetup ? 'Create admin' : 'Sign in'}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

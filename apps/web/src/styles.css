@@ -453,6 +453,31 @@ a {
   color: var(--accent);
 }
 
+/* --- sign-in --- */
+
+/* An anchor that has to read as the primary action: the SSO flow is a browser
+   redirect to another origin, which a fetch cannot follow. */
+.button-link {
+  display: block;
+  text-align: center;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+  margin-top: 0.75rem;
+}
+
+.button-link:hover {
+  filter: brightness(1.08);
+}
+
+.sso-divider {
+  margin: 1rem 0 0;
+  font-size: 0.8rem;
+}
+
 /* --- query console --- */
 
 /* Monospaced and resizable: a real reporting query is several lines long, and

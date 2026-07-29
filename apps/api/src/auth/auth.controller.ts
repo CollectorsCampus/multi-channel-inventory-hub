@@ -47,6 +47,9 @@ export class AuthController {
       providerKey: this.provider.key,
       providerDisplayName: this.provider.displayName,
       supportsDirectLogin: this.provider.supportsDirectLogin,
+      // Derived from the provider rather than from config, so the login page
+      // cannot offer an SSO button on a deployment that has no SSO bound.
+      ssoStartPath: this.provider.key === 'oidc' ? '/api/auth/oidc/start' : null,
     };
   }
 

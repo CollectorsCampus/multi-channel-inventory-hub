@@ -80,6 +80,18 @@ export class AuthStatusDto {
   @ApiProperty()
   providerDisplayName!: string;
 
-  @ApiProperty({ description: 'False for redirect-based providers such as OIDC.' })
+  @ApiProperty({
+    description:
+      'Whether a username and password form should be offered. With SSO active this ' +
+      'reports only whether break-glass local login is still permitted.',
+  })
   supportsDirectLogin!: boolean;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Where to send the browser to begin a redirect-based login, or null when the ' +
+      'active provider has no such flow.',
+  })
+  ssoStartPath!: string | null;
 }

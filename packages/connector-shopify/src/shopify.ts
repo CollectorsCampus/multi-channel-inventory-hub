@@ -67,13 +67,20 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
     configSchema: {
       type: 'object',
-      required: ['shopDomain', 'locationId'],
+      required: ['shopDomain', 'clientId', 'locationId'],
       properties: {
         shopDomain: {
           type: 'string',
           title: 'Shop domain',
           description: 'e.g. my-store.myshopify.com',
           pattern: '^[a-z0-9][a-z0-9-]*\\.myshopify\\.com$',
+        },
+        clientId: {
+          type: 'string',
+          title: 'Client ID',
+          description:
+            'From your app’s Settings page in the Shopify Dev Dashboard. Not a secret — it ' +
+            'identifies the app, and the secret below is what proves it is you.',
         },
         locationId: {
           type: 'string',
@@ -84,9 +91,20 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       },
     },
 
-    // Never in configSchema: the core stores these encrypted and supplies them
-    // only inside Ctx.
-    secretFields: ['accessToken', 'webhookSecret'],
+    /**
+     * Never in configSchema: the core stores these encrypted and supplies them
+     * only inside Ctx.
+     *
+     * `clientSecret` replaced the old `accessToken` when Shopify retired legacy
+     * custom apps on 1 January 2026 — there is no longer a permanent token to
+     * store, only credentials to exchange for a 24-hour one (tokens.ts).
+     *
+     * `webhookSecret` is optional now. Webhooks an app registers are signed
+     * with that app's client secret, so most deployments need only the one
+     * value; it stays available for a webhook created by hand with a secret of
+     * its own.
+     */
+    secretFields: ['clientSecret', 'webhookSecret'],
 
     capabilities: [
       'listing.push',
@@ -155,7 +173,11 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
      * changes whitespace and key order, and the digest then never matches.
      */
     verifyWebhook(ctx: Ctx, headers: Record<string, string>, rawBody: Buffer): boolean {
-      const secret = ctx.secrets.webhookSecret;
+      // Shopify signs an app's webhooks with that app's client secret, so a
+      // deployment that registered them through the app needs nothing more.
+      // An explicit webhookSecret still wins, for a subscription created by
+      // hand with a secret of its own.
+      const secret = ctx.secrets.webhookSecret || ctx.secrets.clientSecret;
       if (!secret) return false;
 
       const presented = headers[HMAC_HEADER] ?? headers[HMAC_HEADER.toLowerCase()];

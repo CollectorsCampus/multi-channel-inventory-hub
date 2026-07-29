@@ -21,7 +21,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                               |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — alerting polish and release left |
 
-`main` is green: **551 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **576 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### What Phase 4 actually shipped
 
@@ -57,6 +57,44 @@ extending:**
    never set one, and a delta would stop the file being safe to re-upload. Prices are
    absolute and idempotent, so those are what it carries. Quantity flows the other way —
    `inventory.import` plus reconciliation reports where the two disagree.
+
+### Shopify authentication changed under us (2026-07-29)
+
+**Shopify retired legacy custom apps on 1 January 2026.** There is no longer a permanent
+Admin API token to paste into a settings form, and the "Develop apps" option is gone from
+the store admin. Apps are built in the **Dev Dashboard**, and one for a store you own
+authenticates with the OAuth **client credentials** grant.
+
+This is the same shape as ADR 0002: a platform's access model moved under an assumption
+the design was resting on. It is smaller only because the SDK seam absorbed it — nothing
+outside `connector-shopify` changed except the fields an operator fills in.
+
+- **`accessToken` is gone; `clientId` (config) + `clientSecret` (secret) replace it.**
+  `POST https://{shop}/admin/oauth/access_token`, form-encoded,
+  `grant_type=client_credentials`, answering `{ access_token, scope, expires_in }` with
+  `expires_in` always 86399.
+- **Tokens expire after 24 hours**, so authentication became state with a clock attached.
+  `tokens.ts` caches per channel — two stores are two installations with two secrets —
+  refreshes five minutes early so a token cannot lapse mid-push, and collapses a
+  concurrent burst onto one request so a cold cache does not get the token endpoint
+  throttled. Held in memory only: they are derived data with a one-day life.
+- **A 401 mints a fresh token and retries once.** A token can be revoked while still
+  inside its lifetime — app reinstalled, scopes changed, secret rotated — and the cached
+  copy then looks valid and is not. Once only: if the new token is also refused the
+  credentials are wrong and repeating cannot help.
+- **Bad credentials are deliberately not retryable.** A wrong secret, an uninstalled app
+  and a shop domain that is not ours all fail identically forever, and burning the queue's
+  retry budget on them delays everything behind.
+- **`webhookSecret` is now optional.** Shopify signs an app's webhooks with that app's
+  client secret, so `verifyWebhook` falls back to it; an explicit value still wins, for a
+  subscription created by hand.
+- **`SHOPIFY_API_VERSION` moved `2025-01` → `2026-07`.** The old pin was roughly 18 months
+  old against a platform that supports about a year of versions, so every call would have
+  failed with a version error that looks exactly like a credentials problem.
+
+Scopes the connector actually needs, derived from its own documents:
+`read_products,write_products,read_inventory,write_inventory,read_locations,read_orders`.
+Not `write_orders` — §6 is explicit that we never cancel or modify an order.
 
 ### Phase 5 so far: reconciliation
 
@@ -448,7 +486,11 @@ Worth stating plainly, because the README is optimistic by nature:
 
 - **No live Shopify store.** The connector has only ever run against a mock and a fake
   domain. HMAC verification, the GraphQL shapes and the location scoping are unproven
-  against the real Admin API.
+  against the real Admin API — and now so is the client-credentials exchange, whose
+  request shape comes from Shopify's documentation rather than from a successful call.
+  The API version bump to `2026-07` also means the two mutations
+  (`inventorySetQuantities`, `productVariantsBulkUpdate`) are running against a schema
+  nothing has been tried on.
 - **TCGPlayer is now proven in both directions** — imports against the account's real
   exports, and a generated file accepted through `Import To Staged` on the live account.
   What remains untried is `Move To Live`, which was deliberately not pressed: with

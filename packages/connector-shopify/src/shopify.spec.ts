@@ -21,8 +21,8 @@ const PRODUCT = 'gid://shopify/Product/333';
 
 const ctx = (overrides: Partial<Ctx> = {}): Ctx => ({
   channelInstanceId: 'chan-1',
-  config: { shopDomain: 'test-store.myshopify.com', locationId: LOCATION },
-  secrets: { accessToken: 'shpat_test', webhookSecret: WEBHOOK_SECRET },
+  config: { shopDomain: 'test-store.myshopify.com', clientId: 'client-id', locationId: LOCATION },
+  secrets: { clientSecret: 'client-secret', webhookSecret: WEBHOOK_SECRET },
   logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
   ...overrides,
 });
@@ -89,14 +89,12 @@ function mockClient(overrides: Record<string, unknown> = {}) {
   return { client, calls };
 }
 
-function signedOrder(body: unknown) {
+function signedOrder(body: unknown, secret: string = WEBHOOK_SECRET) {
   const rawBody = Buffer.from(JSON.stringify(body));
   return {
     rawBody,
     headers: {
-      'x-shopify-hmac-sha256': createHmac('sha256', WEBHOOK_SECRET)
-        .update(rawBody)
-        .digest('base64'),
+      'x-shopify-hmac-sha256': createHmac('sha256', secret).update(rawBody).digest('base64'),
     },
   };
 }
@@ -269,10 +267,31 @@ describe('webhook verification', () => {
     expect(connector.verifyWebhook!(ctx(), {}, rawBody)).toBe(false);
   });
 
-  it('rejects when no webhook secret is configured', () => {
+  it('rejects when no signing secret is configured at all', () => {
     const { headers, rawBody } = signedOrder(ORDER);
-    const noSecret = ctx({ secrets: { accessToken: 'x' } });
-    expect(connector.verifyWebhook!(noSecret, headers, rawBody)).toBe(false);
+    expect(connector.verifyWebhook!(ctx({ secrets: {} }), headers, rawBody)).toBe(false);
+  });
+
+  /**
+   * Shopify signs an app's webhooks with that app's client secret, so a
+   * deployment that registered them through the app has nothing else to enter.
+   * Falling back to it is what makes `webhookSecret` optional.
+   */
+  it('falls back to the client secret when no webhook secret is set', () => {
+    const { headers, rawBody } = signedOrder(ORDER, WEBHOOK_SECRET);
+    const clientSecretOnly = ctx({ secrets: { clientSecret: WEBHOOK_SECRET } });
+
+    expect(connector.verifyWebhook!(clientSecretOnly, headers, rawBody)).toBe(true);
+  });
+
+  it('prefers an explicit webhook secret over the client secret', () => {
+    // A subscription created by hand can carry a secret of its own.
+    const { headers, rawBody } = signedOrder(ORDER, WEBHOOK_SECRET);
+    const both = ctx({
+      secrets: { clientSecret: 'a-different-secret', webhookSecret: WEBHOOK_SECRET },
+    });
+
+    expect(connector.verifyWebhook!(both, headers, rawBody)).toBe(true);
   });
 
   it('rejects a signature of the wrong length without throwing', () => {

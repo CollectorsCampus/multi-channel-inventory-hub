@@ -18,3 +18,5 @@ export {
   SHOPIFY_API_VERSION,
 } from './client';
 export type { ShopifyClient, FetchLike } from './client';
+export { createTokenSource } from './tokens';
+export type { TokenSource } from './tokens';

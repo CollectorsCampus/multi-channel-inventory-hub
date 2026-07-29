@@ -12,14 +12,14 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 
 ## Where things stand
 
-| Phase | Scope                                                                   | Status                                             |
-| ----- | ----------------------------------------------------------------------- | -------------------------------------------------- |
-| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                                               |
-| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                                               |
-| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                               |
-| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                               |
-| 4     | TCGPlayer file-based connector                                          | Done                                               |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — release is all that is left      |
+| Phase | Scope                                                                   | Status                                        |
+| ----- | ----------------------------------------------------------------------- | --------------------------------------------- |
+| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                                          |
+| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                                          |
+| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                          |
+| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                          |
+| 4     | TCGPlayer file-based connector                                          | Done                                          |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — release is all that is left |
 
 `main` is green: **605 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
@@ -159,7 +159,7 @@ Two things worth knowing before repeating this:
   declares, and `webhookSubscriptionCreate` accepts the quick-tunnel URL directly.
 - **Rotating the client secret takes up to an hour to take effect** on webhook signing,
   per Shopify's documentation. So a rotation is not instantly consistent with verification,
-  and deliveries in that window may verify against the *old* secret.
+  and deliveries in that window may verify against the _old_ secret.
 
 Two operational notes that cost real time to work out:
 
@@ -566,6 +566,10 @@ owns that.
 - `pnpm test` runs everything. Integration suites **skip** unless `TEST_DATABASE_URL` /
   `TEST_REDIS_URL` are set — they truncate tables and obliterate queues, so only ever point
   them at throwaway instances.
+- **`pnpm format:check` is a CI gate and is not covered by `pnpm lint`.** It is the first
+  step of the build job, so a Prettier slip fails CI before lint, typecheck or the tests
+  ever run — and green local lint/typecheck/test says nothing about it. Run it, or
+  `pnpm exec prettier --write <files>`, before pushing.
 - **Spec files run sequentially** (`fileParallelism: false`). Several share one database and
   truncate each other's rows in parallel, producing off-by-one flakes that vanish when run
   alone.

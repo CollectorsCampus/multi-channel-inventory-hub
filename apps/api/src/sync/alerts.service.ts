@@ -131,7 +131,13 @@ export class AlertsService {
         where: { id: existing.id },
         // Severity is refreshed too: a condition can worsen while its flag is
         // open, and leaving the original severity would hide that.
-        data: { title, detail, context, severity: input.severity, severityRank: rankOf(input.severity) },
+        data: {
+          title,
+          detail,
+          context,
+          severity: input.severity,
+          severityRank: rankOf(input.severity),
+        },
       });
       return { id: existing.id, occurrences };
     }

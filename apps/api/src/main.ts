@@ -6,7 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { join } from 'node:path';
 import { AppModule } from './app.module';
-import { configureApp, serveSpa } from './bootstrap';
+import { NEST_APP_OPTIONS, configureApp, serveSpa } from './bootstrap';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -15,13 +15,7 @@ async function bootstrap(): Promise<void> {
       trustProxy: true,
       bodyLimit: 8 * 1024 * 1024,
     }),
-    {
-      // Webhook signature verification needs the byte-exact body (§5): parsing
-      // and re-serializing changes whitespace and key order, and the HMAC then
-      // never matches. This populates `request.rawBody` alongside the parsed
-      // body so ingress can verify what was actually sent.
-      rawBody: true,
-    },
+    NEST_APP_OPTIONS,
   );
 
   const config = app.get(ConfigService);

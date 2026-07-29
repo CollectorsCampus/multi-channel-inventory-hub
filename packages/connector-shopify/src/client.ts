@@ -1,4 +1,6 @@
 import type { Ctx } from '@hub/connector-sdk';
+import { ShopifyError, ShopifyTransientError, type FetchLike } from './errors';
+import { createTokenSource, type TokenSource } from './tokens';
 
 /**
  * Thin Admin GraphQL client.
@@ -7,47 +9,30 @@ import type { Ctx } from '@hub/connector-sdk';
  * rather than mocking `fetch` and re-encoding Shopify's wire format in every
  * assertion. The contract suite runs against a mock platform, never a live
  * store (§10).
+ *
+ * Authentication is not a stored string. Shopify retired legacy custom apps on
+ * 1 January 2026, and a Dev Dashboard app for a store you own exchanges its
+ * client id and secret for a 24-hour token — see tokens.ts. The client asks for
+ * one before every request and lets the token source decide whether that means
+ * a network call.
  */
 
-/** Pinned deliberately: Shopify's GraphQL schema changes between versions. */
-export const SHOPIFY_API_VERSION = '2025-01';
+/**
+ * Pinned deliberately: Shopify's GraphQL schema changes between versions, and
+ * they support roughly a year of them. Bumping this means re-checking every
+ * document in shopify.ts, not just editing the string.
+ */
+export const SHOPIFY_API_VERSION = '2026-07';
+
+export { ShopifyError, ShopifyTransientError, type FetchLike } from './errors';
 
 export interface ShopifyClient {
   request<T>(ctx: Ctx, query: string, variables?: Record<string, unknown>): Promise<T>;
 }
 
-export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
-
-/**
- * A GraphQL error Shopify reported.
- *
- * Shopify answers 200 for business-level failures and reports them in
- * `userErrors`, so treating HTTP status as success would silently swallow
- * "variant not found" or "inventory not stocked at location".
- */
-export class ShopifyError extends Error {
-  constructor(
-    message: string,
-    readonly detail?: unknown,
-  ) {
-    super(message);
-    this.name = 'ShopifyError';
-  }
-}
-
-/** Retryable: Shopify throttled us or had an outage. The queue will back off. */
-export class ShopifyTransientError extends ShopifyError {
-  constructor(
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'ShopifyTransientError';
-  }
-}
-
-export function createShopifyClient(fetchImpl?: FetchLike): ShopifyClient {
+export function createShopifyClient(fetchImpl?: FetchLike, tokens?: TokenSource): ShopifyClient {
   const doFetch = fetchImpl ?? ((url, init) => fetch(url, init));
+  const tokenSource = tokens ?? createTokenSource(doFetch);
 
   return {
     async request<T>(ctx: Ctx, query: string, variables?: Record<string, unknown>): Promise<T> {
@@ -56,23 +41,34 @@ export function createShopifyClient(fetchImpl?: FetchLike): ShopifyClient {
         throw new ShopifyError('Channel is not configured: shopDomain is missing.');
       }
 
-      const accessToken = ctx.secrets.accessToken;
-      if (!accessToken) {
-        throw new ShopifyError('Channel is not connected: no Shopify access token stored.');
-      }
-
-      const response = await doFetch(
-        `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
-        {
+      const send = async (token: string): Promise<Response> =>
+        doFetch(`https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': accessToken,
+            'X-Shopify-Access-Token': token,
           },
           body: JSON.stringify({ query, variables }),
           signal: ctx.signal,
-        },
-      );
+        });
+
+      let response = await send(await tokenSource.get(ctx, shopDomain));
+
+      /**
+       * One retry on 401, with a freshly minted token.
+       *
+       * A token can be revoked before it expires — the app is reinstalled, its
+       * scopes change, someone rotates the secret — and the cached copy then
+       * looks valid to us and is not. Retrying once turns that into a blip
+       * rather than a channel that stays broken until the cache happens to
+       * lapse. Only once: if the new token is also refused, the credentials are
+       * wrong and repeating cannot help.
+       */
+      if (response.status === 401) {
+        ctx.logger.warn('Shopify rejected the access token; minting a new one and retrying.');
+        tokenSource.invalidate(ctx.channelInstanceId);
+        response = await send(await tokenSource.get(ctx, shopDomain));
+      }
 
       // 429 is throttling, 5xx is Shopify being unwell. Both are worth another
       // attempt later; everything else is our fault and will fail identically

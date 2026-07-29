@@ -21,8 +21,8 @@ const PRODUCT = 'gid://shopify/Product/333';
 
 const ctx = (overrides: Partial<Ctx> = {}): Ctx => ({
   channelInstanceId: 'chan-1',
-  config: { shopDomain: 'test-store.myshopify.com', locationId: LOCATION },
-  secrets: { accessToken: 'shpat_test', webhookSecret: WEBHOOK_SECRET },
+  config: { shopDomain: 'test-store.myshopify.com', clientId: 'client-id', locationId: LOCATION },
+  secrets: { clientSecret: 'client-secret', webhookSecret: WEBHOOK_SECRET },
   logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
   ...overrides,
 });
@@ -36,14 +36,31 @@ function mockClient(overrides: Record<string, unknown> = {}) {
       calls.push({ query, variables });
 
       if (query.includes('VariantForSync')) {
-        return {
+        return (overrides.variant ?? {
           node: {
             id: VARIANT,
             price: '12.50',
             product: { id: PRODUCT },
-            inventoryItem: { id: INVENTORY_ITEM, tracked: true },
+            inventoryItem: {
+              id: INVENTORY_ITEM,
+              tracked: true,
+              // Carried on this query because the mandatory compare-and-swap
+              // needs the current quantity in the same round trip as the id.
+              inventoryLevels: {
+                nodes: [
+                  {
+                    location: { id: LOCATION },
+                    quantities: [{ name: 'available', quantity: 7 }],
+                  },
+                  {
+                    location: { id: 'gid://shopify/Location/999' },
+                    quantities: [{ name: 'available', quantity: 99 }],
+                  },
+                ],
+              },
+            },
           },
-        } as T;
+        }) as T;
       }
 
       if (query.includes('LiveListingState')) {
@@ -89,14 +106,12 @@ function mockClient(overrides: Record<string, unknown> = {}) {
   return { client, calls };
 }
 
-function signedOrder(body: unknown) {
+function signedOrder(body: unknown, secret: string = WEBHOOK_SECRET) {
   const rawBody = Buffer.from(JSON.stringify(body));
   return {
     rawBody,
     headers: {
-      'x-shopify-hmac-sha256': createHmac('sha256', WEBHOOK_SECRET)
-        .update(rawBody)
-        .digest('base64'),
+      'x-shopify-hmac-sha256': createHmac('sha256', secret).update(rawBody).digest('base64'),
     },
   };
 }
@@ -156,8 +171,13 @@ describe('outbound', () => {
    * The hub is the source of truth, so it states the quantity rather than
    * adjusting by a delta. A missed webhook then self-corrects on the next push
    * instead of compounding forever.
+   *
+   * `changeFromQuantity` is typed nullable but rejected at runtime when absent —
+   * it replaced `ignoreCompareQuantity: true`, turning an opt-out into a
+   * mandatory compare-and-swap. So the push sends an absolute target *and* the
+   * value it read a moment earlier.
    */
-  it('sets rather than adjusts, ignoring Shopify current value', async () => {
+  it('sends an absolute quantity with Shopify’s current value to compare against', async () => {
     const { client, calls } = mockClient();
     const connector = createShopifyConnector({ client });
 
@@ -167,9 +187,101 @@ describe('outbound', () => {
       quantity: 6,
     });
 
-    const input = calls.find((c) => c.query.includes('SetInventoryQuantity'))?.variables
-      ?.input as Record<string, unknown>;
-    expect(input.ignoreCompareQuantity).toBe(true);
+    const input = calls.find((c) => c.query.includes('SetInventoryQuantity'))?.variables?.input as {
+      quantities?: Array<Record<string, unknown>>;
+    };
+
+    // 6 is the target, not a delta; 7 is what the mock says Shopify holds.
+    expect(input.quantities?.[0]).toMatchObject({
+      quantity: 6,
+      changeFromQuantity: 7,
+      locationId: LOCATION,
+      inventoryItemId: INVENTORY_ITEM,
+    });
+  });
+
+  it('does not write at all when Shopify already shows the right number', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    // The mock reports 7 available.
+    await connector.updateQuantity!(ctx(), {
+      allocationId: 'a',
+      externalListingId: VARIANT,
+      quantity: 7,
+    });
+
+    expect(calls.some((c) => c.query.includes('SetInventoryQuantity'))).toBe(false);
+  });
+
+  /**
+   * The race the compare exists to catch: a customer buys between our read and
+   * our write. Re-reading is exactly what fixes it, so one retry turns a lost
+   * push into a correct one.
+   */
+  it('re-reads and retries once when the compare value went stale', async () => {
+    let attempts = 0;
+    const { client, calls } = mockClient({
+      get quantityErrors() {
+        attempts++;
+        return attempts === 1
+          ? [{ message: 'changeFromQuantity does not match current quantity' }]
+          : [];
+      },
+    });
+
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateQuantity!(ctx(), {
+        allocationId: 'a',
+        externalListingId: VARIANT,
+        quantity: 6,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls.filter((c) => c.query.includes('SetInventoryQuantity'))).toHaveLength(2);
+    // The retry re-read rather than reusing the stale value.
+    expect(calls.filter((c) => c.query.includes('VariantForSync'))).toHaveLength(2);
+  });
+
+  it('gives up after one retry rather than looping on contention', async () => {
+    const { client, calls } = mockClient({
+      quantityErrors: [{ message: 'changeFromQuantity does not match current quantity' }],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateQuantity!(ctx(), {
+        allocationId: 'a',
+        externalListingId: VARIANT,
+        quantity: 6,
+      }),
+    ).rejects.toThrow(/Setting quantity failed/);
+
+    expect(calls.filter((c) => c.query.includes('SetInventoryQuantity'))).toHaveLength(2);
+  });
+
+  it('says which location is wrong when the variant is not stocked there', async () => {
+    const { client } = mockClient({
+      variant: {
+        node: {
+          id: VARIANT,
+          price: '12.50',
+          product: { id: PRODUCT },
+          inventoryItem: { id: INVENTORY_ITEM, tracked: true, inventoryLevels: { nodes: [] } },
+        },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateQuantity!(ctx(), {
+        allocationId: 'a',
+        externalListingId: VARIANT,
+        quantity: 6,
+      }),
+    ).rejects.toThrow(/not stocked at location/);
   });
 
   it('surfaces a userErrors failure instead of reporting success', async () => {
@@ -269,10 +381,31 @@ describe('webhook verification', () => {
     expect(connector.verifyWebhook!(ctx(), {}, rawBody)).toBe(false);
   });
 
-  it('rejects when no webhook secret is configured', () => {
+  it('rejects when no signing secret is configured at all', () => {
     const { headers, rawBody } = signedOrder(ORDER);
-    const noSecret = ctx({ secrets: { accessToken: 'x' } });
-    expect(connector.verifyWebhook!(noSecret, headers, rawBody)).toBe(false);
+    expect(connector.verifyWebhook!(ctx({ secrets: {} }), headers, rawBody)).toBe(false);
+  });
+
+  /**
+   * Shopify signs an app's webhooks with that app's client secret, so a
+   * deployment that registered them through the app has nothing else to enter.
+   * Falling back to it is what makes `webhookSecret` optional.
+   */
+  it('falls back to the client secret when no webhook secret is set', () => {
+    const { headers, rawBody } = signedOrder(ORDER, WEBHOOK_SECRET);
+    const clientSecretOnly = ctx({ secrets: { clientSecret: WEBHOOK_SECRET } });
+
+    expect(connector.verifyWebhook!(clientSecretOnly, headers, rawBody)).toBe(true);
+  });
+
+  it('prefers an explicit webhook secret over the client secret', () => {
+    // A subscription created by hand can carry a secret of its own.
+    const { headers, rawBody } = signedOrder(ORDER, WEBHOOK_SECRET);
+    const both = ctx({
+      secrets: { clientSecret: 'a-different-secret', webhookSecret: WEBHOOK_SECRET },
+    });
+
+    expect(connector.verifyWebhook!(both, headers, rawBody)).toBe(true);
   });
 
   it('rejects a signature of the wrong length without throwing', () => {

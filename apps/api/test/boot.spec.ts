@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { join } from 'node:path';
 import { AppModule } from '../src/app.module';
-import { configureApp, serveSpa } from '../src/bootstrap';
+import { NEST_APP_OPTIONS, configureApp, serveSpa } from '../src/bootstrap';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -25,6 +25,9 @@ const prismaStub = {
   setting: { findFirst: vi.fn().mockResolvedValue(null) },
   session: { findUnique: vi.fn().mockResolvedValue(null) },
   apiKey: { findUnique: vi.fn().mockResolvedValue(null) },
+  // No such channel: enough for the routing and raw-body assertions below,
+  // which are about reaching the controller rather than verifying a signature.
+  channelInstance: { findUnique: vi.fn().mockResolvedValue(null) },
 };
 
 let app: NestFastifyApplication;
@@ -35,7 +38,10 @@ beforeAll(async () => {
     .useValue(prismaStub)
     .compile();
 
-  app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
+  app = moduleRef.createNestApplication<NestFastifyApplication>(
+    new FastifyAdapter(),
+    NEST_APP_OPTIONS,
+  );
   await configureApp(app, { sessionSecret: Buffer.alloc(32, 3).toString('base64') });
   await app.init();
 
@@ -147,19 +153,52 @@ describe('HTTP application', () => {
         url: '/api/webhooks/some-channel',
         payload: { hello: 'world' },
       });
-      // Not 401-for-missing-session: it fails on the channel or the signature,
-      // never on the absence of a cookie.
-      expect(res.statusCode).not.toBe(403);
+      // 404 for the unknown channel, which can only be reached *past* the guard
+      // and past the raw-body check. Asserting the specific status matters: the
+      // earlier version of this test allowed anything that was not 403, so it
+      // also passed when every request died at "Missing request body" — the
+      // exact misconfiguration it was supposed to notice.
+      expect(res.statusCode).toBe(404);
       expect(JSON.stringify(res.json())).not.toMatch(/Authentication required/);
     });
 
-    it('rejects a body it cannot verify', async () => {
+    /**
+     * `rawBody` is a `NestFactory.create` option, so it cannot live in
+     * `configureApp` with the rest of the configuration and is the one piece of
+     * production setup a test can silently omit. It did: the app here was built
+     * without it while main.ts set it, and ingress therefore rejected every
+     * body before verification. Pinning it here means that divergence fails a
+     * test instead of reaching a live store.
+     *
+     * Signature verification itself is covered in webhook-ingress.spec.ts.
+     */
+    it('populates the byte-exact raw body the HMAC is computed over', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/webhooks/some-channel',
-        payload: {},
+        payload: '{"a":1}',
+        headers: { 'content-type': 'application/json' },
       });
-      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      // Reached channel lookup ⇒ rawBody was present. A 401 here would mean it
+      // was not, whatever the signature said.
+      expect(res.statusCode).toBe(404);
+    });
+
+    /**
+     * An empty delivery never reaches the controller: Fastify's JSON parser
+     * refuses it at 400 first. The controller's own "Missing request body"
+     * check is therefore defence in depth for the case where `rawBody` is
+     * absent, not the first line — worth knowing, because a 400 here and a 401
+     * from the controller look alike in a log and have different causes.
+     */
+    it('refuses an empty body at the parser, before verification', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/webhooks/some-channel',
+        payload: '',
+        headers: { 'content-type': 'application/json' },
+      });
+      expect(res.statusCode).toBe(400);
     });
   });
 

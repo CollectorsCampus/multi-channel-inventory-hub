@@ -6,6 +6,23 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
+ * Options for `NestFactory.create` / `createNestApplication`.
+ *
+ * These cannot live in `configureApp` — Nest reads them while constructing the
+ * application, before any of it exists to configure. They are exported instead
+ * so main.ts and the tests pass the same object rather than each spelling it
+ * out, because this is precisely where the two drifted before: production set
+ * `rawBody` and the tests did not.
+ *
+ * `rawBody` populates `request.rawBody` with the byte-exact body alongside the
+ * parsed one. Webhook signature verification needs it (§5): parsing and
+ * re-serializing changes whitespace and key order, and the HMAC then never
+ * matches. Without it every delivery fails closed at "Missing request body" —
+ * which looks like a signature problem and is not one.
+ */
+export const NEST_APP_OPTIONS = { rawBody: true } as const;
+
+/**
  * Everything that turns a bare Nest application into *this* application.
  *
  * Shared by main.ts and the boot smoke test rather than duplicated, so the two

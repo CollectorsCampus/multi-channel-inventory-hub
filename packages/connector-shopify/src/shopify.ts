@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type {
   Connector,
   Ctx,
@@ -67,13 +67,20 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
     configSchema: {
       type: 'object',
-      required: ['shopDomain', 'locationId'],
+      required: ['shopDomain', 'clientId', 'locationId'],
       properties: {
         shopDomain: {
           type: 'string',
           title: 'Shop domain',
           description: 'e.g. my-store.myshopify.com',
           pattern: '^[a-z0-9][a-z0-9-]*\\.myshopify\\.com$',
+        },
+        clientId: {
+          type: 'string',
+          title: 'Client ID',
+          description:
+            'From your app’s Settings page in the Shopify Dev Dashboard. Not a secret — it ' +
+            'identifies the app, and the secret below is what proves it is you.',
         },
         locationId: {
           type: 'string',
@@ -84,9 +91,20 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       },
     },
 
-    // Never in configSchema: the core stores these encrypted and supplies them
-    // only inside Ctx.
-    secretFields: ['accessToken', 'webhookSecret'],
+    /**
+     * Never in configSchema: the core stores these encrypted and supplies them
+     * only inside Ctx.
+     *
+     * `clientSecret` replaced the old `accessToken` when Shopify retired legacy
+     * custom apps on 1 January 2026 — there is no longer a permanent token to
+     * store, only credentials to exchange for a 24-hour one (tokens.ts).
+     *
+     * `webhookSecret` is optional now. Webhooks an app registers are signed
+     * with that app's client secret, so most deployments need only the one
+     * value; it stays available for a webhook created by hand with a secret of
+     * its own.
+     */
+    secretFields: ['clientSecret', 'webhookSecret'],
 
     capabilities: [
       'listing.push',
@@ -155,7 +173,11 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
      * changes whitespace and key order, and the digest then never matches.
      */
     verifyWebhook(ctx: Ctx, headers: Record<string, string>, rawBody: Buffer): boolean {
-      const secret = ctx.secrets.webhookSecret;
+      // Shopify signs an app's webhooks with that app's client secret, so a
+      // deployment that registered them through the app needs nothing more.
+      // An explicit webhookSecret still wins, for a subscription created by
+      // hand with a secret of its own.
+      const secret = ctx.secrets.webhookSecret || ctx.secrets.clientSecret;
       if (!secret) return false;
 
       const presented = headers[HMAC_HEADER] ?? headers[HMAC_HEADER.toLowerCase()];
@@ -264,25 +286,79 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
   // -------------------------------------------------------------------------
 
+  /**
+   * Set the advertised quantity at the pinned location.
+   *
+   * The hub is the source of truth (§2): it states what the quantity is rather
+   * than adjusting by a delta, so a missed webhook self-corrects on the next
+   * push instead of compounding forever.
+   *
+   * **This reads before it writes, because Shopify now requires it.**
+   * `InventoryQuantityInput.changeFromQuantity` is typed as nullable but
+   * rejected at runtime when absent — it replaced the old
+   * `ignoreCompareQuantity: true` flag, turning an opt-out into a mandatory
+   * compare-and-swap. So the current value has to be read first and handed back
+   * as "what I believe you have".
+   *
+   * That is a better bargain than it looks. The CAS is genuine optimistic
+   * concurrency against Shopify: if a customer buys between our read and our
+   * write, the set is refused rather than silently overwriting a sale that has
+   * already happened. Retrying re-reads, so the second attempt writes against
+   * the quantity that sale left behind.
+   */
   async function setQuantity(ctx: Ctx, variantGid: string, quantity: number): Promise<void> {
     const locationId = locationOf(ctx);
-    const inventoryItemId = await resolveInventoryItemId(ctx, variantGid);
 
-    const data = await client.request<{
-      inventorySetQuantities: { userErrors: Array<{ field?: string[]; message: string }> };
-    }>(ctx, SET_QUANTITY_MUTATION, {
-      input: {
-        name: 'available',
-        // The hub is the source of truth (§2): it states what the quantity is
-        // rather than adjusting by a delta, so a missed webhook self-corrects
-        // on the next push instead of compounding.
-        reason: 'correction',
-        ignoreCompareQuantity: true,
-        quantities: [{ inventoryItemId, locationId, quantity }],
-      },
-    });
+    // Two attempts. A compare failure means someone else moved the number
+    // between our read and our write, and a fresh read is exactly what fixes
+    // it; a second failure means contention worth backing off from rather than
+    // hammering, which the queue does better than a loop here.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { inventoryItemId, available } = await resolveInventoryState(ctx, variantGid);
 
-    throwOnUserErrors(data.inventorySetQuantities?.userErrors, 'Setting quantity');
+      // Already correct. Shopify would refuse a no-op set as a compare failure
+      // on some paths, and skipping is honest either way.
+      if (available === quantity) return;
+
+      const data = await client.request<{
+        inventorySetQuantities: { userErrors: Array<{ field?: string[]; message: string }> };
+      }>(ctx, SET_QUANTITY_MUTATION, {
+        input: {
+          name: 'available',
+          reason: 'correction',
+          quantities: [{ inventoryItemId, locationId, quantity, changeFromQuantity: available }],
+        },
+        /**
+         * A fresh key per attempt, not a hash of the operation.
+         *
+         * A deterministic key would let Shopify replay an earlier result for an
+         * identical later push — set 6-from-7 today, and a genuinely new
+         * 6-from-7 tomorrow would be swallowed while the key is still in their
+         * retention window. That is a silent no-op on someone's stock.
+         *
+         * The protection a stable key would buy is already covered: every
+         * attempt re-reads first, so a request Shopify applied but whose
+         * response we lost is caught by the `available === quantity` check
+         * above and skipped rather than repeated.
+         */
+        key: randomUUID(),
+      });
+
+      const userErrors = data.inventorySetQuantities?.userErrors ?? [];
+      const staleCompare = userErrors.some((e) =>
+        /changeFromQuantity|compare|stale|does not match/i.test(e.message),
+      );
+
+      if (staleCompare && attempt === 1) {
+        ctx.logger.warn(
+          `Shopify's quantity moved while pushing ${variantGid}; re-reading and retrying once.`,
+        );
+        continue;
+      }
+
+      throwOnUserErrors(userErrors, 'Setting quantity');
+      return;
+    }
   }
 
   async function setPrice(ctx: Ctx, variantGid: string, cents: number): Promise<void> {
@@ -298,16 +374,46 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     throwOnUserErrors(data.productVariantsBulkUpdate?.userErrors, 'Setting price');
   }
 
-  async function resolveInventoryItemId(ctx: Ctx, variantGid: string): Promise<string> {
+  /**
+   * The inventory item behind a variant, plus what Shopify currently shows at
+   * our location.
+   *
+   * Both come from one query because the mandatory compare-and-swap needs them
+   * together, and reading them separately would open a window between the two
+   * in which the number could move — the very race the compare exists to catch.
+   */
+  async function resolveInventoryState(
+    ctx: Ctx,
+    variantGid: string,
+  ): Promise<{ inventoryItemId: string; available: number }> {
+    const locationId = locationOf(ctx);
+
     const data = await client.request<{ node: VariantNode | null }>(ctx, VARIANT_QUERY, {
       id: variantGid,
     });
 
-    const id = data.node?.inventoryItem?.id;
-    if (!id) {
+    const inventoryItemId = data.node?.inventoryItem?.id;
+    if (!inventoryItemId) {
       throw new Error(`Shopify variant ${variantGid} has no inventory item; it may be deleted.`);
     }
-    return id;
+
+    const level = data.node?.inventoryItem?.inventoryLevels?.nodes?.find(
+      (l) => l.location?.id === locationId,
+    );
+
+    if (!level) {
+      throw new Error(
+        `Shopify variant ${variantGid} is not stocked at location ${locationId}. Enable that ` +
+          `location for the product, or point this channel at the location that holds it.`,
+      );
+    }
+
+    // Absent is genuinely zero here, unlike in fetchLiveState: Shopify has told
+    // us the item is stocked at this location, so a missing `available` is the
+    // count rather than an unanswered question.
+    const available = level.quantities?.find((q) => q.name === 'available')?.quantity ?? 0;
+
+    return { inventoryItemId, available };
   }
 
   async function resolveProductId(ctx: Ctx, variantGid: string): Promise<string> {
@@ -390,6 +496,15 @@ interface VariantNode {
   };
 }
 
+/**
+ * Everything a push needs about one variant, in a single round trip.
+ *
+ * The inventory levels are here because `inventorySetQuantities` requires the
+ * current quantity as a compare-and-swap value. Fetching it separately would
+ * leave a gap between the read and the write in which the number could move —
+ * which is the race the compare is there to catch, so opening one to satisfy it
+ * would be self-defeating.
+ */
 const VARIANT_QUERY = /* GraphQL */ `
   query VariantForSync($id: ID!) {
     node(id: $id) {
@@ -402,6 +517,17 @@ const VARIANT_QUERY = /* GraphQL */ `
         inventoryItem {
           id
           tracked
+          inventoryLevels(first: 20) {
+            nodes {
+              location {
+                id
+              }
+              quantities(names: ["available"]) {
+                name
+                quantity
+              }
+            }
+          }
         }
       }
     }
@@ -434,9 +560,15 @@ const LIVE_STATE_QUERY = /* GraphQL */ `
   }
 `;
 
+/**
+ * `@idempotent` is mandatory on this mutation from 2026-07 — Shopify rejects the
+ * call outright without it. The key is a fresh UUID per attempt; see the comment
+ * at the call site for why that is the honest choice rather than a hash of the
+ * operation.
+ */
 const SET_QUANTITY_MUTATION = /* GraphQL */ `
-  mutation SetInventoryQuantity($input: InventorySetQuantitiesInput!) {
-    inventorySetQuantities(input: $input) {
+  mutation SetInventoryQuantity($input: InventorySetQuantitiesInput!, $key: String!) {
+    inventorySetQuantities(input: $input) @idempotent(key: $key) {
       userErrors {
         field
         message

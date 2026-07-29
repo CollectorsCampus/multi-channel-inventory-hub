@@ -15,6 +15,7 @@ const MASTER_KEY = Buffer.alloc(32, 0x5a).toString('base64');
 
 const SHOPIFY_CONFIG = {
   shopDomain: 'my-store.myshopify.com',
+  clientId: 'dev-dashboard-client-id',
   locationId: 'gid://shopify/Location/1',
 };
 
@@ -27,7 +28,7 @@ describe('config schema validation', () => {
 
   it('reports each missing required field by its human title', () => {
     const issues = validateChannelConfig(schema, {});
-    expect(issues.map((i) => i.field).sort()).toEqual(['locationId', 'shopDomain']);
+    expect(issues.map((i) => i.field).sort()).toEqual(['clientId', 'locationId', 'shopDomain']);
     expect(issues[0]!.message).toMatch(/required/);
   });
 
@@ -100,7 +101,7 @@ describeDb('ChannelsService', () => {
       connectorKey: 'shopify',
       displayName: 'My Store',
       config: SHOPIFY_CONFIG,
-      secrets: { accessToken: 'shpat_secret', webhookSecret: 'whsec' },
+      secrets: { clientSecret: 'shpss_secret', webhookSecret: 'whsec' },
     });
 
   it('creates a channel and reports its webhook endpoint', async () => {
@@ -120,12 +121,12 @@ describeDb('ChannelsService', () => {
   it('never returns secret values, only which fields are set', async () => {
     const channel = await create();
 
-    expect(channel.secretsSet.sort()).toEqual(['accessToken', 'webhookSecret']);
-    expect(JSON.stringify(channel)).not.toContain('shpat_secret');
+    expect(channel.secretsSet.sort()).toEqual(['clientSecret', 'webhookSecret']);
+    expect(JSON.stringify(channel)).not.toContain('shpss_secret');
     expect(JSON.stringify(channel)).not.toContain('whsec');
 
     const listed = await service.list();
-    expect(JSON.stringify(listed)).not.toContain('shpat_secret');
+    expect(JSON.stringify(listed)).not.toContain('shpss_secret');
   });
 
   it('rejects an incomplete configuration', async () => {
@@ -133,7 +134,7 @@ describeDb('ChannelsService', () => {
       service.create({
         connectorKey: 'shopify',
         displayName: 'Broken',
-        config: { shopDomain: 'my-store.myshopify.com' },
+        config: { shopDomain: 'my-store.myshopify.com', clientId: 'partial' },
       }),
     ).rejects.toThrow(/incomplete/);
 
@@ -169,6 +170,7 @@ describeDb('ChannelsService', () => {
 
       expect(updated.config).toEqual({
         shopDomain: SHOPIFY_CONFIG.shopDomain,
+        clientId: SHOPIFY_CONFIG.clientId,
         locationId: 'gid://shopify/Location/2',
       });
     });
@@ -183,10 +185,10 @@ describeDb('ChannelsService', () => {
     it('replaces one secret without disturbing the others', async () => {
       const channel = await create();
 
-      await service.update(channel.id, { secrets: { accessToken: 'shpat_rotated' } });
+      await service.update(channel.id, { secrets: { clientSecret: 'shpss_rotated' } });
 
       const after = await service.get(channel.id);
-      expect(after.secretsSet.sort()).toEqual(['accessToken', 'webhookSecret']);
+      expect(after.secretsSet.sort()).toEqual(['clientSecret', 'webhookSecret']);
     });
 
     it('toggles enabled', async () => {

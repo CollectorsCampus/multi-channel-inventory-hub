@@ -21,7 +21,15 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                               |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — alerting polish and release left |
 
-`main` is green: **551 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **590 tests**, lint/typecheck/build clean, all four CI jobs passing.
+
+### Unmerged work
+
+None. `shopify-client-credentials` was merged on 2026-07-29 once webhook delivery was
+proven against the live store (below), which was the one thing holding it back.
+
+`main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
+latest.
 
 ### What Phase 4 actually shipped
 
@@ -57,6 +65,113 @@ extending:**
    never set one, and a delta would stop the file being safe to re-upload. Prices are
    absolute and idempotent, so those are what it carries. Quantity flows the other way —
    `inventory.import` plus reconciliation reports where the two disagree.
+
+### Shopify authentication changed under us (2026-07-29)
+
+**Shopify retired legacy custom apps on 1 January 2026.** There is no longer a permanent
+Admin API token to paste into a settings form, and the "Develop apps" option is gone from
+the store admin. Apps are built in the **Dev Dashboard**, and one for a store you own
+authenticates with the OAuth **client credentials** grant.
+
+This is the same shape as ADR 0002: a platform's access model moved under an assumption
+the design was resting on. It is smaller only because the SDK seam absorbed it — nothing
+outside `connector-shopify` changed except the fields an operator fills in.
+
+- **`accessToken` is gone; `clientId` (config) + `clientSecret` (secret) replace it.**
+  `POST https://{shop}/admin/oauth/access_token`, form-encoded,
+  `grant_type=client_credentials`, answering `{ access_token, scope, expires_in }` with
+  `expires_in` always 86399.
+- **Tokens expire after 24 hours**, so authentication became state with a clock attached.
+  `tokens.ts` caches per channel — two stores are two installations with two secrets —
+  refreshes five minutes early so a token cannot lapse mid-push, and collapses a
+  concurrent burst onto one request so a cold cache does not get the token endpoint
+  throttled. Held in memory only: they are derived data with a one-day life.
+- **A 401 mints a fresh token and retries once.** A token can be revoked while still
+  inside its lifetime — app reinstalled, scopes changed, secret rotated — and the cached
+  copy then looks valid and is not. Once only: if the new token is also refused the
+  credentials are wrong and repeating cannot help.
+- **Bad credentials are deliberately not retryable.** A wrong secret, an uninstalled app
+  and a shop domain that is not ours all fail identically forever, and burning the queue's
+  retry budget on them delays everything behind.
+- **`webhookSecret` is now optional.** Shopify signs an app's webhooks with that app's
+  client secret, so `verifyWebhook` falls back to it; an explicit value still wins, for a
+  subscription created by hand.
+- **`SHOPIFY_API_VERSION` moved `2025-01` → `2026-07`.** The old pin was roughly 18 months
+  old against a platform that supports about a year of versions, so every call would have
+  failed with a version error that looks exactly like a credentials problem.
+
+Scopes the connector actually needs, derived from its own documents:
+`read_products,write_products,read_inventory,write_inventory,read_locations,read_orders`.
+Not `write_orders` — §6 is explicit that we never cancel or modify an order.
+
+**Confirmed against the live store (2026-07-29).** A read-only probe drove the connector's
+own client and token source against a real shop. Everything passed:
+
+- The client-credentials exchange returns a `shpat_` token with `expires_in` 86399.
+- `2026-07` is a live version, and `fetchLiveState` — the nested
+  `inventoryItem → inventoryLevels → quantities(names:["available"])` read with location
+  scoping, the most complex query we make — returns what it should.
+- `priceToCents` is right on real data: $104.99 → `10499`, $7.99 → `799`.
+- The token is cached across calls rather than re-minted.
+
+**The write path is proven too, and cost three schema fixes.** A probe pushed a quantity
+and a price to one nominated variant and restored both. Nothing about these was
+discoverable without a real store — each one only appeared after the previous was fixed:
+
+1. **`ignoreCompareQuantity` no longer exists** on `InventorySetQuantitiesInput`.
+2. **`changeFromQuantity` is required at runtime** although the schema types it nullable.
+   It replaced that flag, turning an opt-out into a **mandatory compare-and-swap**. So
+   `setQuantity` now reads before it writes, in one query that fetches the inventory item
+   id and the current quantity together — reading them separately would open exactly the
+   gap the compare exists to close. A stale compare re-reads and retries once; a second
+   failure is contention the queue should back off from rather than a loop here.
+3. **`@idempotent(key: String!)` is mandatory** on `inventorySetQuantities`. The key is a
+   fresh UUID per attempt, not a hash of the operation: a deterministic key would let
+   Shopify replay an old result for a genuinely new identical push while the key is still
+   in their retention window, which is a silent no-op on someone's stock. The protection a
+   stable key would buy is already covered by reading first.
+
+`productVariantsBulkUpdate` was unaffected — `price` is unchanged on
+`ProductVariantsBulkInput`.
+
+**Webhooks are proven too, against a real delivery (2026-07-29).** This was the last
+unverified assumption in the connector: that Shopify signs an app's webhooks with that
+app's **client secret**, so `verifyWebhook`'s fallback from `webhookSecret` is correct. If
+it had been wrong, every delivery would have been silently rejected.
+
+The hub was exposed with a `cloudflared` quick tunnel, a `products/update` subscription
+registered through the Admin API, and a product's tags touched and immediately reverted.
+Two genuine deliveries arrived (`user-agent: Shopify-Captain-Hook`,
+`x-shopify-api-version: 2026-07`), both verified, persisted and processed — on a channel
+configured with **only** `clientSecret`, so the fallback is what accepted them.
+
+Closed arithmetically rather than by inference: recomputing
+`base64(HMAC-SHA256(stored_body, clientSecret))` over the 5170-byte body reproduces the
+`x-shopify-hmac-sha256` Shopify sent, exactly. That also proves the stored body is
+byte-exact, since a single altered byte would change the digest.
+
+An unsigned POST to the same public URL was rejected 401, so the endpoint is not merely
+accepting everything.
+
+Two things worth knowing before repeating this:
+
+- **Registering the subscription needs no extra scope** beyond what the connector already
+  declares, and `webhookSubscriptionCreate` accepts the quick-tunnel URL directly.
+- **Rotating the client secret takes up to an hour to take effect** on webhook signing,
+  per Shopify's documentation. So a rotation is not instantly consistent with verification,
+  and deliveries in that window may verify against the *old* secret.
+
+Two operational notes that cost real time to work out:
+
+1. **Releasing a version is not installing it.** Client credentials fail with "The
+   application is not installed on this shop" until you go to the app's **Home** page in
+   the Dev Dashboard, scroll down, and use **Install app**. The failure is correctly
+   non-retryable, so a channel in this state alerts once rather than retrying into a wall.
+2. **`shop.myshopifyDomain` may not be the domain you connected with.** This store answers
+   on both `midwestgamingandcollectibles.myshopify.com` and the permanent
+   `0tq4bx-09.myshopify.com` that Shopify reports as canonical. Prefer the canonical one in
+   channel config: a store-name change would break the alias but never the permanent
+   domain.
 
 ### Phase 5 so far: reconciliation
 
@@ -414,6 +529,21 @@ owns that.
 - **Contract suites must have teeth.** The SDK's own tests prove a connector that fabricates
   ids, uses unstable idempotency keys, or throws on malformed input _fails_ checks the
   reference implementation passes. A green suite that can't fail is worse than none.
+- **Assert the success path, not just rejection.** Webhook ingress had two green tests that
+  asserted only `not 403` and `>= 400` — and the harness built the app without `rawBody`,
+  so every request died at "Missing request body" before verification ran. Both tests
+  passed for a reason unrelated to what they claimed to check, and the endpoint's entire
+  accept path was unexercised. `webhook-ingress.spec.ts` now asserts the other direction
+  and is mutation-checked both ways. A test that only ever asserts failure will pass on a
+  component that cannot succeed.
+- **Options passed to `NestFactory.create` cannot live in `configureApp`.** Nest reads them
+  while building the application. `NEST_APP_OPTIONS` is exported from `bootstrap.ts` and
+  used by main.ts and the tests so they cannot drift again — that drift is what hid the
+  above.
+- **`apps/api` tests import connectors from `dist/`, not `src/`.** A connector source change
+  has no effect on an API test until that package is rebuilt. CI builds packages first so
+  it is correct there; locally it is a genuine footgun — a mutation to connector source
+  appeared to change nothing until `tsc -p tsconfig.json` was run in the package.
 - Connector tests run against **mocks, never live accounts**. Catalog tests use recorded
   shapes — hammering Scryfall on every CI run is how projects get blocked.
 
@@ -431,9 +561,23 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Environment notes
 
-- **Windows / PowerShell 5.1.** No `&&` chaining. Paths contain a space (`D:\Claude Shopify
-TCG Project`) — use `-LiteralPath`; some deletion commands are blocked by the sandbox.
-- Node 24 via winget, pnpm via `npm -g` (corepack needs admin here).
+- **Windows / PowerShell.** Paths contain a space (`D:\Claude Shopify TCG Project`) — use
+  `-LiteralPath`; some deletion commands are blocked by the sandbox.
+- **Nothing is on PATH by default in an agent shell.** Prefix commands with
+  `$env:PATH = "C:\Program Files\nodejs;$env:PATH"`. `pnpm` is not installed globally:
+  reach it via `& "C:\Program Files\nodejs\corepack.cmd" pnpm ...`, or run each package's
+  own `node_modules\.bin\{vitest,tsc,prisma}.CMD` directly. `gh` lives at
+  `C:\Program Files\GitHub CLI\gh.exe`.
+- **Real marketplace data lives in `private/`**, which is gitignored: the operator's own
+  TCGPlayer exports, and `shopify.local.json` holding live Shopify credentials. Useful for
+  verifying against reality; `ShippingExport` and `PackingSlips` must never be opened, as
+  they carry customers' names and addresses.
+- **`prisma migrate reset` is blocked** for AI agents without explicit per-invocation
+  consent passed in `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION`. Ask first; do not work
+  around it.
+- Throwaway services for integration tests are `hub-test-db` on **5433** and
+  `hub-test-redis` on **6380** (see the docker commands above). The application's own
+  compose stack publishes no host ports, so those two are unambiguous.
 - Git identity is set **repo-local**: `collectorscampus <nick@collectorscampus.com>`.
 - Docker Desktop has wedged once (container unkillable) and a build segfaulted once
   (exit 139). Both were transient; verification fell back to running the API directly.
@@ -442,13 +586,29 @@ TCG Project`) — use `-LiteralPath`; some deletion commands are blocked by the 
 
 ---
 
+## Open decisions, not open bugs
+
+Two things are deliberately unfinished. Each is a choice someone should make rather than
+a defect to fix, and none blocks anything else.
+
+1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
+   CSV can express a delta but never an absolute, and a delta is not safe to re-upload.
+   Restoring it means tracking per allocation how much has already been sent — a real
+   feature, not a tweak. Price sync plus drift reporting may well be enough, given intake
+   happens on TCGPlayer's side anyway.
+2. **The query console's audit trail is a log line, not a table.** Deliberate; a queryable
+   trail needs its own model and retention story.
+
 ## What has never been tested
 
 Worth stating plainly, because the README is optimistic by nature:
 
-- **No live Shopify store.** The connector has only ever run against a mock and a fake
-  domain. HMAC verification, the GraphQL shapes and the location scoping are unproven
-  against the real Admin API.
+- **Shopify is now proven end to end**, including webhooks — authentication, the `2026-07`
+  schema, `fetchLiveState`, price decoding, location scoping, both mutations writing and
+  being read back, and two real signed deliveries verified through a tunnel. What has
+  still never run is `parseWebhook` on a real **`orders/create`** payload: the live proof
+  used `products/update`, because HMAC verification is topic-independent and that avoided
+  creating a real order. Order parsing is covered by unit tests against recorded shapes.
 - **TCGPlayer is now proven in both directions** — imports against the account's real
   exports, and a generated file accepted through `Import To Staged` on the live account.
   What remains untried is `Move To Live`, which was deliberately not pressed: with

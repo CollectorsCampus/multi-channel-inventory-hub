@@ -54,6 +54,36 @@ version from `apps/api/package.json` rather than repeating it. `0.x` is delibera
 and SQLite have no migration history, no real IdP has completed a login, and there is one
 store's worth of production evidence.
 
+### Pre-publication audit (2026-07-29)
+
+Git history was audited before any decision to go public — all 42 commits and every object
+in every tree, not just the working copy. **No credential has ever been committed.**
+
+- `private/` has zero objects in history, so the operator's `shopify.local.json` and their
+  real TCGPlayer exports — including `ShippingExport` and `PackingSlips`, which carry
+  customer names and postal addresses — never entered git.
+- Searching history for the literal `clientId`, `clientSecret` and `locationId` values from
+  the live credentials file returns zero hits. No token matches the real
+  `shp(at|ss)_[0-9a-f]{32}` shape; every `shpat_`/`shpss_` in the tree is a fixture. No AWS,
+  GitHub, Slack or OpenAI keys, and no private keys.
+- Every path ever committed still exists, so nothing is hidden in history that is absent
+  from the tree. The only high-entropy strings are the documented all-`A`/all-`B` CI test
+  keys. The committed PDFs predate the live-store work and carry no author metadata.
+
+**One real finding, fixed in the tree:** the operator's actual store domains — the vanity
+one, which names their business, and the permanent one — had reached `CLAUDE.md` and a
+webhook test fixture. Not credentials, but they tie the repository to a specific shop.
+Replaced with placeholders. **They remain in history**, which was accepted deliberately: a
+`filter-repo` rewrite would change all 42 SHAs and orphan the `v0.1.0` tag, the GitHub
+Release and the published image's `revision` label, which is a poor trade for a domain
+anyone can find by visiting the store.
+
+**The rule this leaves:** never put a real shop domain, account id or seller name in a
+tracked file. Placeholders (`test-store.myshopify.com`, `abc123-45.myshopify.com`) read
+just as well in a fixture, and the real values belong in `private/`. Note that
+`nick@collectorscampus.com` authors every commit and will publish with them; that is
+normal for open source and was not treated as a defect.
+
 ### Unmerged work
 
 None. `shopify-client-credentials` was merged on 2026-07-29 once webhook delivery was
@@ -198,11 +228,12 @@ Two operational notes that cost real time to work out:
    application is not installed on this shop" until you go to the app's **Home** page in
    the Dev Dashboard, scroll down, and use **Install app**. The failure is correctly
    non-retryable, so a channel in this state alerts once rather than retrying into a wall.
-2. **`shop.myshopifyDomain` may not be the domain you connected with.** This store answers
-   on both `midwestgamingandcollectibles.myshopify.com` and the permanent
-   `0tq4bx-09.myshopify.com` that Shopify reports as canonical. Prefer the canonical one in
-   channel config: a store-name change would break the alias but never the permanent
-   domain.
+2. **`shop.myshopifyDomain` may not be the domain you connected with.** A store can answer
+   on both a vanity `<store-name>.myshopify.com` and the permanent, generated
+   `<random>-<n>.myshopify.com` that Shopify reports as canonical. Prefer the canonical one
+   in channel config: a store-name change would break the alias but never the permanent
+   domain. (The operator's real domains are deliberately not written here — see
+   `private/shopify.local.json`, which is gitignored.)
 
 ### Phase 5 so far: reconciliation
 

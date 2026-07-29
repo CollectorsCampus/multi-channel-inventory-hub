@@ -62,7 +62,7 @@ const prismaStub = {
       credentialRef: 'cred_1',
       // config is a String column holding JSON (ADR 0001 §2).
       config: JSON.stringify({
-        shopDomain: '0tq4bx-09.myshopify.com',
+        shopDomain: 'test-store.myshopify.com',
         clientId: 'test-client-id',
         locationId: 'gid://shopify/Location/1',
       }),

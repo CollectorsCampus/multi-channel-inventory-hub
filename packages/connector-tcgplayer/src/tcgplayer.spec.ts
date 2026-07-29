@@ -241,6 +241,32 @@ describe('orders.import (PullSheet)', () => {
     expect(result.problems[0]!.message).toMatch(/does not look like/);
   });
 
+  /**
+   * A real pull sheet ends with `Orders Contained in Pull Sheet:` followed by
+   * every order number, pipe-separated, in what would be the Product Name
+   * column — two fields on a line where the others have eleven. Found by running
+   * this connector against a genuine Level 4 seller export; the redacted fixture
+   * now carries the same shape.
+   *
+   * It must be skipped in silence. Reporting it would put a spurious complaint
+   * on every import an operator ever performs, which is how a problem list stops
+   * being read at all.
+   */
+  it('skips the trailer row silently rather than reporting it every time', async () => {
+    const { sales: events, problems } = await sales();
+
+    expect(problems).toEqual([]);
+    expect(events.every((e) => /^\d+$/.test(e.externalListingId))).toBe(true);
+  });
+
+  it('still reports a row that has an order but no SkuId', async () => {
+    // The structural skip must not swallow a sale we genuinely cannot attribute.
+    const orphaned = replaceCell(PULL_SHEET, '"1000009"', '""');
+    const { problems } = await sales(orphaned);
+
+    expect(problems.some((p) => /no SkuId/.test(p.message))).toBe(true);
+  });
+
   it('reports a new column once for the file, not once per row', async () => {
     const withExtra = prependHeader(PULL_SHEET, 'Surprise New Column');
     const result = await connector.importOrders!(makeCtx(), withExtra);

@@ -12,16 +12,16 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 
 ## Where things stand
 
-| Phase | Scope                                                                   | Status                                |
-| ----- | ----------------------------------------------------------------------- | ------------------------------------- |
-| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                                  |
-| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                                  |
-| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
-| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
-| 4     | TCGPlayer file-based connector                                          | Done                                  |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — reconciliation done |
+| Phase | Scope                                                                   | Status                                             |
+| ----- | ----------------------------------------------------------------------- | -------------------------------------------------- |
+| 0     | Monorepo, CI, Docker, local auth, schema + migrations                   | Done                                               |
+| 1     | Inventory CRUD, allocation engine, browser/detail UI                    | Done                                               |
+| 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                               |
+| 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                               |
+| 4     | TCGPlayer file-based connector                                          | Done                                               |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | **In progress** — alerting polish and release left |
 
-`main` is green: **547 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **549 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### What Phase 4 actually shipped
 
@@ -229,9 +229,32 @@ Facts that are not guessable from the headers:
   unreadable one (`absent` vs `unrecognised`) and is not reported as a problem. An
   unreadable condition is reported but does **not** discard the row: the row's identity is
   the SKU id, and losing a real sale is worse than flagging one.
+- **A pull sheet ends with a trailer row.** `Orders Contained in Pull Sheet:` in the
+  first column, then every order number pipe-separated in what would be Product Name —
+  two fields on a line where the others have eleven. It is skipped structurally (no id,
+  no quantity, no order column ⇒ not a data row) rather than by matching its wording.
+  Reporting it would have put a spurious problem on every real import.
 - **Prices carry 2 _or_ 4 decimal places** (`13.33`, `17.0000`). Parse without floats.
 - **Quantity 0 rows are normal**, not errors — 563 of 1333 in a real export. They mean
   "priced but not stocked", and reconciliation must not read them as drift.
+
+### Verified against the real exports (2026-07-29)
+
+The connector was run against a genuine Level 4 seller's own files in `private/`,
+not just the redacted fixtures. Both now import with **zero problems**:
+
+| Export      | Result                                                                         |
+| ----------- | ------------------------------------------------------------------------------ |
+| `MyPricing` | 1333 rows → 1333 listings, 0 problems. 563 at quantity 0, exactly as recorded. |
+| `PullSheet` | 219 rows → 236 sale events, all keys unique, trailer row skipped.              |
+
+Also confirmed against real data: all **23** distinct condition strings parse, with
+none unrecognised and none empty; `Quantity` equals the sum of the `:N` parts in every
+row; 218 of 219 pull-sheet ids appear in the pricing export; and 21 product lines span
+far more than Magic and Pokémon — One Piece, Lorcana, Flesh & Blood, Union Arena,
+Gundam, sleeves, deck boxes and playmats all round-trip.
+
+Nothing about the **upload** direction is verified by any of this. See Phase 4 above.
 
 **Operational caveat for `orders.import`:** a pull sheet lists orders _awaiting
 fulfilment_, not a sales history. Shipped orders drop off it, so an operator who ships
@@ -361,10 +384,12 @@ Worth stating plainly, because the README is optimistic by nature:
 - **No live Shopify store.** The connector has only ever run against a mock and a fake
   domain. HMAC verification, the GraphQL shapes and the location scoping are unproven
   against the real Admin API.
-- **No live TCGPlayer account.** The formats below were read off real exports, and the
-  connector is verified against redacted fixtures of them, but nothing has ever been
-  _uploaded_ to TCGPlayer. The unknown that matters is which quantity column their importer
-  acts on (Phase 4 above); everything inbound is exercised against the real shapes.
+- **Nothing has ever been uploaded to TCGPlayer.** The _inbound_ half is now proven
+  against a real Level 4 account's own exports (see the verification table below), but the
+  outbound half has never been sent anywhere. Two unknowns, and the second is the
+  dangerous one: which quantity column their importer acts on, and whether an upload
+  _replaces_ the whole inventory or only the rows present in the file. A one-row test file
+  against a live account is destructive if the answer to the second is "replaces".
 - **MySQL and SQLite are not supported yet.** Only the schema is proven portable; there is
   no migration history for them (ADR 0001 §4).
 - **No real identity provider.** OIDC is exercised end to end against a fake issuer

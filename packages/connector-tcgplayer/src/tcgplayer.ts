@@ -189,6 +189,16 @@ export function createTcgPlayerConnector(): Connector {
         const skuId = row[columns.skuId] ?? '';
         const label = describeRow(row, line);
 
+        // A real pull sheet ends with a trailer: `Orders Contained in Pull
+        // Sheet:` followed by every order number, pipe-separated, in what would
+        // be the Product Name column. It carries no SkuId, no quantity and no
+        // order column, so there is no sale hiding in it — and reporting it
+        // would put a spurious complaint on every single import an operator
+        // ever does, which is how a problem list stops being read.
+        if (isNotADataRow(row, [columns.skuId, columns.quantity, columns.orderQuantity])) {
+          return;
+        }
+
         if (!skuId) {
           problems.push({ line, message: `${label} has no SkuId, so it maps to no listing.` });
           return;
@@ -276,6 +286,11 @@ export function createTcgPlayerConnector(): Connector {
         const line = index + 2;
         const id = row[columns.tcgplayerId] ?? '';
         const label = describeRow(row, line);
+
+        // Symmetry with the pull sheet, which really does carry a trailer row.
+        // A real pricing export has not been seen to, but a row with neither an
+        // id nor a quantity says nothing either way.
+        if (isNotADataRow(row, [columns.tcgplayerId, columns.totalQuantity])) return;
 
         if (!id) {
           problems.push({ line, message: `${label} has no TCGplayer Id.` });
@@ -400,6 +415,19 @@ const MY_PRICING_HEADERS = [
   'TCG Marketplace Price',
   'Photo URL',
 ];
+
+/**
+ * True when a row cannot be a data row at all.
+ *
+ * Structural rather than a match on the trailer's wording, which TCGPlayer is
+ * free to reword: if every column that could identify or quantify something is
+ * empty, there is nothing to import and nothing to lose by skipping it. A row
+ * with an order reference but no SkuId is deliberately *not* caught here — that
+ * is a sale we cannot attribute, and it must be reported.
+ */
+function isNotADataRow(row: Record<string, string>, required: string[]): boolean {
+  return required.every((column) => (row[column] ?? '').trim() === '');
+}
 
 /**
  * Report a Condition we cannot read, without discarding the row.

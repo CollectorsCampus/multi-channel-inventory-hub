@@ -228,6 +228,29 @@ describe('proposeMatch', () => {
     if (result.status === 'matched') expect(result.candidate.target.id).toBe('strong');
   });
 
+  it('carries what the title implied, so the review screen can offer it', () => {
+    const result = proposeMatch(listing({ title: 'Pikachu ex - Lightly Played Foil' }), [
+      target({ name: 'Pikachu ex' }),
+    ]);
+
+    // Offered, not applied: the operator still confirms. But defaulting the
+    // dropdown to Near Mint when the title says Lightly Played is how a card
+    // gets sold as a grade better than it is.
+    expect(result.derived).toEqual({ condition: 'LP', printing: 'FOIL', language: 'EN' });
+  });
+
+  it('omits the derived dimensions when the title implied nothing', () => {
+    const result = proposeMatch(listing({ title: 'Surging Sparks Elite Trainer Box' }), [target()]);
+    expect(result.derived).toBeUndefined();
+  });
+
+  it('carries them on an unmatched proposal too', () => {
+    // The operator may link it by hand, and the condition is still knowable.
+    const result = proposeMatch(listing({ title: 'Some Card - Near Mint' }), []);
+    expect(result.status).toBe('unmatched');
+    expect(result.derived?.condition).toBe('NM');
+  });
+
   it('reports nothing found as unmatched, not as an error', () => {
     // Every real store has oddments the catalogue has never heard of.
     expect(proposeMatch(listing({ title: 'Store Gift Card' }), [target()]).status).toBe(

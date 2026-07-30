@@ -375,7 +375,17 @@ form {
   margin-top: 1.5rem;
 }
 
+/*
+ * `display: flex` belongs here, not only on `form`.
+ *
+ * This class sets flex properties, and until now got `display` from the `form`
+ * rule above — so on a `div` it computed to `block`, the gap did nothing, and
+ * adjacent labels ran together as "Link thisCondition". Several places already
+ * use `div.inline-form` for a row of buttons and were quietly losing their
+ * spacing. A no-op for the `form` uses, which are flex already.
+ */
 .inline-form {
+  display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;

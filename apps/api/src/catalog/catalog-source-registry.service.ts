@@ -8,6 +8,7 @@ import {
   type CatalogSource,
 } from '@hub/connector-sdk';
 import { createScryfallSource } from '@hub/catalog-scryfall';
+import { createTcgcsvSource } from '@hub/catalog-tcgcsv';
 import { MinIntervalLimiter, intervalFor } from './rate-limiter';
 
 /**
@@ -166,4 +167,17 @@ export class CatalogSourceRegistry implements OnModuleInit {
  * redistribution of someone else's API output, fine as an opt-in importer but
  * not something to enable for every self-hoster by default.
  */
-const BUNDLED_CATALOG_SOURCES: CatalogSource[] = [createScryfallSource()];
+/**
+ * Scryfall covers Magic. tcgcsv covers the other twenty product lines a real card
+ * inventory contains — One Piece, Lorcana, Flesh & Blood, Union Arena, Gundam,
+ * sleeves, deck boxes, playmats — and supplies the product-level `tcgplayer` id
+ * that `CatalogExternalRef` is keyed on.
+ *
+ * tcgcsv needs a **set name** to answer: it is a set of static files with no
+ * search endpoint, so an unscoped query would mean downloading a whole category.
+ * It reports that as a failure rather than returning a fraction of the matches,
+ * and the registry surfaces per-source failures alongside the results — so an
+ * unscoped search still returns Scryfall's answers and explains what tcgcsv
+ * needed. Both search forms carry a set field for exactly that reason.
+ */
+const BUNDLED_CATALOG_SOURCES: CatalogSource[] = [createScryfallSource(), createTcgcsvSource()];

@@ -259,7 +259,7 @@ describe('search', () => {
       calls.push(url);
       const body = url.endsWith('/Categories.csv')
         ? CATEGORIES
-        : url.endsWith('/1/Groups.csv')
+        : url.endsWith('/Groups.csv')
           ? MAGIC_GROUPS
           : url.includes('/1/') && url.includes('ProductsAndPrices')
             ? MAGIC_PRODUCTS
@@ -276,6 +276,53 @@ describe('search', () => {
       fetch: fetchImpl as unknown as typeof fetch,
       baseUrl: 'https://x/tcgplayer',
     });
+
+  /**
+   * Measured, not guessed: tcgcsv's CDN answers **401** to an empty `User-Agent`
+   * and to a generic one like `node`, and 200 to a descriptive one. Node's `fetch`
+   * sends none at all, so omitting this made the source return 401 for every
+   * request in production while every test here passed — because these tests stub
+   * `fetch` and a stub never checks a header. This is that gap closed.
+   */
+  it('identifies itself, because the CDN rejects a request that does not', async () => {
+    const seen: Array<Record<string, string> | undefined> = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string> | undefined);
+      return new Response(CATEGORIES);
+    });
+
+    const s = createTcgcsvSource({
+      fetch: fetchImpl as unknown as typeof fetch,
+      baseUrl: 'https://x/tcgplayer',
+    });
+    await s.search(ctx(), { text: 'x', game: 'nothing-matches-this' });
+
+    expect(seen.length).toBeGreaterThan(0);
+    for (const headers of seen) {
+      expect(headers?.['User-Agent']).toBeTruthy();
+      // A generic agent is refused by the CDN just as a blank one is.
+      expect(headers?.['User-Agent']).not.toBe('node');
+      expect(headers?.['User-Agent']).toMatch(/InventoryHub/);
+    }
+  });
+
+  it('falls back rather than sending a blank agent an override asked for', async () => {
+    const seen: Array<Record<string, string> | undefined> = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string> | undefined);
+      return new Response(CATEGORIES);
+    });
+
+    const s = createTcgcsvSource({
+      fetch: fetchImpl as unknown as typeof fetch,
+      baseUrl: 'https://x/tcgplayer',
+      userAgent: '   ',
+    });
+    await s.search(ctx(), { text: 'x', game: 'nothing-matches-this' });
+
+    // Honouring a blank override would reintroduce the 401, silently.
+    expect(seen[0]?.['User-Agent']).toMatch(/InventoryHub/);
+  });
 
   it('finds a card when narrowed to a game and set', async () => {
     const results = await source(stubFetch()).search(ctx(), {
@@ -342,18 +389,64 @@ describe('search', () => {
     expect(downloads).toHaveLength(3);
   });
 
-  it('refuses an un-narrowed search instead of walking the catalogue', async () => {
+  /**
+   * A set name narrows which set *files* are downloaded, but not how many group
+   * *lists* must be read to find them. Without a game that is one request per
+   * product line — 90 to a community CDN to answer one question.
+   */
+  it('refuses to read the set list of every product line', async () => {
     const calls: string[] = [];
     const fetchImpl = stubFetch(calls);
 
-    // No game, no set: 90 categories in scope. Downloading every set file to
-    // answer one search would hammer a community CDN, and returning a fraction
-    // of the matches would make a missing card look like a nonexistent one.
+    await expect(
+      source(fetchImpl).search(ctx(), { text: 'boimler', setName: 'Star Trek' }),
+    ).rejects.toThrow(/needs a game/i);
+
+    // Categories were read; no per-category group list was.
+    expect(calls.filter((c) => c.includes('Groups.csv'))).toEqual([]);
+  });
+
+  it('allows a game that legitimately matches two product lines', async () => {
+    // "Pokemon" also matches "Pokemon Japan", and a Japanese card is a real
+    // thing someone stocks — so the limit is two rather than one.
+    const fetchImpl = stubFetch();
+    const paired = createTcgcsvSource({
+      fetch: fetchImpl as unknown as typeof fetch,
+      baseUrl: 'https://x/tcgplayer',
+      maxCategoriesPerSearch: 2,
+    });
+
+    // The fixture's categories include Magic and Pokemon; "Pokemon" matches one
+    // exactly, so this must not be refused.
+    await expect(
+      paired.search(ctx(), { text: 'anything', game: 'Pokemon', setName: 'nothing here' }),
+    ).resolves.toEqual([]);
+  });
+
+  it('refuses an entirely un-narrowed search', async () => {
+    const calls: string[] = [];
+    const fetchImpl = stubFetch(calls);
+
+    // No game, no set. Refused for wanting a game, which is the first thing that
+    // would have to be read per product line.
     await expect(source(fetchImpl).search(ctx(), { text: 'enterprise' })).rejects.toThrow(
-      /needs a set name/i,
+      /needs a game/i,
     );
 
     // Refused before fetching a single set file.
+    expect(calls.filter((c) => c.includes('ProductsAndPrices'))).toEqual([]);
+  });
+
+  it('refuses a whole product line with no set named', async () => {
+    const calls: string[] = [];
+    const fetchImpl = stubFetch(calls);
+
+    // A game narrows to one category, but Magic alone has 453 sets. The group cap
+    // is what stops this, and it is the same message as any over-broad set name.
+    await expect(
+      source(fetchImpl).search(ctx(), { text: 'enterprise', game: 'Magic' }),
+    ).rejects.toThrow(/above the limit/i);
+
     expect(calls.filter((c) => c.includes('ProductsAndPrices'))).toEqual([]);
   });
 
@@ -450,7 +543,7 @@ describe('fetchById', () => {
       calls.push(url);
       const body = url.endsWith('/Categories.csv')
         ? CATEGORIES
-        : url.endsWith('/1/Groups.csv')
+        : url.endsWith('/Groups.csv')
           ? MAGIC_GROUPS
           : url.includes('/1/') && url.includes('ProductsAndPrices')
             ? MAGIC_PRODUCTS

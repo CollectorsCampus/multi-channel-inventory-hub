@@ -15,6 +15,7 @@
     "@fastify/helmet": "^13.0.0",
     "@fastify/static": "^10.1.2",
     "@hub/catalog-scryfall": "workspace:^",
+    "@hub/catalog-tcgcsv": "workspace:^",
     "@hub/connector-sdk": "workspace:*",
     "@hub/connector-shopify": "workspace:*",
     "@hub/connector-tcgplayer": "workspace:*",

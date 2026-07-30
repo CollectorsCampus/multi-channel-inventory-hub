@@ -98,18 +98,38 @@ export interface MatchCandidate {
   detail: string;
 }
 
+/**
+ * What the listing's own title implies about condition, printing and language.
+ *
+ * Carried on every proposal so the review screen can *offer* it rather than
+ * defaulting the condition dropdown to Near Mint. Absent when the title said
+ * nothing readable, which is the honest answer for a sealed box and for anything
+ * the condition vocabulary does not cover.
+ */
+export interface DerivedDimensions {
+  condition: string;
+  printing: string;
+  language: string;
+}
+
+interface ProposalBase {
+  listing: ChannelListing;
+  /** Absent when the title implied nothing. Never guessed. */
+  derived?: DerivedDimensions;
+}
+
 export type MatchProposal =
   /** One clear best candidate. Still requires confirmation. */
-  | { status: 'matched'; listing: ChannelListing; candidate: MatchCandidate }
+  | (ProposalBase & { status: 'matched'; candidate: MatchCandidate })
   /**
    * Several candidates tied at the best confidence found.
    *
    * Reported rather than resolved. Picking one would be a guess, and a guess
    * here silently points stock at the wrong listing.
    */
-  | { status: 'ambiguous'; listing: ChannelListing; candidates: MatchCandidate[] }
+  | (ProposalBase & { status: 'ambiguous'; candidates: MatchCandidate[] })
   /** Nothing in the catalogue resembled it. Not an error — most stores have oddments. */
-  | { status: 'unmatched'; listing: ChannelListing };
+  | (ProposalBase & { status: 'unmatched' });
 
 /**
  * Normalise a name for comparison.
@@ -304,19 +324,22 @@ export function proposeMatch(
   listing: ChannelListing,
   targets: readonly MatchTarget[],
 ): MatchProposal {
+  const derived = deriveSkuDimensions(listing);
+  const base = { listing, ...(derived !== undefined ? { derived } : {}) };
+
   const candidates = scoreCandidates(listing, targets);
-  if (candidates.length === 0) return { status: 'unmatched', listing };
+  if (candidates.length === 0) return { ...base, status: 'unmatched' };
 
   const best = candidates[0];
-  if (!best) return { status: 'unmatched', listing };
+  if (!best) return { ...base, status: 'unmatched' };
 
   const tied = candidates.filter((c) => c.confidence === best.confidence);
 
   // More than one thing fits equally well. Which one is a question for the
   // person who owns the stock.
-  if (tied.length > 1) return { status: 'ambiguous', listing, candidates: tied };
+  if (tied.length > 1) return { ...base, status: 'ambiguous', candidates: tied };
 
-  return { status: 'matched', listing, candidate: best };
+  return { ...base, status: 'matched', candidate: best };
 }
 
 export interface ProposalSummary {

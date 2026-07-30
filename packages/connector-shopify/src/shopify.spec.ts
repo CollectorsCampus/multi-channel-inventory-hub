@@ -678,6 +678,33 @@ describe('enumerating existing listings', () => {
     expect(page.nextCursor).toBeUndefined();
   });
 
+  /**
+   * Matching is scoped to one set while a page of a real storefront is not.
+   * Measured on a live Pokémon shop: 100 variants against one set's candidates
+   * gave 2 matches and 98 rows of noise, and the noise is what stops a review
+   * screen being read.
+   */
+  it('passes the search term to Shopify so a page is not all noise', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.enumerateListings!(ctx(), { search: 'Surging Sparks' });
+
+    expect(calls[0]!.query).toContain('query: $query');
+    expect(calls[0]!.variables).toMatchObject({ query: 'Surging Sparks' });
+  });
+
+  it('sends null rather than an empty search, which Shopify treats as a filter', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.enumerateListings!(ctx(), { search: '   ' });
+    expect(calls[0]!.variables).toMatchObject({ query: null });
+
+    await connector.enumerateListings!(ctx(), {});
+    expect(calls[1]!.variables).toMatchObject({ query: null });
+  });
+
   it('clamps the page size to what Shopify will accept', async () => {
     const { client, calls } = mockClient();
     const connector = createShopifyConnector({ client });

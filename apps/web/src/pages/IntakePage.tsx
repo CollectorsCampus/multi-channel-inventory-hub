@@ -20,6 +20,7 @@ export function IntakePage() {
   const [text, setText] = useState('');
   const [debounced, setDebounced] = useState('');
   const [game, setGame] = useState('');
+  const [setName, setSetName] = useState('');
   const [selected, setSelected] = useState<CatalogCandidate | null>(null);
 
   // Catalog sources sit behind someone else's rate limits; do not query them
@@ -29,7 +30,7 @@ export function IntakePage() {
     return () => clearTimeout(handle);
   }, [text]);
 
-  const search = useCatalogSearch(debounced, game || undefined);
+  const search = useCatalogSearch(debounced, game || undefined, setName || undefined);
   const games = [...new Set((sources.data ?? []).flatMap((s) => s.games))];
 
   return (
@@ -64,6 +65,17 @@ export function IntakePage() {
               ))}
             </select>
           )}
+          {/* Some sources cannot answer without a set. tcgcsv is static files
+              with no search endpoint, so an unscoped query would mean
+              downloading a whole category; it says so rather than returning a
+              fraction of the matches. */}
+          <input
+            type="text"
+            placeholder="Set (needed by some sources)"
+            value={setName}
+            onChange={(e) => setSetName(e.target.value)}
+            aria-label="Set"
+          />
         </div>
 
         {sources.data?.length === 0 && (

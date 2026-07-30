@@ -125,6 +125,11 @@ export class MatchingService {
     // Both halves are fetched before anything is compared, so a failure on either
     // side surfaces as an error rather than as "nothing matched".
     const page = await connector.enumerateListings!(ctx, {
+      // The set narrows the channel side too, where the platform can. Without it
+      // a page of a real storefront spans every set while the candidates are one
+      // set — measured at 2 matches and 98 rows of noise on a live Pokémon shop,
+      // and the noise is what stops a review screen being read.
+      search: setName,
       ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
       ...(request.limit !== undefined ? { limit: request.limit } : {}),
     });

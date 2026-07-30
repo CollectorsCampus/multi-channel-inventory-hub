@@ -323,7 +323,13 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
           pageInfo?: { hasNextPage?: boolean; endCursor?: string };
           nodes?: Array<EnumeratedVariantNode | null>;
         };
-      }>(ctx, ENUMERATE_LISTINGS_QUERY, { first, after: req.cursor ?? null });
+      }>(ctx, ENUMERATE_LISTINGS_QUERY, {
+        first,
+        after: req.cursor ?? null,
+        // Shopify's own full-text search over variants. Best-effort: it narrows
+        // the page, and the core does not rely on it having done so.
+        query: req.search?.trim() ? req.search.trim() : null,
+      });
 
       const connection = data.productVariants;
       const listings: ChannelListing[] = [];
@@ -626,8 +632,8 @@ interface EnumeratedVariantNode {
 }
 
 const ENUMERATE_LISTINGS_QUERY = /* GraphQL */ `
-  query EnumerateListings($first: Int!, $after: String) {
-    productVariants(first: $first, after: $after) {
+  query EnumerateListings($first: Int!, $after: String, $query: String) {
+    productVariants(first: $first, after: $after, query: $query) {
       pageInfo {
         hasNextPage
         endCursor

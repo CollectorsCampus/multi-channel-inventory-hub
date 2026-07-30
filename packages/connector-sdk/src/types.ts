@@ -205,6 +205,21 @@ export interface EnumerateListingsRequest {
   cursor?: string;
   /** A hint, not a contract — a platform may return fewer or cap it lower. */
   limit?: number;
+
+  /**
+   * Free text to narrow the page to, where the platform can.
+   *
+   * **Best-effort by design.** A connector whose platform has no search passes it
+   * over and returns everything; the core must therefore treat the result as
+   * unfiltered and never assume a returned listing matches. Filtering here is an
+   * efficiency, not a correctness boundary.
+   *
+   * It earns its place because matching is scoped to one set while a page of a
+   * real storefront is not: enumerating 100 variants of a Pokémon shop to match
+   * one set produced 2 matches and 98 rows of noise, and the noise is what stops
+   * a review screen being read.
+   */
+  search?: string;
 }
 
 // ---------------------------------------------------------------------------

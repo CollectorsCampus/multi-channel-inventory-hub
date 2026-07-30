@@ -82,6 +82,22 @@ export interface UpdatePriceRequest extends ListingRef {
 
 export type DelistRequest = ListingRef;
 
+/**
+ * Stamp our identifier onto the channel's seller-SKU field.
+ *
+ * `sku` is opaque to the connector: the core decides what identity to record —
+ * today a TCGPlayer product id, so a rebuilt hub can re-derive its links from
+ * the storefront rather than from a backup.
+ *
+ * Connectors must write it verbatim. Normalising it, prefixing it or truncating
+ * it would break the equality the matcher depends on, and a match that is
+ * `certain` today would silently degrade to a name guess tomorrow.
+ */
+export interface UpdateListingSkuRequest {
+  externalListingId: string;
+  sku: string;
+}
+
 /** Enough of a SKU for a connector to describe it to a platform. */
 export interface SkuDescriptor {
   skuId: string;

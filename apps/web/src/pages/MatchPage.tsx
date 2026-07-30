@@ -191,6 +191,9 @@ function ReviewList({
   result: NonNullable<ReturnType<typeof useProposeMatches>['data']>;
 }) {
   const confirm = useConfirmMatches(channelId);
+  // Off by default and deliberately not remembered between runs: it overwrites
+  // whatever the seller already had in that field.
+  const [writeSku, setWriteSku] = useState(false);
 
   // Keyed by listing id. Seeded from what the listing title implied, which is an
   // offer rather than an answer — the operator can change every one.
@@ -275,13 +278,33 @@ function ReviewList({
         <button
           type="button"
           disabled={links.length === 0 || confirm.isPending}
-          onClick={() => confirm.mutate(links)}
+          onClick={() =>
+            confirm.mutate({ links, ...(writeSku ? { writeSkuToChannel: true } : {}) })
+          }
         >
           {confirm.isPending
             ? 'Linking…'
             : `Confirm ${links.length} link${links.length === 1 ? '' : 's'}`}
         </button>
       </div>
+
+      <label className="inline-check">
+        <input type="checkbox" checked={writeSku} onChange={(e) => setWriteSku(e.target.checked)} />
+        Also write the catalog id into the channel’s SKU field
+      </label>
+      {/* Stated at the point of decision, not in documentation nobody reads. The
+          benefit is real — a rebuilt hub re-derives every link from the
+          storefront — and so is the cost. */}
+      <p className="field-hint">
+        {writeSku ? (
+          <strong>
+            This overwrites the SKU already on each listing you confirm. Existing codes are not
+            recoverable from here.
+          </strong>
+        ) : (
+          'Leaves the channel untouched. Turning it on records the mapping on the platform, so a rebuilt hub can re-derive every link — at the cost of the SKU currently there.'
+        )}
+      </p>
 
       {confirm.isError && <p className="error">{(confirm.error as Error).message}</p>}
 
@@ -290,6 +313,7 @@ function ReviewList({
           <p className={confirm.data.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
             Linked {confirm.data.linked}
             {confirm.data.unchanged > 0 && `, ${confirm.data.unchanged} already as requested`}
+            {confirm.data.skuWritten > 0 && `, ${confirm.data.skuWritten} SKU(s) rewritten`}
             {confirm.data.problems.length > 0 && `, ${confirm.data.problems.length} failed`}.
           </p>
           {/* Each link is independent, so the ones that failed are named rather

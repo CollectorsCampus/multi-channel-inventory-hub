@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -118,4 +119,15 @@ export class ConfirmMatchesDto {
   @ValidateNested({ each: true })
   @Type(() => ConfirmLinkDto)
   links!: ConfirmLinkDto[];
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      "Also write the catalog id into the channel's seller-SKU field. **Overwrites whatever is " +
+      'there**, which on a real storefront is usually a code the seller relies on. Off unless ' +
+      'explicitly requested, and only ever applied to a listing whose link was just confirmed.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  writeSkuToChannel?: boolean;
 }

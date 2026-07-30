@@ -39,13 +39,20 @@ export class MatchingController {
     description:
       'Each link is independent: one failure is reported and the rest still land. ' +
       'Re-confirming an identical link is a no-op. Creates the catalog item, SKU and ' +
-      'inventory row if they do not exist, with no stock — linking is identity, not intake.',
+      'inventory row if they do not exist, with no stock — linking is identity, not intake. ' +
+      'Set writeSkuToChannel to also stamp the catalog id onto the channel listing, which ' +
+      'overwrites the seller SKU already there.',
   })
   confirm(
     @Param('id') channelInstanceId: string,
     @Body() body: ConfirmMatchesDto,
     @CurrentUser() user: AuthenticatedPrincipal,
   ) {
-    return this.matching.confirm(channelInstanceId, body.links, user.userId);
+    return this.matching.confirm(channelInstanceId, body.links, {
+      ...(body.writeSkuToChannel !== undefined
+        ? { writeSkuToChannel: body.writeSkuToChannel }
+        : {}),
+      actorUserId: user.userId,
+    });
   }
 }

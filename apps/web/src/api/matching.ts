@@ -94,7 +94,15 @@ export interface ConfirmLink {
 export interface ConfirmResult {
   linked: number;
   unchanged: number;
+  /** Channel listings whose seller-SKU field was rewritten. */
+  skuWritten: number;
   problems: Array<{ externalListingId: string; message: string }>;
+}
+
+export interface ConfirmRequest {
+  links: ConfirmLink[];
+  /** Overwrites the seller SKU on the channel. Off unless the operator asks. */
+  writeSkuToChannel?: boolean;
 }
 
 export function useProposeMatches() {
@@ -110,10 +118,10 @@ export function useProposeMatches() {
 export function useConfirmMatches(channelInstanceId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (links: ConfirmLink[]) =>
+    mutationFn: (body: ConfirmRequest) =>
       apiFetch<ConfirmResult>(`/channels/${channelInstanceId}/match/confirm`, {
         method: 'POST',
-        body: JSON.stringify({ links }),
+        body: JSON.stringify(body),
       }),
     // Confirmation creates inventory items and allocations, so both browse
     // views are stale afterwards.

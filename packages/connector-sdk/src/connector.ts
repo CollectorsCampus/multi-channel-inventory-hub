@@ -18,6 +18,7 @@ import type {
   NormalizedEvent,
   PushListingRequest,
   PushListingResult,
+  UpdateListingSkuRequest,
   UpdatePriceRequest,
   UpdateQuantityRequest,
 } from './types';
@@ -108,6 +109,14 @@ export interface Connector {
 
   // --- reconciliation ------------------------------------------------------
   fetchLiveState?(ctx: Ctx, externalListingIds: string[]): Promise<LiveListingState[]>;
+
+  /**
+   * Record our identifier in the channel's seller-SKU field.
+   *
+   * The core calls this only when an operator asked for it, because on most
+   * storefronts that field already holds something the seller relies on.
+   */
+  updateListingSku?(ctx: Ctx, req: UpdateListingSkuRequest): Promise<void>;
 
   // --- discovery -----------------------------------------------------------
   /**

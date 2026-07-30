@@ -21,7 +21,14 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.1.1 released 2026-07-29** |
 
-`main` is green: **607 tests**, lint/typecheck/build clean, all four CI jobs passing.
+Post-release work continues on `main` and is **not in any tag**: the container-start fix,
+the tcgcsv catalog source, and the match-proposal workflow all landed after v0.1.1. See
+"After v0.1.1" below — the published `0.1.1` image does not contain any of it.
+
+`main` is green at `58f8e47`: **735 tests** (api 409, tcgplayer 102, shopify 87, sdk 59,
+tcgcsv 45, scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a
+push** — `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in
+its own workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
 ### v0.1.0 (2026-07-29)
 
@@ -220,6 +227,264 @@ tracked file. Placeholders (`test-store.myshopify.com`, `abc123-45.myshopify.com
 just as well in a fixture, and the real values belong in `private/`. Note that
 `nick@collectorscampus.com` authors every commit and will publish with them; that is
 normal for open source and was not treated as a defect.
+
+### After v0.1.1 — PRs #13, #15–#18 (2026-07-29/30)
+
+Everything in this section is on `main` and **in no released image**. It is the work that
+turned a store the hub could not touch into one it can enumerate and link.
+
+#### The published images cannot start offline (#13)
+
+`docker/entrypoint.sh` ran migrations through `pnpm --filter @hub/db exec prisma migrate
+deploy`, and **pnpm is not in the runtime image.** The `runtime` stage is a fresh `FROM
+base`, so it inherits `corepack enable` — a shim — and none of the pnpm the build stages
+downloaded. Corepack therefore fetched `pnpm-9.15.4.tgz` from registry.npmjs.org at _every
+container start_.
+
+It fails as a **hang, not an error**: the container sits in `starting`, goes `unhealthy`,
+never serves a request, and the only clue is one "Corepack is about to download" line. The
+hung fetch also leaves it uninterruptible, so `docker rm -f` cannot reap it — which is the
+cause of the wedged container mentioned under Environment notes.
+
+Fixed by calling the CLI through its own bin symlink in a subshell (`cd packages/db &&
+./node_modules/.bin/prisma migrate deploy`). **This affected the published 0.1.0 and 0.1.1
+images**, so a deployment behind an egress filter could never have started either. Worth
+folding into the next tag.
+
+#### `optionalSecretFields` (#15)
+
+A Shopify channel configured the normal way — `clientSecret` only — was labelled
+permanently, in error styling, "Not connected yet — still needs: webhookSecret". It was
+connected, and worse, the operator was sent hunting in the Dev Dashboard for a credential
+**Shopify does not issue**.
+
+Root cause was in the SDK: `secretFields` is a flat list with no way to say "only for the
+unusual case", so `channels.service` had no choice but `secretFieldsRequired:
+[...secretFields]`. `Connector.optionalSecretFields` is now a subset of `secretFields`;
+unmarked fields stay required, because a connector that forgets to mark one optional
+produces a prompt, while one that wrongly marks a required field optional produces a
+channel that fails at runtime. The form labels them "— optional" too: fixing only the
+warning would have left an unlabelled empty password box, which causes the same search.
+
+#### `packages/catalog-tcgcsv` (#16) — a prototype, and it says so
+
+tcgcsv.com as a `CatalogSource`: TCGPlayer's product catalogue and reference prices for the
+90 categories it publishes. It exists because Scryfall covers Magic and nothing else, while
+the operator's real inventory spans One Piece, Lorcana, Flesh & Blood, Union Arena, Gundam,
+sleeves, deck boxes and playmats.
+
+Four things about it that are not guessable:
+
+- **The CDN answers 401 to an empty or generic `User-Agent`**, and Node's `fetch` sends
+  none. Every test passed while production was fully broken, because tests stub `fetch` and
+  never exercise a header. **Any new HTTP client in this repo needs an explicit UA**; a
+  blank override falls back to the default rather than reintroducing the 401 silently.
+- **There are no per-condition prices, and there never will be.** tcgcsv does not publish
+  the SKU tier, and its definition of a SKU — product + language + printing + condition —
+  is exactly `Sku`'s natural key here. Its `productId` is **product-level** and is a
+  different id space from the SKU-level `TCGplayer Id` an allocation's `externalListingId`
+  holds, so these prices cannot be keyed to a listing. Catalogue and market reference, not
+  a price feed.
+- **It is an importer wearing a search interface.** Static files on a CDN, no search
+  endpoint, so `search()` fetches and filters whole set files. An un-narrowed search
+  **throws** rather than hammering the CDN or returning a silent fraction — a missing card
+  looks identical to a card that does not exist. Two caps enforce it: at most 2 categories
+  (so "Pokemon" plus "Pokemon Japan" still works) and at most 4 set files per search.
+  Requiring a _set_ is not enforced here; that is a review-size policy owned by
+  `MatchingService`.
+- **`fetchById` only resolves products from sets already read**, because tcgcsv publishes
+  no product-to-set index. That covers the flow that matters — search a set, confirm out of
+  it — and returns null for anything unseen rather than scanning ~4,000 files.
+
+The honest production shape is a scheduled bulk ingest into `CatalogItem` /
+`CatalogExternalRef` with search served from the database. That needs ingest machinery the
+core does not have, which is why this is labelled a prototype.
+
+#### The hard blocker this all existed to fix (#17)
+
+`ChannelAllocation.externalListingId` had exactly one writer — the outbound worker, from
+`pushListing`'s result — and Shopify's `pushListing` **refuses to run without one**.
+Nothing in the API could set it. So for an operator with an existing storefront the field
+could never be populated and every push failed forever. A closed loop, not a missing
+convenience. `AllocationWrite` now carries it: absent means "leave alone", explicit null
+detaches a link without destroying the allocation and its quantities.
+
+#### Match proposals (#17, #18)
+
+Two new capabilities and a review screen at `/match`.
+
+**`listing.enumerate` → `enumerateListings`.** Distinct from `reconcile`, and the
+distinction is the point: `fetchLiveState` answers "what do you say about _these_ ids",
+which presupposes we already hold them. Nothing answered "what are you selling that I have
+never heard of". It deliberately does **not** affect `syncMode` — it says nothing about
+order freshness, and letting it promote a manual channel to "continuous" would make
+reconciliation read expected staleness as drift.
+
+- Shopify's implementation **reports no quantity, on purpose**: inventory levels per
+  variant would multiply query cost by page size and hit the calculated-cost limit on any
+  real catalogue. It does carry `sku` and `barcode` — the only fields that can make a match
+  certain rather than probable.
+- **`search` is a best-effort hint, not a contract.** A connector whose platform has no
+  search returns everything, so the core must never assume a returned listing matches. It
+  earns its place because matching is scoped to one set while a page of a real storefront
+  is not: enumerating 100 variants of the live Pokémon shop to match one set gave **2
+  matches and 98 rows of noise**, and the noise is what stops a review screen being read.
+
+**`apps/api/src/matching/propose.ts` is pure functions**, the way `allocation.ts` and
+`reconcile.ts` are. The rule that shapes it: **nothing is ever applied, everything is
+proposed with its reason**. A tie at the best confidence is reported as `ambiguous` with
+both candidates listed, never resolved by taking the first — reprints make that tie the
+common case. A wrong link points inventory at the wrong listing, so the next sale
+decrements the wrong SKU and it surfaces days later as drift nobody can explain.
+
+Evidence is ranked in the operator's terms, not as a score: `barcode` and an exact
+`external-id` are **certain**; `external-id-embedded` and `name-and-set` are **probable**;
+bare `name` and `name-partial` are **possible**. Only `certain` is counted safe to
+bulk-accept.
+
+Two findings from real data:
+
+- **Condition text must come off the title before names are compared.** A variant is
+  "Pikachu ex - Near Mint Foil" and the catalogue knows "Pikachu ex". The vocabulary is
+  borrowed from `connector-tcgplayer`'s `parseCondition` because it is the same vocabulary
+  sellers type and it already refuses to guess.
+- **The qualifier can itself contain " - "** — the grammar is `<condition>[ <edition>][
+<finish>][ - <language>]`, so "Near Mint Holofoil - Japanese" is one qualifier in two
+  segments. Splitting on the last segment sees "Japanese", fails, and drops the language.
+  The search runs shortest-tail-first and refuses a tail that would swallow the whole
+  title, so "Commander - Star Trek" keeps its name.
+
+`deriveSkuDimensions` returns `undefined` rather than defaulting to Near Mint. A default
+would be the software deciding a card's condition, and condition is most of what a single
+is worth.
+
+**Barcode is unreachable today, and must stay that way with tcgcsv.** Two separate facts,
+both measured on 2026-07-30:
+
+1. **Nothing populates it.** `CatalogCandidate` has no barcode field, and `toTarget` never
+   sets `MatchTarget.barcode`, so the `barcode` branch of `bestReasonFor` cannot fire for a
+   catalogue-sourced target. It is currently dead code.
+2. **tcgcsv's `extUPC` must not be plumbed into it.** The column does exist and is carried
+   through in `extended`, which makes wiring it up look like a free win. It is not.
+   Measured across five real Pokémon sets: only **74 of 2112 rows** carry one (3.5%, sealed
+   only), and **the values are not unique** — `196214136113` is on both "Mega Evolution
+   Booster Pack" and "Mega Evolution Booster **Box Case**", and `196214143340` on both the
+   Sneasel and Weavile blisters. One live store barcode (`820650853319`) matches a
+   completely unrelated tcgcsv product.
+
+`barcode` is ranked **certain**, the one tier offered for bulk acceptance. Feeding a
+non-unique, 3.5%-covered field into it would let a $5 booster pack be certain-matched to a
+~$3000 booster box case. The tie logic would catch the cases where two candidates collide,
+but not a single wrong one. So the `certain` path stays reachable only through the SKU
+field, which is the argument for `listing.sku`.
+
+**`MatchingService` — `POST /channels/:id/match/propose` and `/confirm`.** Scoped to one
+set, and that is a choice about the human: 1,300 proposals in one screen do not get
+reviewed, they get accepted wholesale. An unscoped run is refused before either side is
+touched. Confirmation never trusts the client for catalogue data — it carries ids and SKU
+dimensions only, and the name and external ids are re-fetched server-side for the reason
+`IntakeDto` already gives. Links are applied sequentially, because two can land on the same
+inventory item and `upsertAllocation` takes the optimistic-locking path; one bad row
+reports a problem and the rest still land.
+
+Candidates are keyed on **`source.key`, not the request string** — CodeQL flagged the
+latter as remote property injection and was right to.
+
+`IntakeService.ensureSku` exists because `intake` requires a positive quantity and rightly
+so. Linking is identity: inventing a quantity would credit stock nobody counted, and a
+delta-0 `StockMovement` would be a lie in the audit trail.
+
+#### `listing.sku` — opt-in, off by default, **destructive** (#18)
+
+`updateListingSku` writes the catalogue's product id into the channel's own seller-SKU
+field, so a hub rebuilt from nothing re-derives every link from the platform instead of
+asking the operator to match 1,300 items again. It also promotes future matches from a name
+resemblance to an exact id — the `certain` path.
+
+**It overwrites, and a seller SKU usually means something to its owner.** The operator's
+Shopify variants carry a live internal scheme (two prefix families, populated on every
+variant sampled) and this replaces it. That was raised with evidence and **explicitly
+authorised** — but see "The SKU decision" below: no live write has ever been performed.
+
+The code is built so it cannot happen by accident: off unless the request asks; only ever
+applied to a listing whose link was _just confirmed_; requesting it on a connector that
+cannot do it is an **error, not a silent no-op**; an empty SKU is refused in the connector,
+because Shopify would accept it and the seller's code would simply be gone; and the UI
+checkbox defaults off and is not remembered between runs.
+
+**Ordering is deliberate: the channel is written only after the link is recorded locally.**
+The reverse would leave the storefront stamped with an id this hub has no allocation for —
+a lie that survives a restart and that reconciliation cannot explain.
+
+Shopify keeps a variant's SKU on its **inventory item**, so this goes through
+`productVariantsBulkUpdate` with `inventoryItem: { sku }` — same mutation and same
+`write_products` scope as the price write. Written **verbatim, never normalised**: a test
+asserts `00704143` is not tidied to `704143`, because the matcher's certain path is an
+equality test and a normalising connector would quietly turn tomorrow's exact match back
+into a guess. Rate limited through the connector's declared limit, as reconciliation does
+it — Shopify allows 2/s and a batch of forty confirmations would burst straight through.
+
+#### Two channel listings could silently steal one item's link — fixed 2026-07-30
+
+`applyLink` guarded one direction only. Two inventory items claiming one listing was
+refused; the reverse — a **second listing resolving to an item the channel already drives**
+— was not, and could not add a row, because `@@unique([inventoryItemId,
+channelInstanceId])` permits one allocation per item per channel. So it **moved** the
+existing one: the first listing was silently detached and `confirm` still counted it as
+linked. The operator was told two listings were managed while one had quietly stopped
+being, with no error and nothing in the audit trail.
+
+Found on the live store, where the **Pokémon Center Elite Trainer Box and the regular
+printing both propose the same catalogue product** — tcgcsv carries one product for both.
+It is not an edge case: a case beside a pack does it too.
+
+Now refused, naming the listing that already holds the item. Deliberately refused rather
+than resolved, for the same reason `propose` reports a tie instead of picking: which
+listing should own the stock is the operator's call. An allocation that exists but is
+_unlinked_ (what intake leaves behind) is still linkable — the guard only fires on a
+different **non-null** id, and a test pins that so it cannot tighten into blocking intake.
+
+Verified live: submitting both ETBs returned `linked: 3` plus one problem, and the first
+link survived. Before the fix the same request returned `linked: 4` with three rows.
+
+#### The SKU decision, authorised but never run
+
+**No live SKU write has ever been performed.** Before any real run: export the current SKUs
+from Shopify, and try a single row first.
+
+**The store's own SKU field is half empty and not unique**, which was measured rather than
+sampled and corrects the earlier note that two prefix families were "populated on every
+variant sampled". Of **867 listings, 434 carry a SKU** — so the overwrite is a no-op for
+half the store — across many more than two families (`##-#####-###`, `###-#####`,
+`UGDSQR######`, `ULP#####`, `PKU#####`, …). And it does not identify a variant: the Psyduck
+and Golduck 3-pack blisters share both SKU `10-10050-122` and barcode `196214136106`.
+Whatever that field is, it is not a key.
+
+#### Matching against the live store, as it actually behaves
+
+Every live match comes back **`possible` · `name-partial`**, because store titles are
+prefixed ("Pokémon TCG: Mega Evolution Phantasmal Flames …") and tcgcsv's are not.
+`certain` is 0 and stays 0 until SKUs carry the id.
+
+Two things about the shape of the data, both of which cost time to work out:
+
+- **The store organises Pokémon by sub-set, and tcgcsv agrees — under different names.**
+  The store's "Mega Evolution Ascended Heroes", "Perfect Order", "Chaos Rising" and "Pitch
+  Black" are `ME: Ascended Heroes`, `ME03`, `ME04` and `ME05` in tcgcsv. A run named
+  "Mega Evolution" matches only the three literal `Mega Evolution` groups and leaves the
+  sub-sets unmatched, which reads like a failure and is not. **Match each sub-set by its
+  own name.**
+- **Shopify titles carry a ` - Default Title` suffix** on single-variant products, which
+  `splitChannelTitle` cannot strip because it is not a condition. Containment matching
+  absorbs it, so it does no harm today — but it is why nothing here will ever match on a
+  whole-string comparison.
+
+**Progress: 93 allocations, all sealed Pokémon**, up from 3. Every one is a distinct listing
+and a distinct inventory item, all priced, `listedQuantity` 0, and the ledger still holds a
+single `StockMovement` — linking credits no stock, as designed. What remains unmatched is
+genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins and
+"Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
+lines are untouched.
 
 ### Unmerged work
 
@@ -814,6 +1079,14 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
   reach it via `& "C:\Program Files\nodejs\corepack.cmd" pnpm ...`, or run each package's
   own `node_modules\.bin\{vitest,tsc,prisma}.CMD` directly. `gh` lives at
   `C:\Program Files\GitHub CLI\gh.exe`.
+- **`corepack.cmd pnpm` is not enough for recursive scripts.** `pnpm -r test` and the root
+  `pnpm test` shell out to a bare `pnpm` for each child invocation, which is not there.
+  Write a `pnpm.cmd` shim (`@echo off` + `"C:\Program Files\nodejs\corepack.cmd" pnpm %*`)
+  into a scratch directory and prepend that directory to PATH. Use the **PowerShell** tool
+  rather than bash, so `.cmd` resolves through PATHEXT.
+- `cloudflared` is at `C:\Program Files (x86)\cloudflared\cloudflared.exe` (not on PATH).
+  `cloudflared tunnel --url http://localhost:<port> --no-autoupdate`, then read the
+  `https://<name>.trycloudflare.com` line out of the log; it takes about 10 seconds.
 - **Real marketplace data lives in `private/`**, which is gitignored: the operator's own
   TCGPlayer exports, and `shopify.local.json` holding live Shopify credentials. Useful for
   verifying against reality; `ShippingExport` and `PackingSlips` must never be opened, as
@@ -827,6 +1100,10 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 - Git identity is set **repo-local**: `collectorscampus <nick@collectorscampus.com>`.
 - Docker Desktop has wedged once (container unkillable) and a build segfaulted once
   (exit 139). Both were transient; verification fell back to running the API directly.
+- **A container left unkillable by the entrypoint hang (#13) cannot be reaped**, not even
+  with `docker rm -f` — the interrupted corepack fetch leaves it uninterruptible. Only a
+  Docker Desktop restart clears it, along with any `<hash>_` placeholder beside it. That is
+  why local verification has been running on **port 3001** rather than 3000.
 - The Dockerfile copies package manifests **one at a time** — a new workspace package needs
   two lines added there or the image build breaks.
 
@@ -846,10 +1123,19 @@ a defect to fix, and none blocks anything else.
    trail needs its own model and retention story.
 3. **Which marketplace to connect next.** Candidates and the questions to settle before
    building any of them are in [docs/CONNECTOR_ROADMAP.md](docs/CONNECTOR_ROADMAP.md) —
-   eBay, Cardmarket, CardTrader, Mana Pool, CardNexus and others. Nothing there is
-   verified; the first question for each is not "is there an API" but "is it open to a new
-   applicant at this account tier", which is what ADR 0002 and the Shopify rework both
-   turned on.
+   eBay, Cardmarket, CardTrader, Mana Pool, CardNexus and others. The first question for
+   each is not "is there an API" but "is it open to a new applicant at this account tier",
+   which is what ADR 0002 and the Shopify rework both turned on.
+
+   **eBay's gate is not the one we expected** (settled 2026-07-29, #14). The application
+   and approval machinery is for the **Buy** APIs; **Sell** gets a self-serve keyset. The
+   real gate is the **Marketplace Account Deletion** notification, which needs a public
+   HTTPS endpoint — with an exemption for developers who persist no platform user data,
+   which this hub has a good claim to.
+
+   **A TCGPlayer seller API key is not obtainable** (confirmed 2026-07-30). ADR 0002's
+   file-based connector is **permanent, not provisional**. Do not re-check this.
+
 4. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
    as a generic `sync_failure` warning, so an operator cannot tell "your secret is wrong,
    go fix it" — which fails forever and is deliberately not retried — from "the platform
@@ -883,3 +1169,11 @@ Worth stating plainly, because the README is optimistic by nature:
   hand against a running instance — but no live Shopify store has ever drifted and been
   caught. The diff is thoroughly tested; what is unproven is whether `fetchLiveState`
   returns what the Admin API actually says.
+- **No SKU has ever been written to a live listing.** `listing.sku` is proven against
+  mocks only. The operator authorised overwriting their Shopify SKUs; nobody has done it.
+- **Matching has been run live, and only ever produced `possible`.** `enumerateListings`
+  and the proposal engine work against the real store, but no confirmation has been
+  accepted from a live run, so `MatchingService.confirm` against a real storefront is
+  unexercised outside integration tests.
+- **`catalog-tcgcsv` has no bulk-ingest path.** It is a prototype that downloads set files
+  on demand; nothing has run it at catalogue scale.

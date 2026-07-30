@@ -142,6 +142,69 @@ describe('HTTP application', () => {
   });
 
   /**
+   * Everything above this point passes with `@fastify/static` absent or inert:
+   * the fallback route serves index.html from a string this file read itself, so
+   * it proves `useStaticAssets` did not *throw*, not that the plugin actually
+   * serves anything. A bundle that 404s means a white page with no error, which
+   * is the same class of invisible failure this file exists for.
+   *
+   * The filenames are content-hashed, so they are discovered from the served
+   * index.html rather than hardcoded — which also proves the references in it
+   * resolve, instead of assuming a build layout.
+   */
+  describe('static asset serving', () => {
+    it('serves the hashed bundles index.html actually references', async () => {
+      const index = await app.inject({ method: 'GET', url: '/' });
+      expect(index.statusCode).toBe(200);
+
+      const refs = [...index.body.matchAll(/\/assets\/[A-Za-z0-9._-]+\.(?:js|css)/g)].map(
+        (m) => m[0],
+      );
+      // A build with no referenced assets would make every assertion below
+      // vacuous, which is the failure mode this whole file was written against.
+      expect(refs.length).toBeGreaterThan(0);
+
+      for (const ref of refs) {
+        const res = await app.inject({ method: 'GET', url: ref });
+        expect(res.statusCode, `${ref} should be served by @fastify/static`).toBe(200);
+        // The fallback would answer 200 text/html for a path it swallowed, so
+        // the content type is what distinguishes "served" from "fell through".
+        expect(res.headers['content-type'], ref).not.toMatch(/text\/html/);
+        expect(res.body.length).toBeGreaterThan(0);
+      }
+    });
+
+    /**
+     * `@fastify/static` 9.3.0 shipped in v0.1.0 with two advisories about
+     * escaping the served root via non-canonical paths (GHSA route-guard bypass
+     * and the `allowedPath` bypass). Neither was reachable here — nothing guards
+     * the SPA bundle and `allowedPath` is never passed — but "not reachable"
+     * is a property of today's configuration, and the point of a test is that it
+     * keeps being true. Nothing outside the web root may ever be readable.
+     */
+    it('does not serve files outside the web root', async () => {
+      const escapes = [
+        '/assets/../../../package.json',
+        '/assets/%2e%2e%2f%2e%2e%2f%2e%2e%2fpackage.json',
+        '/assets/..%5c..%5c..%5cpackage.json',
+        '/assets/....//....//....//package.json',
+        '/assets/.%2e/.%2e/.%2e/package.json',
+        '/../../package.json',
+        '/assets/%252e%252e%252fpackage.json',
+      ];
+
+      for (const url of escapes) {
+        const res = await app.inject({ method: 'GET', url });
+        // Contained requests fall through to the SPA fallback, so a 200 is
+        // expected and harmless. What must never appear is content from a file
+        // above the root — the repository manifest is the nearest one.
+        expect(res.body, `${url} escaped the web root`).not.toMatch(/"name":\s*"inventory-hub"/);
+        expect(res.body, `${url} escaped the web root`).not.toMatch(/"license":\s*"AGPL/);
+      }
+    });
+  });
+
+  /**
    * The ingress endpoint is public by necessity — the caller is a platform, not
    * a signed-in operator — so the HMAC is the only thing standing between the
    * ledger and anyone who learns the URL.

@@ -28,6 +28,7 @@ export interface ConnectorSummary {
   syncMode: SyncMode;
   configSchema: Connector['configSchema'];
   secretFields: readonly string[];
+  optionalSecretFields: readonly string[];
 }
 
 @Injectable()
@@ -95,6 +96,7 @@ export class ConnectorRegistry implements OnModuleInit {
       syncMode: connectorSyncMode(c),
       configSchema: c.configSchema,
       secretFields: c.secretFields ?? [],
+      optionalSecretFields: c.optionalSecretFields ?? [],
     }));
   }
 

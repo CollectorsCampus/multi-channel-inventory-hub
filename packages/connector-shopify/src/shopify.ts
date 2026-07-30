@@ -106,6 +106,14 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
      */
     secretFields: ['clientSecret', 'webhookSecret'],
 
+    /**
+     * Only `clientSecret` is needed to run a Shopify channel. Leaving
+     * `webhookSecret` in the required set told a working channel it was "not
+     * connected yet", and sent operators looking in the Shopify Dev Dashboard
+     * for a value that is not issued there.
+     */
+    optionalSecretFields: ['webhookSecret'],
+
     capabilities: [
       'listing.push',
       'listing.quantity',

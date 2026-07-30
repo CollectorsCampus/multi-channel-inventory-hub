@@ -57,6 +57,24 @@ export interface Connector {
    */
   readonly secretFields?: readonly string[];
 
+  /**
+   * Which of `secretFields` a channel can work without. Must be a subset.
+   *
+   * Everything in `secretFields` is required unless named here, because that
+   * was the only behaviour available before this existed and it is the safer
+   * default: a connector that forgets to mark a field optional produces a
+   * prompt, while one that wrongly marks a required field optional produces a
+   * channel that fails at runtime.
+   *
+   * This exists because a flat list of names cannot say "and this one is only
+   * for the unusual case". Shopify's `webhookSecret` is exactly that — an app's
+   * webhooks are signed with its client secret, so the field is only needed for
+   * a subscription created by hand with a secret of its own. Without a way to
+   * express that, a correctly configured channel was told, permanently and in
+   * error styling, that it was "not connected yet".
+   */
+  readonly optionalSecretFields?: readonly string[];
+
   readonly capabilities: readonly Capability[];
 
   /**

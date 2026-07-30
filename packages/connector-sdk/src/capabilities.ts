@@ -45,6 +45,21 @@ export const CAPABILITIES = [
   /** Fetch live listing state for drift detection. */
   'reconcile',
 
+  /**
+   * Write our identifier into the channel's own seller-SKU field.
+   *
+   * Separate from `listing.push` because it is not part of syncing stock: it
+   * stamps the platform's record so the *mapping* survives outside this
+   * database. A hub rebuilt from scratch can then re-derive every link from the
+   * channel itself instead of asking the operator to match 1,300 items again.
+   *
+   * **Destructive where the field is already in use.** A seller SKU usually
+   * means something to its owner — a supplier code, a POS reference — so a core
+   * that calls this without being asked to would be overwriting business data.
+   * Callers must make it opt-in.
+   */
+  'listing.sku',
+
   // --- discovery ------------------------------------------------------------
   /**
    * Enumerate the listings that already exist on the channel.
@@ -86,6 +101,7 @@ export const CAPABILITY_METHODS = {
   'orders.poll': 'pollChanges',
   reconcile: 'fetchLiveState',
   'listing.enumerate': 'enumerateListings',
+  'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',
   'orders.import': 'importOrders',
   'inventory.import': 'importInventory',

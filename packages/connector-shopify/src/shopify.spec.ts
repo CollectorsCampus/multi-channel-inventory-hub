@@ -121,6 +121,10 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         return { inventorySetQuantities: { userErrors: overrides.quantityErrors ?? [] } } as T;
       }
 
+      if (query.includes('SetVariantSku')) {
+        return { productVariantsBulkUpdate: { userErrors: overrides.skuErrors ?? [] } } as T;
+      }
+
       if (query.includes('SetVariantPrice')) {
         return { productVariantsBulkUpdate: { userErrors: overrides.priceErrors ?? [] } } as T;
       }
@@ -571,6 +575,59 @@ describe('reconciliation', () => {
 
     await expect(connector.fetchLiveState!(ctx(), [])).resolves.toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('writing our id into the SKU field', () => {
+  it('writes through inventoryItem, which is where Shopify keeps a variant SKU', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.updateListingSku!(ctx(), { externalListingId: VARIANT, sku: '704143' });
+
+    const write = calls.find((c) => c.query.includes('SetVariantSku'));
+    expect(write?.variables).toMatchObject({
+      productId: PRODUCT,
+      variants: [{ id: VARIANT, inventoryItem: { sku: '704143' } }],
+    });
+  });
+
+  /**
+   * The matcher's `certain` path is an equality test against this value. A
+   * connector that prefixed or tidied it would quietly turn tomorrow's exact
+   * match back into a name guess.
+   */
+  it('writes the id verbatim', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.updateListingSku!(ctx(), { externalListingId: VARIANT, sku: '00704143' });
+
+    const write = calls.find((c) => c.query.includes('SetVariantSku'));
+    const variants = write?.variables?.variants as Array<{ inventoryItem: { sku: string } }>;
+    // Not trimmed to '704143', not prefixed, not coerced to a number.
+    expect(variants[0]!.inventoryItem.sku).toBe('00704143');
+  });
+
+  it('refuses to blank a seller’s SKU', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    // Shopify would accept this and the seller's code would be gone.
+    await expect(
+      connector.updateListingSku!(ctx(), { externalListingId: VARIANT, sku: '   ' }),
+    ).rejects.toThrow(/empty SKU/i);
+
+    expect(calls.filter((c) => c.query.includes('SetVariantSku'))).toEqual([]);
+  });
+
+  it('surfaces a Shopify user error rather than reporting success', async () => {
+    const { client } = mockClient({ skuErrors: [{ message: 'SKU already in use' }] });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingSku!(ctx(), { externalListingId: VARIANT, sku: '704143' }),
+    ).rejects.toThrow(/SKU already in use/);
   });
 });
 

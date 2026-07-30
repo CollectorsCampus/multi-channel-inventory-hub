@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ChannelContextFactory } from '../connectors/channel-context.service';
 import { CatalogSourceRegistry } from '../catalog/catalog-source-registry.service';
 import { CatalogService } from '../catalog/catalog.service';
+import { MinIntervalLimiter, intervalFor } from '../catalog/rate-limiter';
 import { IntakeService } from '../inventory/intake.service';
 import { InventoryService } from '../inventory/inventory.service';
 import {
@@ -78,16 +79,42 @@ export interface ConfirmLink {
   price?: number;
 }
 
+export interface ConfirmOptions {
+  /**
+   * Also stamp the catalogue's platform id into the channel's seller-SKU field.
+   *
+   * **Off unless asked, because it overwrites.** On a real storefront that field
+   * usually holds a code the seller relies on — a supplier reference, a POS key —
+   * and the hub has no way to know which. The operator who turns this on is
+   * saying they would rather have the mapping recorded on the platform, where a
+   * rebuilt hub can re-derive every link instead of asking them to match 1,300
+   * items again.
+   *
+   * Only ever applied to a listing whose link was just confirmed. Nothing is
+   * written for an unmatched or ambiguous row.
+   */
+  writeSkuToChannel?: boolean;
+  actorUserId?: string;
+}
+
 export interface ConfirmResult {
   linked: number;
   /** Links that were already exactly as requested. Re-confirming is a no-op. */
   unchanged: number;
+  /** Channel listings whose SKU field was rewritten. */
+  skuWritten: number;
   problems: Array<{ externalListingId: string; message: string }>;
 }
 
 @Injectable()
 export class MatchingService {
   private readonly logger = new Logger(MatchingService.name);
+  /**
+   * Channel writes are rate limited by the connector's own declared limit, the
+   * same way reconciliation does it. Shopify allows 2/s, and a batch of forty
+   * confirmations would otherwise burst straight through it.
+   */
+  private readonly limiter = new MinIntervalLimiter();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -180,11 +207,21 @@ export class MatchingService {
   async confirm(
     channelInstanceId: string,
     links: readonly ConfirmLink[],
-    actorUserId?: string,
+    options: ConfirmOptions = {},
   ): Promise<ConfirmResult> {
-    const { displayName } = await this.channels.resolve(channelInstanceId);
+    const { connector, ctx, displayName } = await this.channels.resolve(channelInstanceId);
 
-    const result: ConfirmResult = { linked: 0, unchanged: 0, problems: [] };
+    const canWriteSku =
+      options.writeSkuToChannel === true && hasCapability(connector.capabilities, 'listing.sku');
+
+    if (options.writeSkuToChannel === true && !canWriteSku) {
+      throw new BadRequestException(
+        `${connector.displayName} cannot write a SKU back to a listing, so ids cannot be ` +
+          `recorded on "${displayName}".`,
+      );
+    }
+
+    const result: ConfirmResult = { linked: 0, unchanged: 0, skuWritten: 0, problems: [] };
 
     // Sequential rather than parallel. Two links can land on the same inventory
     // item, and `upsertAllocation` takes the optimistic-locking path — running
@@ -194,6 +231,19 @@ export class MatchingService {
         const outcome = await this.applyLink(channelInstanceId, link);
         if (outcome === 'unchanged') result.unchanged++;
         else result.linked++;
+
+        // Only after the link is safely recorded here. Writing to the channel
+        // first and then failing locally would leave the storefront stamped with
+        // an id this hub has no allocation for — a lie that survives a restart.
+        if (canWriteSku) {
+          await this.limiter.run(connector.key, intervalFor(connector.rateLimit), () =>
+            connector.updateListingSku!(ctx, {
+              externalListingId: link.externalListingId,
+              sku: link.sourceId,
+            }),
+          );
+          result.skuWritten++;
+        }
       } catch (error) {
         result.problems.push({
           externalListingId: link.externalListingId,
@@ -203,8 +253,9 @@ export class MatchingService {
     }
 
     this.logger.log(
-      `Confirmed ${result.linked} link(s) on "${displayName}" by ${actorUserId ?? 'unknown'} ` +
-        `(${result.unchanged} unchanged, ${result.problems.length} problem(s)).`,
+      `Confirmed ${result.linked} link(s) on "${displayName}" by ` +
+        `${options.actorUserId ?? 'unknown'} (${result.unchanged} unchanged, ` +
+        `${result.skuWritten} SKU(s) rewritten, ${result.problems.length} problem(s)).`,
     );
 
     return result;

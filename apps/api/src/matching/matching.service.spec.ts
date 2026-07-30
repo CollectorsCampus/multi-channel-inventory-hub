@@ -49,6 +49,7 @@ let channelId: string;
 let enumerateListings: ReturnType<typeof vi.fn>;
 let search: ReturnType<typeof vi.fn>;
 let canRefetch: ReturnType<typeof vi.fn>;
+let updateListingSku: ReturnType<typeof vi.fn>;
 
 describeDb('MatchingService', () => {
   beforeAll(async () => {
@@ -85,11 +86,14 @@ describeDb('MatchingService', () => {
       ],
     }));
 
+    updateListingSku = vi.fn(async () => undefined);
+
     const connector = {
       key: 'shopify',
       displayName: 'Shopify',
-      capabilities: ['listing.enumerate', 'listing.quantity'],
+      capabilities: ['listing.enumerate', 'listing.quantity', 'listing.sku'],
       enumerateListings,
+      updateListingSku,
     } as unknown as Connector;
 
     const channels = {
@@ -351,6 +355,116 @@ describeDb('MatchingService', () => {
       // The client is never trusted for the product's name or ids, so a source
       // that cannot re-fetch cannot be confirmed against — and says so.
       expect(result.problems[0]?.message).toMatch(/cannot re-verify a product by id/i);
+    });
+
+    /**
+     * Destructive: on a real storefront the SKU field holds a code the seller
+     * relies on. The hub must never write it because a code path happened to run.
+     */
+    it('does not touch the channel SKU unless asked', async () => {
+      await confirmEtb();
+
+      expect(updateListingSku).not.toHaveBeenCalled();
+    });
+
+    it('stamps the catalog id onto the listing when asked', async () => {
+      const result = await matching.confirm(
+        channelId,
+        [
+          {
+            externalListingId: ETB_GID,
+            sourceKey: 'tcgcsv',
+            sourceId: ETB.sourceId,
+            condition: 'SEALED',
+          },
+        ],
+        { writeSkuToChannel: true },
+      );
+
+      expect(result.skuWritten).toBe(1);
+      expect(updateListingSku).toHaveBeenCalledWith(
+        expect.anything(),
+        // The catalog id, not our internal uuid — that is what makes the mapping
+        // re-derivable from the storefront.
+        { externalListingId: ETB_GID, sku: '704143' },
+      );
+    });
+
+    /**
+     * Order matters. Writing the storefront first and then failing locally would
+     * leave the platform stamped with an id this hub has no allocation for — a
+     * lie that survives a restart and that reconciliation cannot explain.
+     */
+    it('writes the channel only after the link is recorded here', async () => {
+      const result = await matching.confirm(
+        channelId,
+        [
+          {
+            externalListingId: ETB_GID,
+            sourceKey: 'tcgcsv',
+            sourceId: 'does-not-exist',
+            condition: 'SEALED',
+          },
+        ],
+        { writeSkuToChannel: true },
+      );
+
+      expect(result.problems).toHaveLength(1);
+      expect(result.skuWritten).toBe(0);
+      expect(updateListingSku).not.toHaveBeenCalled();
+    });
+
+    it('does not rewrite the SKU for a link that was already as requested', async () => {
+      await confirmEtb();
+      updateListingSku.mockClear();
+
+      const again = await matching.confirm(
+        channelId,
+        [
+          {
+            externalListingId: ETB_GID,
+            sourceKey: 'tcgcsv',
+            sourceId: ETB.sourceId,
+            condition: 'SEALED',
+          },
+        ],
+        { writeSkuToChannel: true },
+      );
+
+      // Unchanged links still count as confirmed, so the stamp is applied — it is
+      // idempotent on the platform and makes a half-finished run completable.
+      expect(again.unchanged).toBe(1);
+      expect(again.skuWritten).toBe(1);
+    });
+
+    it('refuses the request when the connector cannot write a SKU', async () => {
+      const plain = {
+        resolve: vi.fn(async () => ({
+          connector: {
+            key: 'shopify',
+            displayName: 'Shopify',
+            capabilities: ['listing.enumerate'],
+          } as unknown as Connector,
+          ctx: {} as Ctx,
+          displayName: 'Test Store',
+          enabled: true,
+        })),
+      } as unknown as ChannelContextFactory;
+
+      const service = new MatchingService(
+        prisma as unknown as PrismaService,
+        plain,
+        { get: vi.fn() } as unknown as CatalogSourceRegistry,
+        {} as CatalogService,
+        {} as IntakeService,
+        {} as InventoryService,
+      );
+
+      // Silently ignoring the flag would tell the operator their ids were
+      // recorded on the platform when nothing was written.
+      await expect(service.confirm(channelId, [], { writeSkuToChannel: true })).rejects.toThrow(
+        /cannot write a SKU back/i,
+      );
     });
 
     it('keeps the SKU dimensions it was given', async () => {

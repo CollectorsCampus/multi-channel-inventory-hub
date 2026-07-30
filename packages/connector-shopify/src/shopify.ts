@@ -10,6 +10,7 @@ import type {
   NormalizedEvent,
   PushListingRequest,
   PushListingResult,
+  UpdateListingSkuRequest,
   UpdatePriceRequest,
   UpdateQuantityRequest,
 } from '@hub/connector-sdk';
@@ -125,6 +126,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'orders.webhook',
       'reconcile',
       'listing.enumerate',
+      'listing.sku',
     ],
 
     // Shopify's standard Admin API allowance is 2 requests/second sustained.
@@ -162,6 +164,38 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     async updatePrice(ctx: Ctx, req: UpdatePriceRequest): Promise<void> {
       requireListing(req.externalListingId);
       await setPrice(ctx, req.externalListingId!, req.price);
+    },
+
+    /**
+     * Write the hub's identifier into the variant's SKU field.
+     *
+     * Shopify keeps a variant's SKU on its **inventory item**, not on the variant
+     * itself, so this goes through `productVariantsBulkUpdate` with
+     * `inventoryItem: { sku }` — the same mutation the price write already uses,
+     * and the same `write_products` scope the connector already asks for.
+     *
+     * Verbatim, with no normalising: the matcher's `certain` path is an equality
+     * test against this value, and a connector that tidied it would quietly turn
+     * tomorrow's exact match back into a name guess.
+     */
+    async updateListingSku(ctx: Ctx, req: UpdateListingSkuRequest): Promise<void> {
+      const sku = req.sku.trim();
+      if (!sku) {
+        // Blanking a seller's SKU is not something the core ever means to ask
+        // for, and Shopify would accept it.
+        throw new Error('Refusing to write an empty SKU.');
+      }
+
+      const productId = await resolveProductId(ctx, req.externalListingId);
+
+      const data = await client.request<{
+        productVariantsBulkUpdate: { userErrors: Array<{ field?: string[]; message: string }> };
+      }>(ctx, SET_SKU_MUTATION, {
+        productId,
+        variants: [{ id: req.externalListingId, inventoryItem: { sku } }],
+      });
+
+      throwOnUserErrors(data.productVariantsBulkUpdate?.userErrors, 'Setting SKU');
     },
 
     /**
@@ -649,6 +683,17 @@ const ENUMERATE_LISTINGS_QUERY = /* GraphQL */ `
           title
           status
         }
+      }
+    }
+  }
+`;
+
+const SET_SKU_MUTATION = /* GraphQL */ `
+  mutation SetVariantSku($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      userErrors {
+        field
+        message
       }
     }
   }

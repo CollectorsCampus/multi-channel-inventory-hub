@@ -326,6 +326,30 @@ export class MatchingService {
       return 'unchanged';
     }
 
+    // The mirror of the guard above, and the one that was missing.
+    //
+    // One inventory item holds at most one allocation per channel — that is
+    // `@@unique([inventoryItemId, channelInstanceId])`. So when a *second*
+    // listing resolves to an item this channel already drives, writing it does
+    // not add a link, it moves the existing one: the first listing is silently
+    // detached, and `confirm` still reports it as linked. The operator is told
+    // two listings are managed while one has quietly stopped being.
+    //
+    // It is not a rare shape. A storefront legitimately sells one catalogue
+    // product under two listings — a Pokemon Center exclusive beside the regular
+    // printing, a case beside a pack — and the catalogue may carry only one of
+    // them. Refused rather than resolved, for the same reason `propose` reports
+    // a tie instead of picking: which listing should own the stock is the
+    // operator's call, and guessing it loses the other one.
+    if (existing?.externalListingId != null && existing.externalListingId !== externalListingId) {
+      throw new BadRequestException(
+        `"${candidate.name}" is already linked to listing ${existing.externalListingId} on this ` +
+          `channel, so ${externalListingId} cannot also claim it — one item can drive one ` +
+          `listing per channel. Detach that allocation first, or link this listing to a ` +
+          `catalog product of its own.`,
+      );
+    }
+
     await this.inventory.upsertAllocation(inventoryItemId, {
       channelInstanceId,
       // Pooled with no cap: the safe default. A fixed partition reserves stock

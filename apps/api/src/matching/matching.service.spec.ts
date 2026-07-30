@@ -313,6 +313,69 @@ describeDb('MatchingService', () => {
       expect(await prisma.channelAllocation.count()).toBe(1);
     });
 
+    /**
+     * The mirror of the above, and the direction that used to be unguarded.
+     *
+     * A second listing resolving to an item this channel already drives cannot
+     * add an allocation — the unique constraint permits one per (item, channel)
+     * — so it used to *move* the existing one. The first listing was silently
+     * detached and `confirm` still counted it as linked, which is the worst
+     * shape a failure can take: the operator is told two listings are managed
+     * while one has quietly stopped being.
+     *
+     * Found against the real store, where the Pokemon Center Elite Trainer Box
+     * and the regular printing both proposed the same catalogue product.
+     */
+    it('refuses to point two channel listings at one inventory item', async () => {
+      await confirmEtb();
+
+      const result = await matching.confirm(channelId, [
+        {
+          externalListingId: PIKACHU_GID,
+          sourceKey: 'tcgcsv',
+          // Same product and same SKU dimensions as the ETB link above, so this
+          // resolves to the identical inventory item. A different condition
+          // would make a different Sku and would legitimately be a second item.
+          sourceId: ETB.sourceId,
+          condition: 'SEALED',
+        },
+      ]);
+
+      expect(result.linked).toBe(0);
+      expect(result.problems[0]?.message).toMatch(/already linked to listing/i);
+
+      // The first link is untouched — the property that actually matters.
+      const allocations = await prisma.channelAllocation.findMany();
+      expect(allocations).toHaveLength(1);
+      expect(allocations[0]?.externalListingId).toBe(ETB_GID);
+    });
+
+    /**
+     * The guard must not catch an allocation that exists but is unlinked, which
+     * is what intake leaves behind. Linking one is the ordinary case, not a
+     * conflict.
+     */
+    it('links an allocation that exists without a listing id', async () => {
+      await confirmEtb();
+      // What intake leaves behind: the allocation exists, nothing is linked yet.
+      await prisma.channelAllocation.updateMany({ data: { externalListingId: null } });
+
+      const result = await matching.confirm(channelId, [
+        {
+          externalListingId: ETB_GID,
+          sourceKey: 'tcgcsv',
+          sourceId: ETB.sourceId,
+          condition: 'SEALED',
+        },
+      ]);
+
+      expect(result.problems).toEqual([]);
+      expect(result.linked).toBe(1);
+
+      const allocation = await prisma.channelAllocation.findFirstOrThrow();
+      expect(allocation.externalListingId).toBe(ETB_GID);
+    });
+
     it('lands the good links even when one fails', async () => {
       const result = await matching.confirm(channelId, [
         {

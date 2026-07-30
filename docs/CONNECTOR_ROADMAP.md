@@ -243,24 +243,99 @@ other marketplaces, spanning 29 countries and 9 currencies.
   how much seller liquidity actually exists. The last one decides whether any of it is worth
   building.
 
-### Others worth considering
+### Others — _researched 2026-07-30_
 
-Not requested, listed because they plausibly fit a card seller's mix:
+This table was previously guesswork. It has been checked, and the guesses were mostly right
+about shape and wrong about which ones are reachable.
 
-| Candidate            | Why                                      | Expected shape                                  |
-| -------------------- | ---------------------------------------- | ----------------------------------------------- |
-| **Amazon (SP-API)**  | Large, and cards do sell there           | Real API; heavy onboarding and strict metrics   |
-| **Whatnot**          | Dominant for live card breaks            | Likely partner-only access, if any              |
-| **Card Kingdom**     | Major buylist                            | Buylist, not seller inventory — different model |
-| **Crystal Commerce** | Platform many game stores already run on | Has an API; integration is with the platform    |
-| **BinderPOS**        | Shopify-based POS used by card stores    | May be reachable through the Shopify connector  |
-| **Cardsphere**       | MTG trade/credit platform                | Not a storefront; different model entirely      |
-| **COMC**             | Sports-card consignment                  | Consignment, so allocation semantics differ     |
+| Candidate            | Access model, verified                                        | Verdict                               |
+| -------------------- | ------------------------------------------------------------- | ------------------------------------- |
+| **Whatnot**          | Real GraphQL Seller API — **closed to new applicants**        | Blocked. Watch for it reopening.      |
+| **Amazon (SP-API)**  | Open, but Professional account + developer-profile review     | Viable; heaviest onboarding here.     |
+| **Crystal Commerce** | Has a JSON API and a partner programme                        | **A competing hub, not a channel.**   |
+| **BinderPOS**        | No public API; integrates via its own Shopify app             | **Would collide with us in Shopify.** |
+| **Card Kingdom**     | No seller API. Third-party scrapers expose its _prices_ only. | Price data at best, not a channel.    |
+| **Cardsphere**       | No public seller API found                                    | Not pursuable.                        |
+| **COMC**             | No public seller API found                                    | Not pursuable.                        |
 
-The last column matters: **buylist, consignment and trade platforms are not storefronts.**
-Our allocation model assumes we hold stock and list it. A consignment platform that takes
-physical possession, or a buylist that quotes prices rather than accepting listings, does
-not fit `fixed`/`pooled` allocation and would need its own thinking before any connector.
+#### Whatnot — the exact ADR 0002 shape, again
+
+The guess was "likely partner-only access, if any". Confirmed, and precisely: the API is
+real, GraphQL, with staging (`api.stage.whatnot.com/seller-api/graphql`) and production
+endpoints, covering product management and **notifications when products sell** — the two
+things a connector needs. Its own documentation then says it is in Developer Preview and
+**"not accepting new applicants for access at this time"**, available only to "select beta
+partners".
+
+So it is a fully documented, well-shaped, completely unobtainable API. That is TCGPlayer
+verbatim. **Do not plan around it**, and do not treat the quality of the documentation as
+evidence of availability — that inference is the one this project has now been burned by
+twice.
+
+#### Amazon SP-API — open, but the gate is a tier and a review
+
+Reachable, and more so than "heavy onboarding" suggested, because a **private seller
+application** for a store you own is _self-authorized_ — no Appstore listing, no public
+OAuth flow, no solution-provider agreement. That removes most of the feared weight.
+
+What remains is real: a **Professional selling account** (Individual accounts are not
+eligible), being the primary account user, identity verification, and a developer profile
+describing the data required and its security handling. It is an application that can be
+refused, so it belongs in the "establish access first" bucket rather than the self-serve
+one.
+
+#### Crystal Commerce and BinderPOS are not channels — they are us
+
+The most useful correction in this section. Both were listed as integration candidates; both
+are **inventory hubs in their own right**, and that changes the question from "can we
+connect" to "should we".
+
+- **Crystal Commerce** syncs one inventory across Amazon, eBay and TCGplayer — the same job
+  this project does. It has a JSON API and a technology-partner programme, so connecting is
+  possible, but it would mean treating Crystal Commerce as the system of record and this hub
+  as a client of it. That is a different product.
+- **BinderPOS** is a TCG point-of-sale that pushes catalogue and pricing **into Shopify**,
+  twice daily, and pulls marketplace orders back. An operator running both it and this hub
+  would have **two systems writing the same Shopify inventory**, which is not an integration
+  but a race — and precisely the drift reconciliation exists to detect, arriving nightly
+  and forever. If the operator uses BinderPOS, that is a fact to establish before pointing
+  this hub at the same store, not a connector to build.
+
+#### The rest are not storefronts
+
+Unchanged and still the point: **buylist, consignment and trade platforms are not
+storefronts.** Our allocation model assumes we hold stock and list it. Card Kingdom quotes
+buylist prices rather than accepting listings, COMC takes physical possession, and
+Cardsphere trades on credit. None fits `fixed`/`pooled` allocation, and none of the three
+exposes a seller API anyway. Card Kingdom's data is reachable only through third-party
+scraping services, which is a licensing question before it is a technical one.
+
+#### One aggregator worth knowing about
+
+**TCGAPIs** is a commercial third-party API unifying catalogue, SKU pricing and listings
+across Cardmarket, CardTrader, Mana Pool, Card Kingdom and Cardsphere. That is a
+`CatalogSource` shape, not a connector — a possible alternative or complement to
+`catalog-tcgcsv`, and the only route found to Cardsphere and Card Kingdom data. It is paid
+and third-party, so it trades the tcgcsv problem (a community CDN with no SLA) for a vendor
+dependency. Noted, not recommended.
+
+### What the access models actually look like, across everything researched
+
+The single most useful output of this research is that the candidates sort into four
+buckets, and the bucket predicts the work far better than the feature list does:
+
+1. **Self-serve today** — CardTrader, Cardmarket, CardNexus, eBay (Sell), and probably Mana
+   Pool. A token or key from an account page. Build against these first.
+2. **Application with a real chance of refusal** — Amazon SP-API. Professional tier plus a
+   reviewed developer profile.
+3. **Closed to new applicants** — TCGPlayer and Whatnot. Both fully documented. Both
+   unobtainable. File-based connectors or nothing.
+4. **Not a channel at all** — Crystal Commerce and BinderPOS (competing hubs), Card Kingdom,
+   COMC and Cardsphere (not storefronts), TCGAPIs (a catalogue).
+
+Two of the seven "others" turned out to be category errors rather than access problems,
+which is worth remembering when the next name is added to this list: **ask what it is before
+asking whether it has an API.**
 
 ## Suggested order
 

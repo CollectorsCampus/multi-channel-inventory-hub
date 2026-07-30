@@ -1149,6 +1149,21 @@ a defect to fix, and none blocks anything else.
 
    Note `api.cardmarket.com` now returns **410 Gone**; it moved to `apiv2.cardmarket.com`.
 
+   **The secondary candidates were researched too**, and two were category errors rather
+   than access problems. **Whatnot has a real GraphQL seller API that is closed to new
+   applicants** — TCGPlayer verbatim, so do not plan around it. **Amazon SP-API is
+   reachable** (a private seller app for your own store is self-authorized) but needs a
+   Professional account and a reviewed developer profile. **Crystal Commerce and BinderPOS
+   are not channels — they are competing hubs**; BinderPOS in particular writes into Shopify
+   twice daily, so an operator running both it and this hub would have two systems writing
+   one store's inventory. Establish that before pointing the hub at a store. Card Kingdom,
+   COMC and Cardsphere are not storefronts and expose no seller API.
+
+   The useful generalisation: candidates sort into **self-serve** (CardTrader, Cardmarket,
+   CardNexus, eBay Sell, probably Mana Pool), **application** (Amazon), **closed**
+   (TCGPlayer, Whatnot) and **not a channel** — and the bucket predicts the work far better
+   than the feature list. Ask what a thing _is_ before asking whether it has an API.
+
 4. **Whether to accept webhooks over a cloud event bus.** Researched 2026-07-30 in
    [docs/WEBHOOK_DELIVERY.md](docs/WEBHOOK_DELIVERY.md). Shopify can deliver to Google
    Pub/Sub or Amazon EventBridge instead of an HTTPS endpoint, using the same

@@ -23,6 +23,12 @@
     "db:studio": "pnpm --filter @hub/db studio",
     "db:seed": "pnpm --filter @hub/db seed"
   },
+  "pnpm": {
+    "overrides": {
+      "find-my-way@9": "^9.7.0",
+      "js-yaml@5": "^5.2.2"
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "eslint": "^9.17.0",

@@ -291,12 +291,6 @@ unusually specific about _why_ things are as they are, including the mistakes. T
 deliberate: it is the difference between a codebase a model can safely change and one it will
 confidently break.
 
-**The logo is AI-generated** (Google Gemini). That is worth stating for a licensing reason and
-not only a disclosure one: a work with no human authorship may attract no copyright at all in
-some jurisdictions — the US Copyright Office has said so directly — so AGPL-3.0 may have
-nothing to bite on for that file. Treat the mark as unencumbered rather than licensed, and do
-not assume it is protectable if you fork this.
-
 ## License
 
 [AGPL-3.0-or-later](LICENSE). You may run, modify and self-host this freely. If you offer a

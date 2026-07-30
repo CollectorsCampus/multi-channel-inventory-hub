@@ -1111,7 +1111,7 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Open decisions, not open bugs
 
-Four things are deliberately unfinished. Each is a choice someone should make rather than
+Five things are deliberately unfinished. Each is a choice someone should make rather than
 a defect to fix, and none blocks anything else.
 
 1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
@@ -1136,7 +1136,39 @@ a defect to fix, and none blocks anything else.
    **A TCGPlayer seller API key is not obtainable** (confirmed 2026-07-30). ADR 0002's
    file-based connector is **permanent, not provisional**. Do not re-check this.
 
-4. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
+   **The other candidates were researched on 2026-07-30** and the roadmap now carries the
+   answers. Headlines: **CardTrader** is the strongest non-eBay candidate — self-serve
+   bearer token, **absolute** quantity setting, signed order webhooks; **Cardmarket** does
+   _not_ gate API access on seller tier (the feared blocker is ruled out) but is OAuth 1.0a
+   and **delta-only** on quantity, needing a read-then-delta push like Shopify's
+   compare-and-swap; **Mana Pool** does have a public API, contradicting "unknown"; and
+   **CardNexus** is a real multi-game marketplace that could be a `CatalogSource` _and_ a
+   `Connector` in one package. All of it is documentation research — **no credential has
+   been obtained and no call made**, which is exactly the evidence that proved insufficient
+   for TCGPlayer.
+
+   Note `api.cardmarket.com` now returns **410 Gone**; it moved to `apiv2.cardmarket.com`.
+
+4. **Whether to accept webhooks over a cloud event bus.** Researched 2026-07-30 in
+   [docs/WEBHOOK_DELIVERY.md](docs/WEBHOOK_DELIVERY.md). Shopify can deliver to Google
+   Pub/Sub or Amazon EventBridge instead of an HTTPS endpoint, using the same
+   `webhookSubscriptionCreate` mutation with a different `uri` — and **HMAC verification
+   does not apply** to those. The benefit is not the HMAC, which is already built and
+   proven; it is that a pull-based consumer needs **no public HTTPS endpoint**, which is the
+   hardest deployment prerequisite this software has. The cost is a hard dependency on GCP
+   or AWS in self-hosted software. Not adopted. The doc records the shape it should take if
+   it ever is.
+
+   Related and already true: **the ingress is not the pipeline.** `ChannelFilesService`
+   already writes `WebhookEvent` rows with no HTTP involved, so an alternative ingress is a
+   third producer of the same rows, not a second pipeline.
+
+   **Shopify's "app automation tokens" are not relevant** and were checked so nobody checks
+   again: they authenticate the Shopify **CLI** in CI/CD to deploy app config and
+   extensions, and cannot make an Admin API call. The 24-hour client-credentials token
+   machinery in `connector-shopify/src/tokens.ts` stays exactly as it is.
+
+5. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
    as a generic `sync_failure` warning, so an operator cannot tell "your secret is wrong,
    go fix it" — which fails forever and is deliberately not retried — from "the platform
    hiccuped", which will clear on its own. Separating them properly means the SDK giving

@@ -4,7 +4,7 @@ import type { CatalogCandidate, CatalogSource } from '@hub/connector-sdk';
 import { CatalogIngestService } from './catalog-ingest.service';
 import { IntakeService } from '../inventory/intake.service';
 import { InventoryService } from '../inventory/inventory.service';
-import type { CatalogService } from './catalog.service';
+import { CatalogService } from './catalog.service';
 import type { CatalogSourceRegistry } from './catalog-source-registry.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
@@ -182,6 +182,66 @@ describeDb('CatalogIngestService', () => {
     const limited = new CatalogIngestService(registry, intake);
 
     await expect(limited.ingest({ sourceKey: 'scryfall' })).rejects.toThrow(/does not enumerate/i);
+  });
+
+  /**
+   * The point of ingesting, and a failure reproduced on a live run: tcgcsv's
+   * `fetchById` resolves only from sets read into memory, so every confirmation
+   * after a container restart failed with "tcgcsv has no product …". An ingested
+   * product must resolve from the database with the source never consulted.
+   */
+  describe('local-first resolution', () => {
+    it('resolves an ingested product without asking the source', async () => {
+      await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+      const fetchById = vi.fn(async () => null);
+      const source = {
+        key: 'tcgcsv',
+        displayName: 'tcgcsv',
+        games: [],
+        search: vi.fn(async () => []),
+        fetchById,
+      } as unknown as CatalogSource;
+
+      const catalog = new CatalogService(
+        { get: vi.fn(() => source) } as unknown as CatalogSourceRegistry,
+        prisma as unknown as PrismaService,
+      );
+
+      const found = await catalog.fetchCandidate('tcgcsv', '100');
+
+      expect(found?.name).toBe('Pikachu ex');
+      expect(found?.setName).toBe('Surging Sparks');
+      // Every id the item carries, so callers keep backfilling as before.
+      expect(found?.externalIds).toMatchObject({ tcgcsv: '100', tcgplayer: '100' });
+      // The whole point: no network call, cold index or not.
+      expect(fetchById).not.toHaveBeenCalled();
+    });
+
+    it('still falls back to the source for a product never ingested', async () => {
+      const fetchById = vi.fn(async () => ({
+        sourceId: '999',
+        name: 'Not Ingested',
+        externalIds: { tcgcsv: '999' },
+      }));
+      const source = {
+        key: 'tcgcsv',
+        displayName: 'tcgcsv',
+        games: [],
+        search: vi.fn(async () => []),
+        fetchById,
+      } as unknown as CatalogSource;
+
+      const catalog = new CatalogService(
+        { get: vi.fn(() => source) } as unknown as CatalogSourceRegistry,
+        prisma as unknown as PrismaService,
+      );
+
+      const found = await catalog.fetchCandidate('tcgcsv', '999');
+
+      expect(found?.name).toBe('Not Ingested');
+      expect(fetchById).toHaveBeenCalledTimes(1);
+    });
   });
 
   /** Linking is identity. An ingest must never look like stock arriving. */

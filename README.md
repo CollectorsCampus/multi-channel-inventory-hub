@@ -14,12 +14,16 @@ channel, so the same card is not sold twice.
 > Shopify is the only continuous-sync channel in v1. See
 > [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md).
 
-> **Status: v0.1.0 — first release.** All five phases are built. The sync loop runs end to
-> end: a sale on Shopify decrements the ledger and pushes recomputed quantities back out,
-> with oversells and failures in an alert inbox, and a nightly reconciliation catching what
-> the loop missed. The Shopify path — authentication, reads, both write mutations and
-> signed webhook delivery — is verified against a real store, and the TCGPlayer file path
-> against a real seller account.
+> **Status: v0.2.0.** All five phases are built and the sync loop runs end to end: a sale on
+> Shopify decrements the ledger and pushes recomputed quantities back out, with oversells and
+> failures in an alert inbox, and a nightly reconciliation catching what the loop missed. The
+> Shopify path — authentication, reads, both write mutations and signed webhook delivery — is
+> verified against a real store, and the TCGPlayer file path against a real seller account.
+>
+> 0.2.0 adds what an operator with an **existing** storefront needs: a `/match` screen that
+> reads what a channel already sells and proposes links to the catalogue, a catalogue source
+> covering far more than Magic, and a fix for a container defect that stopped every earlier
+> published image from starting without reaching npmjs.org.
 >
 > It is a `0.x` for honest reasons: MySQL and SQLite are not supported yet, no real identity
 > provider has completed an OIDC login, and it has one store's worth of production evidence.
@@ -269,7 +273,38 @@ specific about which parts have met reality.
   live store has yet drifted and been caught.
 - **Scale.** This has run against one store's catalogue, not a hundred thousand listings.
 
+## How this was built
+
+**Most of this code was written by Claude** — Anthropic's Opus models — working with a single
+human operator. Every commit records it in a `Co-Authored-By` trailer, so the history has
+always said so; this section just says it somewhere you do not have to run `git log` to find.
+
+The division of labour is worth being precise about, because "AI-written" covers a wide range.
+The architecture, the decisions about what to accept or reject, and every verification against
+a live marketplace account were the operator's. Model output that could not be demonstrated
+against a real Shopify store or a real seller's export did not get merged — which is why
+[What is proven](#what-is-proven) is a section in this README rather than an afterthought, and
+why several of this project's sharpest findings are recorded as things the design got wrong.
+
+[CLAUDE.md](CLAUDE.md) is the working notes for that process. It is unusually long and
+unusually specific about _why_ things are as they are, including the mistakes. That is
+deliberate: it is the difference between a codebase a model can safely change and one it will
+confidently break.
+
+**The logo is AI-generated** (Google Gemini). That is worth stating for a licensing reason and
+not only a disclosure one: a work with no human authorship may attract no copyright at all in
+some jurisdictions — the US Copyright Office has said so directly — so AGPL-3.0 may have
+nothing to bite on for that file. Treat the mark as unencumbered rather than licensed, and do
+not assume it is protectable if you fork this.
+
 ## License
 
 [AGPL-3.0-or-later](LICENSE). You may run, modify and self-host this freely. If you offer a
 modified version to others over a network, you must publish your source.
+
+The licence covers the source. It does not grant rights in any third-party trademark, and the
+trading-card properties this software integrates with — Pokémon, Magic: The Gathering, One
+Piece, Lorcana and the rest — are the marks of their respective owners. They are named here
+and in the code only to describe what the software interoperates with, which is ordinary
+descriptive use. Do not read that as affiliation or endorsement, and take care not to imply
+either in anything you build on top.

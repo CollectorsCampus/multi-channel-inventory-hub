@@ -1,6 +1,6 @@
 {
   "name": "@hub/connector-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "peerDependencies": {
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.6"
   },
   "peerDependenciesMeta": {
     "vitest": {
@@ -34,6 +34,6 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.6"
   }
 }

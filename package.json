@@ -1,6 +1,6 @@
 {
   "name": "inventory-hub",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Self-hostable multi-channel inventory sync. Central ledger, pluggable channel connectors.",
   "license": "AGPL-3.0-or-later",
@@ -22,6 +22,12 @@
     "db:migrate": "pnpm --filter @hub/db migrate:dev",
     "db:studio": "pnpm --filter @hub/db studio",
     "db:seed": "pnpm --filter @hub/db seed"
+  },
+  "pnpm": {
+    "overrides": {
+      "find-my-way@9": "^9.7.0",
+      "js-yaml@5": "^5.2.2"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

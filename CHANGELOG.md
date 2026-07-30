@@ -3,6 +3,65 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.1.1] — 2026-07-29
+
+A dependency-only security release. It clears every advisory that was present in the 0.1.0
+image, and changes no behaviour.
+
+**None of these was reachable in 0.1.0**, as far as could be determined — see below. If you
+are running 0.1.0 you should still upgrade, but you are not being asked to treat it as an
+incident.
+
+### Security
+
+The 18 alerts are nine distinct advisories. Four of them affect packages that are in the
+runtime image:
+
+| Package           | Severity | Issue                                      | 0.1.0 | 0.1.1  |
+| ----------------- | -------- | ------------------------------------------ | ----- | ------ |
+| `@fastify/static` | high     | Route guard bypass via path traversal      | 9.3.0 | 10.1.2 |
+| `@fastify/static` | medium   | Authorization bypass, non-canonical paths  | 9.3.0 | 10.1.2 |
+| `find-my-way`     | high     | HTTP/2 denial of service                   | 9.6.0 | 9.7.0  |
+| `js-yaml`         | high     | Exponential parse time → denial of service | 5.2.1 | 5.2.2  |
+
+Each states a precondition, and none of them held. The `@fastify/static` high needs a route
+guard or middleware in front of the files being served — its own advisory gives the
+workaround as "do not use route-based middlewares or guards to protect files served by
+`@fastify/static`", which is a description of what this application already did; the SPA
+bundle is public by design and nothing guards it. The medium needs `allowedPath`, which is
+never passed. `find-my-way`'s needs a Node HTTP/2 server, and there is none. `js-yaml`'s
+needs `load()` or `loadAll()` on untrusted input, and the only caller in the tree is
+`@nestjs/swagger`, which uses `dump()`.
+
+Checked as well as reasoned about: eight attempts to escape the served directory and ten
+non-canonical spellings of a guarded route behave identically on 9.3.0 and 10.1.2, with no
+file outside the web root readable and no guard bypassed on either.
+
+The remaining five advisories — three `vite`, one `esbuild`, and one `vitest` critical (the
+Vitest UI server can read and execute arbitrary files, reported against eight manifests) —
+are build- and test-time only. The runtime stage of the image installs with `--prod`, so none
+of the three packages is in it. All five are resolved by moving to vitest 3.2.6, which brings
+vite 6.4.3 with it.
+
+### Changed
+
+- `@fastify/static` to `^10.1.2`. This leaves an unmet peer dependency:
+  `@nestjs/platform-fastify` 11.1.28 asks for `^8 || ^9` and no 11.x accepts `^10`. It is a
+  warning rather than a failure, and static asset serving is now covered by a test that
+  fetches the real bundle, because `useStaticAssets` resolves the plugin at runtime where no
+  static check reaches it.
+- `find-my-way` and the `js-yaml` 5.x line are pinned through `pnpm.overrides`, because
+  `@nestjs/platform-fastify` and `@nestjs/swagger` depend on the vulnerable versions
+  **exactly** and both parents are already current. Remove the overrides once they catch up.
+- `vitest` to `^3.2.6` across the workspace, including the connector SDK's optional peer
+  range.
+
+### Fixed
+
+- `prettier --check .` no longer checks `pnpm-lock.yaml`. There was no `.prettierignore`, so
+  a generated file was being style-checked; the committed lockfile satisfied Prettier by
+  luck, and anything that regenerated it failed CI on a file no human wrote.
+
 ## [0.1.0] — 2026-07-29
 
 First release. All five delivery phases are built, and the Shopify and TCGPlayer paths are
@@ -66,4 +125,5 @@ verified against real accounts rather than only against mocks.
 - **A wrong credential is not distinguishable from a transient failure** in the alert
   inbox; both surface as `sync_failure`.
 
+[0.1.1]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.1.1
 [0.1.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.1.0

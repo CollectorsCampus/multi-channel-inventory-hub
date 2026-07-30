@@ -21,7 +21,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.1.0 released 2026-07-29** |
 
-`main` is green: **605 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **607 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### v0.1.0 (2026-07-29)
 
@@ -66,11 +66,16 @@ version from `apps/api/package.json` rather than repeating it. `0.x` is delibera
 and SQLite have no migration history, no real IdP has completed a login, and there is one
 store's worth of production evidence.
 
-### v0.1.0 ships known vulnerabilities — fix and cut v0.1.1
+### v0.1.0 shipped known vulnerabilities — all cleared in v0.1.1
 
 Enabling Dependabot alerts on 2026-07-29 immediately surfaced **18 open advisories**. They
 were all present before that switch; turning it on is what made them visible, which is the
 whole argument for having done it. But they were present in the image published as v0.1.0.
+
+**All 18 are fixed.** They collapse to nine distinct advisories across six packages, and the
+tree now resolves a patched version of every one — verified by comparing each alert's
+vulnerable range against the lockfile, not by watching the alert count. Two needed
+`pnpm.overrides`; four fell out of the vitest upgrade. Details below.
 
 **In the runtime image, so in the shipped product:**
 
@@ -81,9 +86,45 @@ whole argument for having done it. But they were present in the image published 
 | `find-my-way`     | high     | HTTP/2 denial of service                   | 9.6.0     | 9.7.0   |
 | `js-yaml`         | high     | Exponential parse time → denial of service | 5.2.1     | 5.2.2   |
 
-`@fastify/static` is the one to take seriously: it is a **production** dependency of
-`apps/api`, it is what `serveSpa` uses to serve the SPA out of the container, and path
-traversal there is precisely the surface it is exposed on. Not theoretical.
+**All four are patched, and none of them was reachable here.** That second half was written
+into this file as the opposite — "`@fastify/static` is the one to take seriously … path
+traversal there is precisely the surface it is exposed on. Not theoretical." That was wrong,
+and it was wrong in the direction that costs the most: it reads as a live hole in a
+published image. Each advisory states its own precondition, and none of them holds:
+
+| Advisory                 | Needs                                             | Here                                                                             |
+| ------------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `@fastify/static` high   | a route guard or middleware over the served files | Nothing guards the SPA bundle — it is public by design                           |
+| `@fastify/static` medium | `allowedPath` used as a security boundary         | `allowedPath` is never passed; the only call is `{ root, wildcard: false }`      |
+| `find-my-way` high       | a Node **HTTP/2** server                          | No HTTP/2 anywhere; `NEST_APP_OPTIONS` is `{ rawBody: true }` over HTTP/1.1      |
+| `js-yaml` high           | `load()`/`loadAll()` on untrusted input           | Reached only via `@nestjs/swagger`, which calls `jsyaml.dump()` and nothing else |
+
+The high's own advisory text gives the workaround as "do not use route-based middlewares or
+guards to protect files served by `@fastify/static`" — which is a description of what
+`serveSpa` already did. Checked empirically too: eight escape attempts and ten non-canonical
+spellings of a guarded route behave **identically** on 9.3.0 and 10.1.2, with no file read
+from outside the web root and no guard bypassed. `boot.spec.ts` now pins that.
+
+So the upgrade is hygiene and insurance, not incident response: it clears the alerts, and it
+means a future change that _does_ put a guard in front of static files cannot silently
+inherit a bypass. Worth doing promptly. Not worth telling users their v0.1.0 was exploitable
+— as far as could be determined, it was not, and the reachability argument above is the
+reason, not the probe results.
+
+**The two transitives needed `pnpm.overrides`, not bumps**, which is why Dependabot never
+opened a PR for either: `@nestjs/platform-fastify` depends on `find-my-way: 9.6.0` and
+`@nestjs/swagger` on `js-yaml: 5.2.1`, both **exactly**, and both parents are already the
+newest. Refreshing `find-my-way` moved only `fastify`'s copy and left the adapter's second
+one in the image — so "the lockfile no longer mentions 9.6.0" is the thing to verify, not
+"the update ran". The `js-yaml` override is scoped to `js-yaml@5`, because eslint pulls an
+unrelated 4.3.0 that an unscoped override would have dragged across a major.
+
+**`@fastify/static` 10 leaves a permanently unmet peer.** `@nestjs/platform-fastify` 11.1.28
+wants `^8 || ^9`, and no 11.x accepts `^10`. It installs because
+`strict-peer-dependencies=false`, and it demonstrably works — but `useStaticAssets` resolves
+the plugin at runtime (rule 8), so nothing static will tell you if that stops being true.
+That is why the new test fetches the real hashed bundle and checks the content type instead
+of trusting a green boot.
 
 **Development-scope only** (the test runner, not in the image): seven `vitest` advisories,
 all the same critical — the Vitest UI server can read and execute arbitrary files. Worth
@@ -94,15 +135,24 @@ lowest non-vulnerable version is 0.28.1 but the tree only resolves to 0.21.5, be
 pins it. The fix is the Vite major, which is why PR #3 exists — a security update overrides
 the `ignore` rule in `dependabot.yml`, so ignoring vite majors does not block it.
 
-**Suggested order:** `@fastify/static` first and alone, since it is the shipped high; then
-`vitest`; then the Vite major, which needs the build actually exercised rather than just a
-green test run. Then cut **v0.1.1** — the published `0.1.0`, `0.1` and `latest` tags all
-carry these, and `latest` is what a new user pulls.
+**Remaining order:** `vitest`, then the Vite major, which needs the build actually exercised
+rather than just a green test run. Then cut **v0.1.1** — the published `0.1.0`, `0.1` and
+`latest` tags all carry the four above, and `latest` is what a new user pulls.
 
 Dependabot opened **8 PRs** on its first run, 7 of them majors. The `ignore` list in
 `dependabot.yml` covers only Prisma, NestJS, Vite and React; TypeScript 5→6, ESLint 9→10,
 Zod 3→4, vitest 2→3 and `@vitejs/plugin-react` 4→6 all came through. That is real accumulated
 drift rather than noise, but the list may want extending once the security ones are cleared.
+
+**Every one of those 8 PRs failed CI, all for the same unrelated reason**, and it is worth
+knowing before wondering whether a bump broke something. `prettier --check .` had no ignore
+file, so it checked `pnpm-lock.yaml` — and pnpm's YAML output does not match Prettier's
+preferences. The committed lockfile satisfied both by luck, so `main` stayed green and the
+problem was invisible until something regenerated it. `format:check` is the first step of the
+build job and is not covered by `pnpm lint`, so all eight died there, on a file no human
+wrote and that Dependabot cannot reformat. `.prettierignore` now exists; the repo had already
+been describing that file as generated in `.gitattributes` (`linguist-generated=true -diff`),
+which is the same judgement.
 
 ### Pre-publication audit (2026-07-29)
 

@@ -2,9 +2,15 @@
 
 Candidate channels, and what needs establishing before any of them is worth building.
 
-**Nothing here has been verified.** It is prior knowledge current to roughly mid-2026,
-recorded so research starts from a position rather than a blank page. Every confidence
-marker below is a claim to check, not a fact to build on.
+**Sections dated "researched &lt;date&gt;" have been checked against the platforms' own
+documentation. Everything else is prior knowledge** current to roughly mid-2026, recorded so
+research starts from a position rather than a blank page — a claim to check, not a fact to
+build on.
+
+Even the researched sections stop at documentation. **No credential has been obtained and no
+call made** for any candidate here. That distinction is the whole of ADR 0002: TCGPlayer's
+API is thoroughly documented and completely unobtainable. Read "self-serve" below as "the
+documentation says self-serve".
 
 ## Establish the access model first — always
 
@@ -127,48 +133,115 @@ with more available only after the Application Growth Check. For a continuous-sy
 that is a real ceiling worth sizing against expected listing counts, and it is the one place
 the Growth Check does become our problem.
 
-### Cardmarket (MKM) — _biggest European reach_
+### Cardmarket (MKM) — _biggest European reach; access researched 2026-07-30_
 
-**Confidence: medium-high that an API exists; medium on the access terms.**
+**Two of this section's original assumptions were wrong.** It previously said access was
+believed tiered, "the same shape as the TCGPlayer problem", and that this was the thing to
+confirm first. Confirmed, and it is not:
 
-- Believed to be API 2.0 using **OAuth 1.0a signed requests** — unusual, and older tooling
-  than OAuth 2.0, so budget time for the signing implementation. Responses believed to be
-  XML rather than JSON.
-- Believed to have **tiered access**, with fuller API access historically limited to
-  commercial or higher-tier seller accounts. **This is the thing to confirm first** — it is
-  the same shape as the TCGPlayer problem.
-- Dominant for Magic and Pokémon in Europe, so this is the single biggest reach extension
-  after eBay.
+- **No commercial or professional account is required for API access.** Any seller account
+  can create an app from its profile page. Tier affects _volume_, not admission: standard
+  users get 600 requests/minute and 50,000/day; professionals get 100,000/day with 30,000
+  of that capped for marketplace requests.
+- **OAuth 1.0a with HMAC-SHA1 signatures is confirmed**, not merely believed — the
+  `Authorization` header carries `oauth_consumer_key`, `oauth_token`, `oauth_nonce`,
+  `oauth_timestamp`, `oauth_signature_method`, `oauth_version` and `oauth_signature`.
+  Budget real time for the signing implementation; nothing else here needs it.
+- **The API host has moved.** `api.cardmarket.com` now answers **410 Gone** — it migrated
+  to `apiv2.cardmarket.com` (documented deadline 1 May 2026, already past). Anything found
+  in an older tutorial points at a dead host.
+- **A sandbox exists** at `sandbox.cardmarket.com`, but the documentation itself noted it
+  had not been updated for over two years. Treat it as better than nothing, not as a
+  faithful mirror.
 
-### CardTrader — _worth adding to the list_
+**The real problem is quantity, and it is the TCGPlayer problem again** (question 3). There
+is **no absolute set**. Stock quantity changes only through `PUT /stock/increase` and
+`PUT /stock/decrease`, and the ordinary article `PUT` explicitly "can't be used to increase
+or decrease the stock's quantity". Up to 100 articles per batch.
 
-**Confidence: medium.** Not on the original list, but it belongs there.
+**But it is not fatal here, and the difference from TCGPlayer matters.** TCGPlayer's delta
+is unusable because the file is prepared offline and must stay safe to re-upload, with no
+read at push time. Cardmarket exposes current stock, so a connector can **read the article's
+count and compute the delta at push time** — precisely the compare-and-swap
+`connector-shopify`'s `setQuantity` already does for `inventorySetQuantities`. That pattern
+exists and is proven; this would be its second user.
 
-- European marketplace with what is believed to be a public, token-authenticated API, and a
-  connected-inventory programme that implies machine access is expected rather than
-  grudging.
-- Likely the **lowest-friction European option** if Cardmarket's tiering proves restrictive.
+Two smaller findings: articles model `idLanguage`, `condition`, `isFoil`, `isSigned` and
+`isAltered` as **separate fields**, which is a better fit for our `Sku` than TCGPlayer's
+four-in-one string and needs no composite-token treatment. And increasing stock can fail
+outright because of per-seller-type limits on how many copies of one article may be held —
+a failure mode with no analogue in any connector so far.
 
-### Mana Pool — _research needed_
+### CardTrader — _researched 2026-07-30; strongest non-eBay candidate_
 
-**Confidence: low.**
+**Confidence: high, and it has moved to the front of the queue.**
 
-- US Magic marketplace, relatively new, positioned around lower seller fees.
-- **Whether a public seller API exists is genuinely unknown to me.** Do not assume either
-  way. Start with their seller documentation and support, and ask directly about
-  programmatic inventory and order access.
-- Being newer cuts both ways: possibly more willing to work with an integrator, possibly no
-  API at all yet.
+On documentation alone this is the **best-shaped API of every candidate here**, eBay
+included:
 
-### CardNexus — _research needed, including what it is_
+- **Self-serve bearer token**, taken from the profile settings page. The documentation
+  states no approval step, no tier requirement and no eligibility criteria — though see the
+  caveat below.
+- **Absolute quantity is supported.** `PUT /products/:id` takes a `quantity` parameter
+  directly, with `POST /products/:id/increment` offered separately for relative
+  `delta_quantity` changes. That makes it the only candidate researched so far that maps
+  onto `listing.quantity` with no delta gymnastics at all.
+- **Order webhooks with cryptographic signatures** — "will notify your endpoint whenever an
+  Order is created, modified or deleted", configured via profile settings or the `/app`
+  endpoint. That is `orders.webhook` plus `verifyWebhook` almost exactly as the SDK already
+  shapes them.
+- Bulk endpoints (`/products/bulk_create`, `/bulk_update`, `/bulk_destroy`), a CSV path
+  (`/product_imports`), and `/products/export` for enumeration — which would satisfy
+  `listing.enumerate` and `reconcile` without inventing anything.
+- Order management covers ship, tracking code and cancellation, though **§6 says we never
+  cancel or modify an order**, so only the read side is in scope.
 
-**Confidence: low.**
+**The caveat, and it is the one this project keeps learning:** third-party sources describe
+API access as available "to active sellers on appropriate plans", which is exactly the kind
+of tier gate the documentation does not mention and ADR 0002 exists to remember. **Confirm
+against the operator's own account before building.** A token visible in profile settings
+would settle it in a minute.
 
-- **Confirm the entity first.** Establish whether this is a marketplace where the operator
-  can hold seller inventory, an aggregator or price index, or something else — the right
-  integration shape depends entirely on that, and a price index would be a _catalog source_,
-  not a connector. Those are deliberately different interfaces here: a catalog source has no
-  listings, no orders and no place in the allocation loop.
+### Mana Pool — _researched 2026-07-30; a public API does exist_
+
+**The previous "genuinely unknown to me" is resolved: there is a public API**, documented at
+`manapool.com/api/docs/v1`, and Mana Pool advertises it to sellers directly — "Large stores
+with custom backends can also use the Mana Pool API to connect."
+
+- Positioned as an **open** API for developers "whether building tools for your own use or
+  creating solutions for other sellers", which is the opposite posture to TCGPlayer's closed
+  programme.
+- They already integrate Crystal Commerce, CCGSeller and Shopify/BinderPOS, and state
+  explicitly that cross-posting to other markets is allowed with **no lock-in** — worth
+  noting, because a marketplace that forbids cross-listing would be incompatible with a
+  pooled allocation model.
+- Magic only, which caps the value for a store whose inventory spans 21 product lines.
+
+**Not yet established:** the authentication method, whether quantity can be set absolutely,
+order delivery, and rate limits. The documentation page did not render usefully to an
+unauthenticated fetch; read it in a browser, or create a seller account and mint a key.
+
+### CardNexus — _researched 2026-07-30; it is a marketplace, and more_
+
+**The entity question is settled.** CardNexus is a genuine multi-game peer-to-peer
+**marketplace** where a seller holds and lists inventory — so it is a connector candidate,
+not merely a price index. It is also a collection tracker and a price aggregator drawing on
+other marketplaces, spanning 29 countries and 9 currencies.
+
+- **Public API with a single bearer token (an API key)** in the `Authorization` header,
+  minted from the account's own API keys section — self-serve on the evidence available.
+- Exposes **accounts, inventory, listings, orders, payouts and the catalogue** across Magic,
+  Pokémon, One Piece and others, and the documentation has dedicated guides for **webhooks**
+  and **rate limits**.
+- **It is plausibly both interfaces at once.** The catalogue and aggregated pricing could
+  make it a `CatalogSource`, while inventory/listings/orders make it a `Connector`. The SDK
+  already contemplates exactly this — a package may export both — so that is a supported
+  shape rather than an awkward one. It would also be the first non-TCGPlayer-derived
+  catalogue covering more than Magic, which is the gap `catalog-tcgcsv` currently fills
+  alone.
+- **Unestablished:** absolute vs delta quantity, condition/finish/language modelling, and
+  how much seller liquidity actually exists. The last one decides whether any of it is worth
+  building.
 
 ### Others worth considering
 
@@ -198,11 +271,29 @@ not fit `fixed`/`pooled` allocation and would need its own thinking before any c
    self-serve, so the feared approval gate does not apply, and the real blocker is the account
    deletion notification's public-HTTPS endpoint — which the persistence exemption may remove
    entirely. Start in **Sandbox**, which needs none of it.
-2. **Cardmarket or CardTrader** — European reach. Do the access research for both before
-   picking, since the answer to "is it open to us" should decide it rather than feature
-   lists.
-3. **Mana Pool** — cheap to research, and a fast no if there is no API.
-4. **CardNexus** — establish what it is before spending more on it.
+2. **CardTrader** — this was "Cardmarket or CardTrader, research both first". The research
+   is done (2026-07-30) and it separates them clearly. CardTrader has a self-serve bearer
+   token, **absolute quantity setting**, signed order webhooks, bulk endpoints and an export
+   for enumeration — it maps onto the existing capability set with less adaptation than eBay
+   does. The one thing to confirm is the "active sellers on appropriate plans" hint that the
+   documentation does not mention.
+3. **Cardmarket** — bigger European reach, but more work for it: OAuth 1.0a signing, and
+   quantity only through increase/decrease, so a read-then-delta push like
+   `connector-shopify`'s compare-and-swap. Admission is _not_ gated on seller tier, which was
+   the feared blocker and is now ruled out.
+4. **CardNexus** — no longer "establish what it is": it is a multi-game marketplace with a
+   self-serve API key covering inventory, listings, orders, webhooks and a catalogue. The
+   open question is now commercial, not technical — whether it has enough seller liquidity
+   to be worth a connector. It is also the only candidate that could be a `CatalogSource`
+   and a `Connector` in one package.
+5. **Mana Pool** — a public API exists, so it is no longer a fast no. Magic-only, which caps
+   its value against an inventory spanning 21 product lines. Cheap to settle: mint a key and
+   read the docs.
+
+**None of the above has been verified by obtaining a credential and making a call.** It is
+documentation research, which is exactly the evidence that proved insufficient for
+TCGPlayer — a documented API is not an obtainable one. Treat every "self-serve" here as a
+claim to test on the operator's own account first, in one sitting, before any code.
 
 A useful side effect of doing eBay second-after-Shopify: anything that has to change in
 `packages/connector-sdk` to accommodate it is a genuine finding about the abstraction, and

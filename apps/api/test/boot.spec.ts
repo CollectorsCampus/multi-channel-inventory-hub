@@ -337,6 +337,34 @@ describe('HTTP application', () => {
   });
 
   /**
+   * `CatalogIngestModule` exists to avoid a cycle: it imports both
+   * `CatalogModule` and `InventoryModule`, and `InventoryModule` already imports
+   * `CatalogModule`. That arrangement typechecks whether or not Nest can
+   * actually construct it, so the only proof is booting and hitting the routes.
+   */
+  describe('catalog ingest routes', () => {
+    it('wires the set listing route rather than failing DI', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/catalog/ingest/sets?sourceKey=tcgcsv',
+      });
+
+      // Admin-only with no session. 404 would mean the route never registered;
+      // 500 would mean CatalogIngestService could not be constructed.
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('wires the ingest route', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/catalog/ingest',
+        payload: { sourceKey: 'tcgcsv' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  /**
    * The console ships off, and a deployment that has not enabled it should not
    * advertise that the endpoint exists — hence 404 rather than 403 from the
    * service. The status route stays readable so the SPA can decide whether to

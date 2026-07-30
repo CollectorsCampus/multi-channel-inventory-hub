@@ -218,6 +218,75 @@ export class IntakeService {
   }
 
   /**
+   * Resolve a candidate to a catalog item, for callers outside intake.
+   *
+   * Public so that `CatalogIngestService` can fill the catalog without a second
+   * implementation of the rules below. Catalog-item creation stays owned here
+   * for the same reason quantity mutations are owned by `InventoryService`: two
+   * writers would eventually disagree about when a product is "the same one",
+   * and that disagreement shows up as duplicate items nobody can merge.
+   *
+   * `refresh` is the one thing ingest needs and intake must not do. A bulk
+   * ingest is re-reading the authoritative source, so refreshing a name, set or
+   * image is the point of running it; an intake is one operator adding stock and
+   * has no business rewriting an item's identity as a side effect.
+   */
+  async ensureCatalogItem(
+    candidate: CatalogCandidate & { sourceKey: string },
+    options: { refresh?: boolean } = {},
+  ): Promise<{ catalogItemId: string; createdCatalogItem: boolean; refreshed: boolean }> {
+    const { catalogItemId, createdCatalogItem } = await this.resolveCatalogItem(candidate);
+
+    let refreshed = false;
+    if (options.refresh === true && !createdCatalogItem) {
+      refreshed = await this.refreshCatalogItem(catalogItemId, candidate);
+    }
+
+    return { catalogItemId, createdCatalogItem, refreshed };
+  }
+
+  /**
+   * Bring a stored item's descriptive fields back in line with the source.
+   *
+   * Only writes when something actually differs, so re-ingesting an unchanged
+   * set does not bump `updatedAt` on tens of thousands of rows and make the
+   * table look churned when nothing happened.
+   *
+   * Deliberately does **not** touch external refs — `resolveCatalogItem` has
+   * already backfilled those, and removing one is never right: an id that used
+   * to point here still does, whatever the source says today.
+   */
+  private async refreshCatalogItem(
+    catalogItemId: string,
+    candidate: CatalogCandidate,
+  ): Promise<boolean> {
+    const current = await this.prisma.catalogItem.findUnique({
+      where: { id: catalogItemId },
+      select: { name: true, game: true, setName: true, imageUrl: true },
+    });
+    if (!current) return false;
+
+    const name = candidate.name.trim();
+    const next = {
+      name,
+      searchName: name.toLowerCase(),
+      game: candidate.game ?? null,
+      setName: candidate.setName ?? null,
+      imageUrl: candidate.imageUrl ?? null,
+    };
+
+    const unchanged =
+      current.name === next.name &&
+      current.game === next.game &&
+      current.setName === next.setName &&
+      current.imageUrl === next.imageUrl;
+    if (unchanged) return false;
+
+    await this.prisma.catalogItem.update({ where: { id: catalogItemId }, data: next });
+    return true;
+  }
+
+  /**
    * Find the catalog item this candidate refers to, or create it.
    *
    * Matching is by external reference, never by name. §4 keys the catalog on

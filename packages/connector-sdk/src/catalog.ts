@@ -71,6 +71,20 @@ export interface CatalogCandidate {
   language?: string;
 }
 
+/**
+ * A set or expansion a source can hand over wholesale.
+ *
+ * `setId` is opaque to the core and may encode whatever the source needs to
+ * find the set again — tcgcsv, for instance, needs a category *and* a group.
+ */
+export interface CatalogSetRef {
+  setId: string;
+  name: string;
+  game?: string;
+  /** ISO date, where the source publishes one. Useful for ingesting newest first. */
+  releasedAt?: string;
+}
+
 export interface CatalogSource {
   /** Stable key, also used as the `source` on CatalogExternalRef. */
   readonly key: string;
@@ -105,6 +119,35 @@ export interface CatalogSource {
 
   /** Fetch one product by this source's own id, when the source supports it. */
   fetchById?(ctx: CatalogCtx, sourceId: string): Promise<CatalogCandidate | null>;
+
+  /**
+   * Bulk enumeration, for ingesting a source into the local catalog.
+   *
+   * Optional and declared together — a source implements both or neither, and
+   * `validateCatalogSource` enforces that, because one without the other cannot
+   * complete an ingest.
+   *
+   * **Why this is not `search()` with a broad query.** Search answers "which
+   * products match this text", which is the wrong question twice over: it makes
+   * the source decide what to omit, and it gives no way to enumerate a set
+   * exhaustively. Ingest needs "everything in this set", and needs to know the
+   * list of sets to walk. A source that only supports search can still be
+   * searched live; it simply cannot be ingested.
+   *
+   * The pairing mirrors `listing.enumerate` on the connector side, and exists
+   * for the same reason: answering "what do you have that I have never heard
+   * of" is a different question from "tell me about this thing I already hold".
+   */
+  listSets?(ctx: CatalogCtx, game?: string): Promise<CatalogSetRef[]>;
+
+  /**
+   * Every product in one set. Called once per set by an ingest.
+   *
+   * Implementations should return the whole set rather than a page: a set is a
+   * bounded, human-sized unit, which is what makes ingest resumable per set
+   * without the core needing cursors.
+   */
+  fetchSet?(ctx: CatalogCtx, setId: string): Promise<CatalogCandidate[]>;
 }
 
 export interface CatalogSourceProblem {
@@ -138,7 +181,24 @@ export function validateCatalogSource(source: CatalogSource): CatalogSourceProbl
       invalid('`secretFields` must be non-empty strings.');
   }
 
+  // Half an ingest contract is worse than none: a source advertising `listSets`
+  // without `fetchSet` passes every static check and then fails partway through
+  // a run that may already have written thousands of rows.
+  const hasList = typeof source.listSets === 'function';
+  const hasFetch = typeof source.fetchSet === 'function';
+  if (hasList !== hasFetch) {
+    invalid(
+      `Catalog source "${source.key}" implements ${hasList ? '`listSets`' : '`fetchSet`'} but not ` +
+        `${hasList ? '`fetchSet`' : '`listSets`'}. Bulk ingest needs both or neither.`,
+    );
+  }
+
   return problems;
+}
+
+/** True when this source can be ingested into the local catalog wholesale. */
+export function supportsBulkIngest(source: CatalogSource): boolean {
+  return typeof source.listSets === 'function' && typeof source.fetchSet === 'function';
 }
 
 export function assertValidCatalogSource(source: CatalogSource): void {

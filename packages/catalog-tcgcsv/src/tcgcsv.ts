@@ -2,6 +2,7 @@ import type {
   CatalogCandidate,
   CatalogCtx,
   CatalogSearchQuery,
+  CatalogSetRef,
   CatalogSource,
 } from '@hub/connector-sdk';
 import {
@@ -300,6 +301,70 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
       }
 
       return query.limit ? matched.slice(0, query.limit) : matched;
+    },
+
+    /**
+     * Every set this source can enumerate, optionally narrowed to one game.
+     *
+     * Unlike `search`, this deliberately does **not** cap the number of
+     * categories: the caller is asking for the list precisely because it intends
+     * to walk it, and refusing here would make ingest impossible for the same
+     * reason it makes an unscoped search sensible. It is still one request per
+     * category, so a full listing costs ~90 requests at 4/s.
+     */
+    async listSets(ctx: CatalogCtx, game?: string): Promise<CatalogSetRef[]> {
+      const allCategories = await categories(ctx);
+      const inScope = game ? matchCategories(allCategories, game) : allCategories;
+
+      const sets: CatalogSetRef[] = [];
+      for (const category of inScope) {
+        for (const group of await groups(ctx, category.categoryId)) {
+          sets.push({
+            // Both halves are needed to locate the file, and the core treats
+            // this as opaque — which is exactly why it may carry two ids.
+            setId: `${group.categoryId}:${group.groupId}`,
+            name: group.name,
+            game: category.name,
+            // No `releasedAt`: Groups.csv carries no publication date, so
+            // inventing one would be worse than omitting it.
+          });
+        }
+      }
+
+      return sets;
+    },
+
+    /**
+     * Every product in one set.
+     *
+     * Also populates the product index as a side effect, which is what makes
+     * `fetchById` work for anything ingested — see the note there.
+     */
+    async fetchSet(ctx: CatalogCtx, setId: string): Promise<CatalogCandidate[]> {
+      const [categoryId, groupId] = setId.split(':');
+      if (!categoryId || !groupId) {
+        throw new Error(`tcgcsv set id "${setId}" must be "<categoryId>:<groupId>".`);
+      }
+
+      const path = `/${categoryId}/${groupId}/ProductsAndPrices.csv`;
+      const rows = parseProductsAndPrices(await fetchText(ctx, path));
+
+      const allCategories = await categories(ctx);
+      const categoryName = allCategories.find((c) => c.categoryId === categoryId)?.name;
+      const groupName = (await groups(ctx, categoryId)).find((g) => g.groupId === groupId)?.name;
+
+      for (const row of rows) {
+        productIndex.set(row.productId, {
+          path,
+          ...(categoryName !== undefined ? { categoryName } : {}),
+          ...(groupName !== undefined ? { groupName } : {}),
+        });
+      }
+
+      return toCandidates(rows, {
+        categoryName: () => categoryName,
+        groupName: () => groupName,
+      });
     },
 
     /**

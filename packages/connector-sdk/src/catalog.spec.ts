@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertValidCatalogSource,
   providesExternalId,
+  supportsBulkIngest,
   validateCatalogSource,
   type CatalogCandidate,
   type CatalogCtx,
@@ -95,6 +96,41 @@ describe('validateCatalogSource', () => {
 
   it('throws listing every problem at once', () => {
     expect(() => assertValidCatalogSource(base({ key: '', displayName: '' }))).toThrow(/key/);
+  });
+
+  /**
+   * Half an ingest contract is worse than none. A source advertising `listSets`
+   * without `fetchSet` passes every static check and then fails partway through
+   * a run that may already have written thousands of rows.
+   */
+  it('rejects half an ingest contract, in either direction', () => {
+    const listOnly = validateCatalogSource(base({ listSets: async () => [] }));
+    expect(listOnly[0]?.message).toMatch(/fetchSet/);
+
+    const fetchOnly = validateCatalogSource(base({ fetchSet: async () => [] }));
+    expect(fetchOnly[0]?.message).toMatch(/listSets/);
+
+    expect(
+      validateCatalogSource(base({ listSets: async () => [], fetchSet: async () => [] })),
+    ).toEqual([]);
+  });
+});
+
+describe('supportsBulkIngest', () => {
+  const base = (overrides: Partial<CatalogSource> = {}): CatalogSource => ({
+    key: 'example',
+    displayName: 'Example',
+    games: [],
+    search: async () => [],
+    ...overrides,
+  });
+
+  it('is true only when both halves are present', () => {
+    expect(supportsBulkIngest(base())).toBe(false);
+    expect(supportsBulkIngest(base({ listSets: async () => [] }))).toBe(false);
+    expect(supportsBulkIngest(base({ listSets: async () => [], fetchSet: async () => [] }))).toBe(
+      true,
+    );
   });
 });
 

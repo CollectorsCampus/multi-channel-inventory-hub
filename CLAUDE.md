@@ -21,7 +21,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
 | 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.1.0 released 2026-07-29** |
 
-`main` is green: **605 tests**, lint/typecheck/build clean, all four CI jobs passing.
+`main` is green: **607 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
 ### v0.1.0 (2026-07-29)
 
@@ -66,11 +66,16 @@ version from `apps/api/package.json` rather than repeating it. `0.x` is delibera
 and SQLite have no migration history, no real IdP has completed a login, and there is one
 store's worth of production evidence.
 
-### v0.1.0 ships known vulnerabilities — fix and cut v0.1.1
+### v0.1.0 shipped known vulnerabilities — all cleared in v0.1.1
 
 Enabling Dependabot alerts on 2026-07-29 immediately surfaced **18 open advisories**. They
 were all present before that switch; turning it on is what made them visible, which is the
 whole argument for having done it. But they were present in the image published as v0.1.0.
+
+**All 18 are fixed.** They collapse to nine distinct advisories across six packages, and the
+tree now resolves a patched version of every one — verified by comparing each alert's
+vulnerable range against the lockfile, not by watching the alert count. Two needed
+`pnpm.overrides`; four fell out of the vitest upgrade. Details below.
 
 **In the runtime image, so in the shipped product:**
 

@@ -10,6 +10,8 @@ export interface ConnectorSummary {
   syncMode: 'continuous' | 'polled' | 'manual' | 'outbound-only';
   configSchema: JsonSchema;
   secretFields: string[];
+  /** Subset of secretFields a channel can work without. */
+  optionalSecretFields: string[];
 }
 
 export interface Channel {

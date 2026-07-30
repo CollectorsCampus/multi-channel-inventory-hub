@@ -115,6 +115,35 @@ describeDb('ChannelsService', () => {
   });
 
   /**
+   * `secretFieldsRequired` drives the "still needs: …" warning in the channel
+   * UI, so an optional field listed there tells a working channel it is broken.
+   *
+   * That is not hypothetical: Shopify signs an app's webhooks with its client
+   * secret, so `webhookSecret` is only for a subscription created by hand — and
+   * a channel configured the normal way was permanently labelled "not connected
+   * yet", which sent operators hunting the Shopify Dev Dashboard for a value it
+   * does not issue.
+   */
+  it('requires only the secrets a channel cannot work without', async () => {
+    const channel = await service.create({
+      connectorKey: 'shopify',
+      displayName: 'Client secret only',
+      config: SHOPIFY_CONFIG,
+      secrets: { clientSecret: 'shpss_secret' },
+    });
+
+    // Still offered for input — it has a real use — but not demanded.
+    expect(channel.secretFieldsRequired).toEqual(['clientSecret']);
+    expect(channel.secretFieldsRequired).not.toContain('webhookSecret');
+
+    // Which is what makes the UI's "missing secrets" set empty for this channel.
+    const missing = channel.secretFieldsRequired.filter(
+      (field) => !channel.secretsSet.includes(field),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  /**
    * The central rule: a stored secret grants control of a live storefront, so
    * it goes in and never comes out.
    */

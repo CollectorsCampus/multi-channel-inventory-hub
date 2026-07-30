@@ -243,6 +243,7 @@ export class ChannelsService {
       : null;
 
     const secretFields = connector?.secretFields ?? [];
+    const optionalSecretFields = connector?.optionalSecretFields ?? [];
     let secretsSet: string[] = [];
 
     if (instance.credentialRef && secretFields.length > 0) {
@@ -266,7 +267,11 @@ export class ChannelsService {
       enabled: instance.enabled,
       config: decodeJsonObject(instance.config),
       secretsSet,
-      secretFieldsRequired: [...secretFields],
+      // Only the fields a channel cannot work without. This drives the "still
+      // needs: …" warning, so including an optional field there tells a working
+      // channel it is broken — and sends the operator looking for a credential
+      // the platform may not even issue.
+      secretFieldsRequired: secretFields.filter((field) => !optionalSecretFields.includes(field)),
       syncMode: connector ? connectorSyncMode(connector) : 'outbound-only',
       capabilities: connector?.capabilities ?? [],
       healthStatus: connector ? instance.healthStatus : 'error',

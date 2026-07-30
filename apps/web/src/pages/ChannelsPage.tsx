@@ -160,6 +160,7 @@ function AddChannel({
             <SecretFields
               fields={connector.secretFields}
               alreadySet={[]}
+              optional={connector.optionalSecretFields}
               value={secrets}
               onChange={setSecrets}
               idPrefix="new"
@@ -267,6 +268,7 @@ function ChannelCard({ channel }: { channel: Channel }) {
           <SecretFields
             fields={connector.secretFields}
             alreadySet={channel.secretsSet}
+            optional={connector.optionalSecretFields}
             value={secrets}
             onChange={setSecrets}
             idPrefix={channel.id}

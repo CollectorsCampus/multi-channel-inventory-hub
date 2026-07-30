@@ -131,12 +131,23 @@ export function SchemaForm({
 export function SecretFields({
   fields,
   alreadySet,
+  optional = [],
+  hints = {},
   value,
   onChange,
   idPrefix,
 }: {
   fields: string[];
   alreadySet: string[];
+  /**
+   * Fields the channel works without. Marked in the label, because an unmarked
+   * empty password box reads as something you have not found yet — which is how
+   * Shopify's `webhookSecret` sent people hunting the Dev Dashboard for a value
+   * it does not issue.
+   */
+  optional?: string[];
+  /** Per-field guidance, for the ones where "Stored encrypted" is not the useful thing to say. */
+  hints?: Record<string, string>;
   value: Record<string, string>;
   onChange: (next: Record<string, string>) => void;
   idPrefix: string;
@@ -148,10 +159,14 @@ export function SecretFields({
       {fields.map((field) => {
         const id = `${idPrefix}-secret-${field}`;
         const isSet = alreadySet.includes(field);
+        const isOptional = optional.includes(field);
 
         return (
           <div key={field} className="schema-field">
-            <label htmlFor={id}>{humanise(field)}</label>
+            <label htmlFor={id}>
+              {humanise(field)}
+              {isOptional && <span className="muted"> — optional</span>}
+            </label>
             <input
               id={id}
               type="password"
@@ -167,7 +182,9 @@ export function SecretFields({
               }}
             />
             <p className="field-hint">
-              {isSet ? 'Stored and encrypted. Leave blank to keep it.' : 'Stored encrypted.'}
+              {isSet
+                ? 'Stored and encrypted. Leave blank to keep it.'
+                : (hints[field] ?? 'Stored encrypted.')}
             </p>
           </div>
         );

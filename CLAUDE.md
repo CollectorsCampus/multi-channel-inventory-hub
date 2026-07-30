@@ -19,16 +19,16 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
 | 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.1.1 released 2026-07-29** |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.2.0 released 2026-07-30** |
 
-Post-release work continues on `main` and is **not in any tag**: the container-start fix,
-the tcgcsv catalog source, and the match-proposal workflow all landed after v0.1.1. See
-"After v0.1.1" below — the published `0.1.1` image does not contain any of it.
+Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fix, the
+tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
+because it explains _why_ each landed, which the CHANGELOG does not.
 
-`main` is green at `58f8e47`: **735 tests** (api 409, tcgplayer 102, shopify 87, sdk 59,
-tcgcsv 45, scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a
-push** — `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in
-its own workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
+`main` is green: **737 tests** (api 411, tcgplayer 102, shopify 87, sdk 59, tcgcsv 45,
+scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
+`ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
+workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
 ### v0.1.0 (2026-07-29)
 

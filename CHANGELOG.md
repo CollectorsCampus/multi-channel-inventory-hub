@@ -3,6 +3,74 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.2.0] — 2026-07-30
+
+The release that makes an **existing storefront usable**. Until now the only route from a
+populated Shopify store into the ledger was reading a variant id out of the admin and
+typing it onto an allocation, one item at a time — and a bug meant even that was
+impossible. Adds a catalogue source covering far more than Magic, and fixes a container
+defect present in every published image so far.
+
+### Fixed
+
+- **The published 0.1.0 and 0.1.1 images cannot start without reaching npmjs.org.** The
+  entrypoint ran migrations through `pnpm`, which is not in the runtime image — the stage
+  inherits corepack's shim but none of the pnpm the build stages downloaded, so corepack
+  fetched it from the public registry at **every container start**. It fails as a hang, not
+  an error: the container sits in `starting`, goes unhealthy and never serves a request,
+  with one "Corepack is about to download" line as the only clue. An air-gapped or
+  egress-filtered host could never have started either image. The CLI is now invoked
+  through its own bin symlink. **If you run 0.1.x behind a proxy or firewall, this is the
+  upgrade that matters.**
+- **`ChannelAllocation.externalListingId` could not be set by anything.** Its only writer
+  was the outbound worker, from `pushListing`'s result — and Shopify's `pushListing`
+  refuses to run without one. For an operator with an existing storefront the field could
+  never be populated and every push failed forever. `AllocationWrite` now carries it, where
+  absent means "leave alone" and explicit null detaches a link without destroying the
+  allocation.
+- **A correctly configured Shopify channel was told it was not connected.** A channel with
+  only `clientSecret` was labelled "still needs: webhookSecret" permanently and in error
+  styling, sending operators to hunt in the Dev Dashboard for a credential Shopify does not
+  issue. Shopify signs an app's webhooks with its client secret, and that fallback is the
+  proven path.
+- **A second listing could silently steal another's link.** Confirming a match for a
+  listing that resolved to an inventory item the channel already drove _moved_ the existing
+  allocation instead of adding one, silently detaching the first listing while still
+  reporting it as linked. Now refused, naming the listing that already holds the item.
+
+### Added
+
+- **Match proposals** — a `/match` screen that reads what a channel already sells and
+  proposes links to the catalogue, set at a time. Evidence is ranked and every proposal
+  carries its reason: an exact platform id or barcode is `certain`, an embedded id or a
+  name-plus-set agreement is `probable`, a bare name is `possible`. **Nothing is ever
+  applied**; a tie is reported as ambiguous with both candidates listed, never resolved by
+  picking one. Only `certain` is offered for bulk acceptance.
+- **`listing.enumerate`** capability and a Shopify implementation, for asking a channel
+  what it is selling that the hub has never heard of. Distinct from `reconcile`, which can
+  only answer questions about ids already held. It deliberately does not affect `syncMode`.
+- **`listing.sku`** capability, writing the catalogue id into the channel's own seller-SKU
+  field so a rebuilt hub can re-derive every link from the platform. **Opt-in, off by
+  default, and destructive** where that field is already in use — it overwrites, the UI
+  says so at the point of decision, and requesting it on a connector that cannot do it is
+  an error rather than a silent no-op.
+- **`packages/catalog-tcgcsv`** — TCGPlayer's product catalogue via tcgcsv.com, covering
+  the 90 categories it publishes. Scryfall covers Magic and nothing else; a real card-shop
+  inventory spans One Piece, Lorcana, Flesh & Blood, Union Arena, Gundam and sealed
+  supplies. Marked a prototype: it fetches set files on demand rather than ingesting in
+  bulk, and refuses an un-narrowed search instead of walking the catalogue.
+- **`Connector.optionalSecretFields`**, so a connector can say a credential is only needed
+  for the unusual case. Additive — unmarked fields stay required.
+
+### Notes
+
+- No schema changes: the four migrations are unchanged since 0.1.0, so upgrading applies
+  nothing.
+- Prices from tcgcsv are per product and printing, **never per condition** — it does not
+  publish the SKU tier. Treat them as a market reference, not a price feed for listings.
+- Nothing in this release writes to a marketplace on its own. Matching creates links and
+  credits no stock; the SKU write is the one outbound call and is off unless asked for.
+
 ## [0.1.1] — 2026-07-29
 
 A dependency-only security release. It clears every advisory that was present in the 0.1.0
@@ -125,5 +193,6 @@ verified against real accounts rather than only against mocks.
 - **A wrong credential is not distinguishable from a transient failure** in the alert
   inbox; both surface as `sync_failure`.
 
+[0.2.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.2.0
 [0.1.1]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.1.1
 [0.1.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.1.0

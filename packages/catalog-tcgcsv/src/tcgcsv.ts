@@ -110,6 +110,21 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
 
   const textCache = new Map<string, CacheEntry<string>>();
 
+  /**
+   * Where each product last seen was found.
+   *
+   * The only product-to-set index that can exist here, because tcgcsv publishes
+   * none. Populated as sets are read, which is what makes `fetchById` work for
+   * the search-then-confirm flow and honestly fail for anything else.
+   *
+   * Holds paths and names, not rows: the rows are already in `textCache` and
+   * duplicating them would double the memory for no gain.
+   */
+  const productIndex = new Map<
+    string,
+    { path: string; categoryName?: string; groupName?: string }
+  >();
+
   async function fetchText(ctx: CatalogCtx, path: string): Promise<string> {
     const url = `${baseUrl}${path}`;
 
@@ -211,11 +226,25 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
 
       const matched: CatalogCandidate[] = [];
       for (const group of candidateGroups) {
-        const csv = await fetchText(
-          ctx,
-          `/${group.categoryId}/${group.groupId}/ProductsAndPrices.csv`,
-        );
-        const rows = parseProductsAndPrices(csv).filter((row) => looseIncludes(row.name, text));
+        const path = `/${group.categoryId}/${group.groupId}/ProductsAndPrices.csv`;
+        const all = parseProductsAndPrices(await fetchText(ctx, path));
+
+        // Index the whole set, not only the rows that matched the query. The
+        // caller confirms one product out of a set it searched, and which one it
+        // picks is not knowable here.
+        for (const row of all) {
+          productIndex.set(row.productId, {
+            path,
+            ...(categoryById.get(row.categoryId) !== undefined
+              ? { categoryName: categoryById.get(row.categoryId) }
+              : {}),
+            ...(groupById.get(row.groupId) !== undefined
+              ? { groupName: groupById.get(row.groupId) }
+              : {}),
+          });
+        }
+
+        const rows = all.filter((row) => looseIncludes(row.name, text));
 
         matched.push(
           ...toCandidates(rows, {
@@ -228,10 +257,45 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
       return query.limit ? matched.slice(0, query.limit) : matched;
     },
 
-    // `fetchById` is deliberately not implemented. The source's own id is a
-    // `productId`, and tcgcsv publishes no product-to-set index — so resolving
-    // one would mean scanning set files until it turned up. The interface marks
-    // the method optional for exactly this case, and an implementation that
-    // sometimes worked (only for sets already cached) would be worse than none.
+    /**
+     * Re-fetch one product by its `productId`, from a set already downloaded.
+     *
+     * tcgcsv publishes no product-to-set index, so an id alone cannot be located
+     * — there is nowhere to look it up. What *is* available is the sets this
+     * source has already read, and that covers the case that matters: the core
+     * re-verifies a candidate it just searched for, and refuses to trust a
+     * client-supplied name or external id when writing `CatalogExternalRef`
+     * (see `IntakeDto`). Searching a set then confirming from it is exactly the
+     * flow, and the set is in the cache by then.
+     *
+     * Returns null for anything unseen rather than guessing or scanning ~4,000
+     * set files. `CatalogService.fetchCandidate` already treats null as "cannot
+     * re-verify" and the caller reports it, so the failure is explicit.
+     */
+    async fetchById(ctx: CatalogCtx, sourceId: string): Promise<CatalogCandidate | null> {
+      const productId = sourceId.trim();
+      if (productId === '') return null;
+
+      const known = productIndex.get(productId);
+      if (!known) {
+        ctx.logger.debug(
+          `tcgcsv cannot re-fetch product ${productId}: no set containing it has been read. ` +
+            `Search its set first.`,
+        );
+        return null;
+      }
+
+      const rows = parseProductsAndPrices(await fetchText(ctx, known.path)).filter(
+        (row) => row.productId === productId,
+      );
+      if (rows.length === 0) return null;
+
+      const [candidate] = toCandidates(rows, {
+        categoryName: () => known.categoryName,
+        groupName: () => known.groupName,
+      });
+
+      return candidate ?? null;
+    },
   };
 }

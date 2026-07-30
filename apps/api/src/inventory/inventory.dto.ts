@@ -9,6 +9,7 @@ import {
   IsString,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { ALLOCATION_MODES, SKU_CONDITIONS, STOCK_MOVEMENT_REASONS } from '@hub/db';
@@ -201,6 +202,18 @@ export class AllocationWriteDto {
   @IsString()
   @MaxLength(3)
   currency?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "The channel's own listing id — a Shopify ProductVariant GID, a TCGPlayer SKU id. " +
+      'Omit to leave unchanged; send null to detach the link without deleting the allocation.',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((o: AllocationWriteDto) => o.externalListingId !== null)
+  @IsString()
+  @MaxLength(200)
+  externalListingId?: string | null;
 }
 
 /**

@@ -307,6 +307,36 @@ describe('HTTP application', () => {
   });
 
   /**
+   * MatchingService is reached from the channels path and pulls in the catalog
+   * registry, the intake service and InventoryService — four modules deep. Nest
+   * resolves those constructor dependencies from metadata at runtime, so a
+   * type-only import anywhere on that path typechecks and then fails DI at boot
+   * (rule 7). These assert the routes exist rather than that they work.
+   */
+  describe('match proposal routes', () => {
+    it('wires the propose route rather than failing DI', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/channels/some-channel/match/propose',
+        payload: { sourceKey: 'tcgcsv', setName: 'Surging Sparks' },
+      });
+
+      // Editor-only with no session, so 401 is correct. A 404 would mean the
+      // route never registered; a 500 would mean a provider did not resolve.
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('wires the confirm route', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/channels/some-channel/match/confirm',
+        payload: { links: [] },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  /**
    * The console ships off, and a deployment that has not enabled it should not
    * advertise that the endpoint exists — hence 404 rather than 403 from the
    * service. The status route stays readable so the SPA can decide whether to

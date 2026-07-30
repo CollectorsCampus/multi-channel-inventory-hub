@@ -443,3 +443,86 @@ describe('search', () => {
     await expect(failing.search(ctx(), { text: 'x', game: 'Magic' })).rejects.toThrow(/500/);
   });
 });
+
+describe('fetchById', () => {
+  const stub = (calls: string[] = []) =>
+    vi.fn(async (url: string) => {
+      calls.push(url);
+      const body = url.endsWith('/Categories.csv')
+        ? CATEGORIES
+        : url.endsWith('/1/Groups.csv')
+          ? MAGIC_GROUPS
+          : url.includes('/1/') && url.includes('ProductsAndPrices')
+            ? MAGIC_PRODUCTS
+            : null;
+      return body === null ? new Response('missing', { status: 404 }) : new Response(body);
+    });
+
+  const make = (f: ReturnType<typeof stub>) =>
+    createTcgcsvSource({
+      fetch: f as unknown as typeof fetch,
+      baseUrl: 'https://x/tcgplayer',
+    });
+
+  it('returns null for a product whose set has never been read', async () => {
+    const source = make(stub());
+
+    // tcgcsv publishes no product-to-set index, so there is nowhere to look.
+    // Null is honest; scanning ~4,000 set files would not be.
+    expect(await source.fetchById!(ctx(), '706132')).toBeNull();
+  });
+
+  it('re-fetches a product from a set that was searched', async () => {
+    const source = make(stub());
+
+    // The flow the core actually performs: search a set, then re-verify one
+    // product out of it before writing CatalogExternalRef.
+    await source.search(ctx(), { text: 'boimler', game: 'Magic', setName: 'Star Trek' });
+
+    const candidate = await source.fetchById!(ctx(), '706132');
+    expect(candidate?.name).toBe('Brad Boimler, Eager Ensign');
+    expect(candidate?.externalIds.tcgplayer).toBe('706132');
+    expect(candidate?.setName).toBe('Star Trek');
+    expect(candidate?.game).toBe('Magic');
+  });
+
+  it('indexes the whole set, not only the rows that matched the query', async () => {
+    const source = make(stub());
+
+    // Searching for one card must still make its set-mates re-fetchable: which
+    // product the operator confirms is not knowable at search time.
+    await source.search(ctx(), { text: 'boimler', game: 'Magic', setName: 'Star Trek' });
+
+    const other = await source.fetchById!(ctx(), '706191');
+    expect(other?.name).toBe('U.S.S. Enterprise-D, Galaxy-Class');
+  });
+
+  it('collapses printings on re-fetch the same way search does', async () => {
+    const source = make(stub());
+    await source.search(ctx(), { text: 'enterprise', game: 'Magic', setName: 'Star Trek' });
+
+    const candidate = await source.fetchById!(ctx(), '706191');
+    expect(candidate?.printings).toEqual(expect.arrayContaining(['NORMAL', 'FOIL']));
+    // Non-foil price still wins, as in search.
+    expect(candidate?.marketPrice).toBe(3965);
+  });
+
+  it('serves a re-fetch from cache rather than downloading again', async () => {
+    const calls: string[] = [];
+    const source = make(stub(calls));
+
+    await source.search(ctx(), { text: 'boimler', game: 'Magic', setName: 'Star Trek' });
+    const after = calls.length;
+
+    await source.fetchById!(ctx(), '706132');
+    expect(calls.length).toBe(after);
+  });
+
+  it('returns null for an empty id without touching the network', async () => {
+    const calls: string[] = [];
+    const source = make(stub(calls));
+
+    expect(await source.fetchById!(ctx(), '   ')).toBeNull();
+    expect(calls).toEqual([]);
+  });
+});

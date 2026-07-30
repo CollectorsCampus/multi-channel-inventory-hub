@@ -137,6 +137,87 @@ export class IntakeService {
   }
 
   /**
+   * Make sure a SKU and its inventory row exist, without receiving any stock.
+   *
+   * For linking an existing channel listing to the ledger. `intake` cannot serve
+   * that: it requires a positive quantity, because receiving zero units is not a
+   * thing anyone means to do. Linking, on the other hand, is *only* about
+   * identity — the operator already holds whatever they hold, and inventing a
+   * quantity here would credit them stock they never counted.
+   *
+   * No `StockMovement` either, for the same reason: nothing moved. A movement row
+   * with delta 0 would be a lie in the audit trail.
+   *
+   * Lives here rather than in the matching service so that catalog-item
+   * resolution, SKU creation and inventory-row creation keep one owner.
+   */
+  async ensureSku(
+    candidate: CatalogCandidate & { sourceKey: string },
+    dimensions: { condition: string; printing?: string; language?: string },
+  ): Promise<{
+    inventoryItemId: string;
+    skuId: string;
+    catalogItemId: string;
+    createdCatalogItem: boolean;
+    createdSku: boolean;
+    externalIds: Record<string, string>;
+  }> {
+    const printing = normalize(dimensions.printing) ?? 'NORMAL';
+    const language = normalize(dimensions.language) ?? normalize(candidate.language) ?? 'EN';
+
+    const { catalogItemId, createdCatalogItem } = await this.resolveCatalogItem(candidate);
+
+    const existingSku = await this.prisma.sku.findUnique({
+      where: {
+        catalogItemId_condition_printing_language: {
+          catalogItemId,
+          condition: dimensions.condition,
+          printing,
+          language,
+        },
+      },
+      include: { inventory: true },
+    });
+
+    // Already there, stock and all. Returning it unchanged is what makes
+    // confirming the same link twice a no-op instead of a duplicate.
+    if (existingSku?.inventory) {
+      return {
+        inventoryItemId: existingSku.inventory.id,
+        skuId: existingSku.id,
+        catalogItemId,
+        createdCatalogItem,
+        createdSku: false,
+        externalIds: { ...candidate.externalIds },
+      };
+    }
+
+    const sku =
+      existingSku ??
+      (await this.prisma.sku.create({
+        data: { catalogItemId, condition: dimensions.condition, printing, language },
+      }));
+
+    const item = await this.prisma.inventoryItem.create({
+      data: { skuId: sku.id, quantityOnHand: 0 },
+    });
+
+    this.logger.log(
+      `Linked SKU ${sku.id} (${candidate.name}) with no stock, from ` +
+        `${candidate.sourceKey}:${candidate.sourceId}.`,
+    );
+
+    return {
+      inventoryItemId: item.id,
+      skuId: sku.id,
+      catalogItemId,
+      createdCatalogItem,
+      createdSku: existingSku === null,
+      externalIds: { ...candidate.externalIds },
+    };
+  }
+
+  /**
    * Find the catalog item this candidate refers to, or create it.
    *
    * Matching is by external reference, never by name. §4 keys the catalog on

@@ -105,6 +105,21 @@ export interface AllocationWrite {
   maxQuantity?: number | null;
   price?: number | null;
   currency?: string;
+
+  /**
+   * The channel's own id for the listing this allocation drives.
+   *
+   * Writable here because it had to be, and nothing else could. The outbound
+   * worker sets it from `pushListing`'s result — but Shopify's `pushListing`
+   * refuses to run without it ("Create the product in Shopify, then set the
+   * variant id on this allocation"), so for an operator with an existing store
+   * the field could never be populated and every push failed forever. A closed
+   * loop, and the reason the match workflow exists.
+   *
+   * `undefined` leaves it alone; `null` clears it, which is how an operator
+   * detaches a link without deleting the allocation and its quantities.
+   */
+  externalListingId?: string | null;
 }
 
 type ItemWithAllocations = Prisma.InventoryItemGetPayload<{ include: { allocations: true } }>;
@@ -636,6 +651,11 @@ export class InventoryService {
             maxQuantity: write.mode === 'pooled' ? (write.maxQuantity ?? null) : null,
             ...(write.price !== undefined ? { price: write.price } : {}),
             ...(write.currency !== undefined ? { currency: write.currency } : {}),
+            // Absent means "leave it alone", so an operator editing a price
+            // cannot silently detach the listing link. Explicit null clears it.
+            ...(write.externalListingId !== undefined
+              ? { externalListingId: write.externalListingId }
+              : {}),
           };
           if (write.id) {
             await tx.channelAllocation.update({ where: { id: write.id }, data });

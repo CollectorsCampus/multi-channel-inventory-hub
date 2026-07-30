@@ -19,7 +19,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
 | 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.1.0 released 2026-07-29** |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.1.1 released 2026-07-29** |
 
 `main` is green: **607 tests**, lint/typecheck/build clean, all four CI jobs passing.
 
@@ -65,6 +65,43 @@ Versions are unified at 0.1.0 across every manifest, and the OpenAPI document re
 version from `apps/api/package.json` rather than repeating it. `0.x` is deliberate: MySQL
 and SQLite have no migration history, no real IdP has completed a login, and there is one
 store's worth of production evidence.
+
+### v0.1.1 (2026-07-29)
+
+A dependency-only security release, tagged at `3f31390`. Multi-arch image at
+`ghcr.io/collectorscampus/multi-channel-inventory-hub`, tagged `0.1.1`, `0.1` and `latest` —
+all three at digest `sha256:2e900253…`, replacing `sha256:42ead987…`. **Dependabot now reports
+0 open alerts and 18 fixed.**
+
+The build took ~5 minutes, not the ~14 that v0.1.0 took, because the arm64 layers were
+already in the GitHub Actions cache. Do not read a fast release as a skipped one.
+
+**Verification worth repeating rather than re-deriving.** Anonymous registry token first, as
+always — but the stronger check is to pull the published image and look inside it, which is
+the only thing that proves an override actually reached the artifact:
+
+```
+docker run --rm --entrypoint sh ghcr.io/…:0.1.1 -c 'ls /repo/node_modules/.pnpm | grep -E "static|find-my-way|js-yaml"'
+```
+
+It shows `@fastify+static@10.1.2`, `find-my-way@9.7.0` — **one** copy, where 0.1.0 had two —
+and `js-yaml@5.2.2`. It also shows no `vite`, `vitest` or `esbuild` at all, which is the
+empirical form of "the runtime stage installs `--prod`" and the thing that makes the
+runtime/dev advisory split real rather than asserted.
+
+Then boot it. The image was run against the throwaway services on 5433/6380 and driven over
+HTTP: liveness, the SPA index, and the real 376 kB hashed bundle with
+`application/javascript`. That last one is not ceremony — `@fastify/static` 10 leaves an
+unmet peer and `useStaticAssets` resolves the plugin at **runtime**, so serving a real asset
+from the real image is the only place that combination is actually proven. Five traversal
+attempts read nothing outside the web root.
+
+One surprise: pointing the container at the **test** Redis made the outbound worker spend a
+minute failing jobs left in the queue by the test suites, for allocations those suites had
+truncated. Harmless, and not a defect — but it looks alarming in the logs, so expect it.
+
+`--notes-file` handled the em dashes correctly, confirming that only `gh --title` mangles
+non-ASCII from bash.
 
 ### v0.1.0 shipped known vulnerabilities — all cleared in v0.1.1
 

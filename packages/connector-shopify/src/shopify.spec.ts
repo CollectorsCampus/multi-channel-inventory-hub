@@ -91,6 +91,32 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         }) as T;
       }
 
+      if (query.includes('EnumerateListings')) {
+        return (overrides.enumerate ?? {
+          productVariants: {
+            pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+            nodes: [
+              {
+                id: VARIANT,
+                title: 'Default Title',
+                displayName: 'Surging Sparks Elite Trainer Box - Default Title',
+                sku: 'PKM-SSP-ETB',
+                barcode: '820650861234',
+                price: '49.99',
+                product: { title: 'Surging Sparks Elite Trainer Box', status: 'ACTIVE' },
+              },
+              {
+                id: 'gid://shopify/ProductVariant/112',
+                title: 'Near Mint',
+                displayName: 'Pikachu ex - Near Mint',
+                price: '3.50',
+                product: { title: 'Pikachu ex', status: 'DRAFT' },
+              },
+            ],
+          },
+        }) as T;
+      }
+
       if (query.includes('SetInventoryQuantity')) {
         return { inventorySetQuantities: { userErrors: overrides.quantityErrors ?? [] } } as T;
       }
@@ -547,6 +573,173 @@ describe('reconciliation', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('enumerating existing listings', () => {
+  it('reports the variant GID that everything else keys on', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const page = await connector.enumerateListings!(ctx(), {});
+
+    // This id is written straight onto an allocation on confirmation, and every
+    // later push reads it back. If it were a bare numeric id, or a Product
+    // rather than ProductVariant GID, the link would resolve to nothing on the
+    // first sale instead of failing where someone could see it.
+    expect(page.listings[0]!.externalListingId).toBe(VARIANT);
+    expect(page.listings[0]!.externalListingId).toMatch(/^gid:\/\/shopify\/ProductVariant\//);
+  });
+
+  it('prefers displayName, which already reads as product plus variant', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const page = await connector.enumerateListings!(ctx(), {});
+    expect(page.listings[0]!.title).toBe('Surging Sparks Elite Trainer Box - Default Title');
+  });
+
+  it('carries sku and barcode when present and omits them when not', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const page = await connector.enumerateListings!(ctx(), {});
+
+    // The only two fields that can make a match certain rather than probable.
+    expect(page.listings[0]!.sku).toBe('PKM-SSP-ETB');
+    expect(page.listings[0]!.barcode).toBe('820650861234');
+
+    // Most TCG variants have neither, and an empty string would look to a
+    // matcher like a value that simply matches nothing.
+    expect(page.listings[1]!.sku).toBeUndefined();
+    expect(page.listings[1]!.barcode).toBeUndefined();
+  });
+
+  it('converts price to integer cents', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const page = await connector.enumerateListings!(ctx(), {});
+
+    // 49.99 * 100 is 4998.999999999999 in IEEE-754.
+    expect(page.listings[0]!.price).toBe(4999);
+    expect(page.listings[1]!.price).toBe(350);
+  });
+
+  it('marks a draft product inactive rather than proposing it as live', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const page = await connector.enumerateListings!(ctx(), {});
+
+    expect(page.listings[0]!.active).toBe(true);
+    // Linking stock to something nobody can buy is worse than not offering it.
+    expect(page.listings[1]!.active).toBe(false);
+  });
+
+  /**
+   * Fetching inventory levels per variant would multiply the query cost by the
+   * page size and hit Shopify's calculated-cost limit on any real catalogue.
+   * Quantity for a known listing is `fetchLiveState`'s job.
+   */
+  it('does not ask for inventory levels', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.enumerateListings!(ctx(), {});
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.query).not.toContain('inventoryLevels');
+    expect(page_quantity_absent(await connector.enumerateListings!(ctx(), {}))).toBe(true);
+  });
+
+  it('passes the cursor through and returns the next one only when there is a page', async () => {
+    const { client, calls } = mockClient({
+      enumerate: {
+        productVariants: {
+          pageInfo: { hasNextPage: true, endCursor: 'cursor-2' },
+          nodes: [{ id: VARIANT, displayName: 'A', product: { status: 'ACTIVE' } }],
+        },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const page = await connector.enumerateListings!(ctx(), { cursor: 'cursor-1', limit: 50 });
+
+    expect(calls[0]!.variables).toMatchObject({ after: 'cursor-1', first: 50 });
+    expect(page.nextCursor).toBe('cursor-2');
+  });
+
+  it('omits the cursor on the last page even though Shopify still sends one', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    // The mock's pageInfo has hasNextPage false but a non-null endCursor, which
+    // is exactly what Shopify returns. Trusting endCursor alone would loop.
+    const page = await connector.enumerateListings!(ctx(), {});
+    expect(page.nextCursor).toBeUndefined();
+  });
+
+  /**
+   * Matching is scoped to one set while a page of a real storefront is not.
+   * Measured on a live Pokémon shop: 100 variants against one set's candidates
+   * gave 2 matches and 98 rows of noise, and the noise is what stops a review
+   * screen being read.
+   */
+  it('passes the search term to Shopify so a page is not all noise', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.enumerateListings!(ctx(), { search: 'Surging Sparks' });
+
+    expect(calls[0]!.query).toContain('query: $query');
+    expect(calls[0]!.variables).toMatchObject({ query: 'Surging Sparks' });
+  });
+
+  it('sends null rather than an empty search, which Shopify treats as a filter', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.enumerateListings!(ctx(), { search: '   ' });
+    expect(calls[0]!.variables).toMatchObject({ query: null });
+
+    await connector.enumerateListings!(ctx(), {});
+    expect(calls[1]!.variables).toMatchObject({ query: null });
+  });
+
+  it('clamps the page size to what Shopify will accept', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.enumerateListings!(ctx(), { limit: 5000 });
+    // Over 250 is an error from Shopify, not a truncation.
+    expect(calls[0]!.variables).toMatchObject({ first: 250 });
+
+    await connector.enumerateListings!(ctx(), { limit: 0 });
+    expect(calls[1]!.variables).toMatchObject({ first: 1 });
+  });
+
+  it('skips a variant with no id rather than inventing one', async () => {
+    const { client } = mockClient({
+      enumerate: {
+        productVariants: {
+          pageInfo: { hasNextPage: false },
+          nodes: [null, { displayName: 'No id here' }, { id: VARIANT, displayName: 'Real' }],
+        },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const page = await connector.enumerateListings!(ctx(), {});
+
+    // A placeholder id would be confirmable, and would link stock to nothing.
+    expect(page.listings).toHaveLength(1);
+    expect(page.listings[0]!.externalListingId).toBe(VARIANT);
+  });
+});
+
+/** Quantity is deliberately never populated by enumeration. */
+function page_quantity_absent(page: { listings: Array<{ quantity?: number }> }): boolean {
+  return page.listings.every((l) => l.quantity === undefined);
+}
 
 // The shared contract suite every connector must pass (§10).
 runConnectorContractTests({

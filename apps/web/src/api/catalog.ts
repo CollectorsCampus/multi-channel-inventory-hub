@@ -37,13 +37,17 @@ export function useCatalogSources() {
   });
 }
 
-export function useCatalogSearch(text: string, game?: string) {
+export function useCatalogSearch(text: string, game?: string, setName?: string) {
   const trimmed = text.trim();
+  const set = setName?.trim();
   return useQuery({
-    queryKey: ['catalog', 'search', trimmed, game],
+    queryKey: ['catalog', 'search', trimmed, game, set],
     queryFn: () => {
       const params = new URLSearchParams({ text: trimmed, limit: '25' });
       if (game) params.set('game', game);
+      // tcgcsv cannot answer without one — it has no search endpoint and would
+      // otherwise have to download a whole category.
+      if (set) params.set('setName', set);
       return apiFetch<CatalogSearchResponse>(`/catalog/search?${params.toString()}`);
     },
     // Catalog sources are third-party services under someone else's rate

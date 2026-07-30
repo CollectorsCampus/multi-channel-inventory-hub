@@ -4,6 +4,7 @@ import { InventoryListPage } from './pages/InventoryListPage';
 import { ItemDetailPage } from './pages/ItemDetailPage';
 import { IntakePage } from './pages/IntakePage';
 import { ChannelsPage } from './pages/ChannelsPage';
+import { MatchPage } from './pages/MatchPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { QueryConsolePage } from './pages/QueryConsolePage';
 
@@ -78,6 +79,16 @@ const channelsRoute = createRoute({
   component: ChannelsPage,
 });
 
+/**
+ * Reached from the channels page rather than the top nav: it acts on one channel,
+ * and it is a setup task rather than a daily one.
+ */
+const matchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/match',
+  component: MatchPage,
+});
+
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/activity',
@@ -100,6 +111,7 @@ const routeTree = rootRoute.addChildren([
   itemRoute,
   intakeRoute,
   channelsRoute,
+  matchRoute,
   activityRoute,
   queryConsoleRoute,
 ]);

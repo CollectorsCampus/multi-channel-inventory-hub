@@ -39,7 +39,7 @@ const reference: Connector = {
   displayName: 'Reference Connector',
   configSchema: { type: 'object', properties: { storeUrl: { type: 'string' } } },
   secretFields: ['webhookSecret'],
-  capabilities: ['orders.webhook', 'orders.import', 'listing.export'],
+  capabilities: ['orders.webhook', 'orders.import', 'listing.export', 'listing.enumerate'],
 
   verifyWebhook(_c, headers, rawBody) {
     const presented = headers['x-signature'];
@@ -103,6 +103,35 @@ const reference: Connector = {
       content: Buffer.from(['listing,quantity,price', ...rows].join('\n'), 'utf8'),
     };
   },
+
+  /**
+   * Two pages, so the cursor contract is actually exercised: a harness that only
+   * ever saw a single short page would never notice a connector that returns a
+   * cursor on its last page and sends the core round forever.
+   */
+  async enumerateListings(_c, req) {
+    const all = [
+      {
+        externalListingId: 'listing-1',
+        title: 'Reference Booster Box',
+        sku: 'REF-BB',
+        price: 9999,
+      },
+      {
+        externalListingId: 'listing-2',
+        title: 'Reference Elite Trainer Box',
+        barcode: '012345678905',
+      },
+      { externalListingId: 'listing-3', title: 'Reference Single', price: 250, quantity: 4 },
+    ];
+
+    const start = req.cursor === undefined ? 0 : Number(req.cursor);
+    const size = req.limit ?? 2;
+    const page = all.slice(start, start + size);
+    const next = start + size;
+
+    return next < all.length ? { listings: page, nextCursor: String(next) } : { listings: page };
+  },
 };
 
 runConnectorContractTests({
@@ -131,6 +160,73 @@ describe('contract harness rigour', () => {
     // The contract requires rejecting a tampered body; this one cannot.
     expect(insecure.verifyWebhook!(ctx(), {}, Buffer.from('forged'))).toBe(true);
     expect(reference.verifyWebhook!(ctx(), {}, Buffer.from('forged'))).toBe(false);
+  });
+
+  it('catches an enumerator that hands out the same listing twice', async () => {
+    const duplicating: Connector = {
+      ...reference,
+      async enumerateListings() {
+        return {
+          listings: [
+            { externalListingId: 'listing-1', title: 'Once' },
+            { externalListingId: 'listing-1', title: 'Twice' },
+          ],
+        };
+      },
+    };
+
+    // Offered twice, the operator confirms the same link twice and two
+    // confirmations race for one allocation.
+    const bad = await duplicating.enumerateListings!(ctx(), {});
+    const badIds = bad.listings.map((l) => l.externalListingId);
+    expect(new Set(badIds).size).not.toBe(badIds.length);
+
+    const good = await reference.enumerateListings!(ctx(), {});
+    const goodIds = good.listings.map((l) => l.externalListingId);
+    expect(new Set(goodIds).size).toBe(goodIds.length);
+  });
+
+  it('catches an enumerator that reports a price as a float', async () => {
+    const floaty: Connector = {
+      ...reference,
+      async enumerateListings() {
+        // 19.99 * 100 in IEEE-754, which is how a mispriced listing starts.
+        return { listings: [{ externalListingId: 'listing-1', title: 'X', price: 1998.9999 }] };
+      },
+    };
+
+    const bad = await floaty.enumerateListings!(ctx(), {});
+    expect(Number.isInteger(bad.listings[0]?.price)).toBe(false);
+
+    const good = await reference.enumerateListings!(ctx(), {});
+    expect(good.listings.every((l) => l.price === undefined || Number.isInteger(l.price))).toBe(
+      true,
+    );
+  });
+
+  it('catches an enumerator that never stops paginating', async () => {
+    const endless: Connector = {
+      ...reference,
+      async enumerateListings() {
+        // A cursor on every page, including the last, walks the core in circles.
+        return { listings: [{ externalListingId: 'listing-1', title: 'X' }], nextCursor: '0' };
+      },
+    };
+
+    // Follow the cursor a few times; the reference terminates and this does not.
+    const walk = async (c: Connector) => {
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const page = await c.enumerateListings!(ctx(), cursor ? { cursor } : {});
+        cursor = page.nextCursor;
+        pages++;
+      } while (cursor !== undefined && pages < 10);
+      return pages;
+    };
+
+    expect(await walk(endless)).toBe(10);
+    expect(await walk(reference)).toBeLessThan(10);
   });
 
   it('catches an importer whose keys change between identical uploads', async () => {

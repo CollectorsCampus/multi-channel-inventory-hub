@@ -69,6 +69,22 @@ const DEFAULT_BASE_URL = 'https://tcgcsv.com/tcgplayer';
 const DEFAULT_REQUESTS_PER_SECOND = 4;
 
 /**
+ * Identify the client, because tcgcsv's CDN requires it.
+ *
+ * Not politeness — a hard requirement, established by measurement. The endpoint
+ * answers **401** to a request with an empty `User-Agent` or a generic one like
+ * `node`, and 200 to a descriptive one. Node's `fetch` sends no `User-Agent` at
+ * all, so without this the source returns 401 for every request while every test
+ * passes, because tests stub `fetch` and never exercise a header.
+ *
+ * Same default as the Scryfall source: names the project so a misbehaving
+ * deployment traces back to software rather than an anonymous IP. Override it if
+ * you would rather your instance be anonymous — but it cannot be blank.
+ */
+const DEFAULT_USER_AGENT =
+  'InventoryHub/0.1 (+https://github.com/CollectorsCampus/multi-channel-inventory-hub)';
+
+/**
  * How many set files one search may download.
  *
  * Low on purpose. Four is enough for "this set, and a couple of near-name
@@ -76,6 +92,15 @@ const DEFAULT_REQUESTS_PER_SECOND = 4;
  * fail loudly instead.
  */
 const DEFAULT_MAX_GROUPS_PER_SEARCH = 4;
+
+/**
+ * How many product lines one search may read the group list of.
+ *
+ * Two, not one, so a game name that legitimately matches a pair — "Pokemon" also
+ * matches "Pokemon Japan", and a Japanese card is a real thing someone stocks —
+ * still works. Above that it is a catalogue walk and wants a game.
+ */
+const DEFAULT_MAX_CATEGORIES_PER_SEARCH = 2;
 
 /**
  * Content changes once a day, around 20:00 UTC. An hour is short enough that a
@@ -94,6 +119,9 @@ export interface TcgcsvSourceOptions {
   now?: () => number;
   cacheTtlMs?: number;
   maxGroupsPerSearch?: number;
+  maxCategoriesPerSearch?: number;
+  /** Must be non-empty: the CDN answers 401 without one. */
+  userAgent?: string;
 }
 
 interface CacheEntry<T> {
@@ -107,8 +135,26 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
   const now = options.now ?? (() => Date.now());
   const cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
   const maxGroups = options.maxGroupsPerSearch ?? DEFAULT_MAX_GROUPS_PER_SEARCH;
+  const maxCategories = options.maxCategoriesPerSearch ?? DEFAULT_MAX_CATEGORIES_PER_SEARCH;
+  // A blank override would reintroduce the 401 silently, so it falls back.
+  const userAgent = options.userAgent?.trim() || DEFAULT_USER_AGENT;
 
   const textCache = new Map<string, CacheEntry<string>>();
+
+  /**
+   * Where each product last seen was found.
+   *
+   * The only product-to-set index that can exist here, because tcgcsv publishes
+   * none. Populated as sets are read, which is what makes `fetchById` work for
+   * the search-then-confirm flow and honestly fail for anything else.
+   *
+   * Holds paths and names, not rows: the rows are already in `textCache` and
+   * duplicating them would double the memory for no gain.
+   */
+  const productIndex = new Map<
+    string,
+    { path: string; categoryName?: string; groupName?: string }
+  >();
 
   async function fetchText(ctx: CatalogCtx, path: string): Promise<string> {
     const url = `${baseUrl}${path}`;
@@ -116,7 +162,10 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
     const cached = textCache.get(url);
     if (cached && now() - cached.storedAt < cacheTtlMs) return cached.value;
 
-    const response = await doFetch(url, { signal: ctx.signal });
+    const response = await doFetch(url, {
+      headers: { 'User-Agent': userAgent, Accept: 'text/csv,*/*' },
+      signal: ctx.signal,
+    });
     if (!response.ok) {
       throw new Error(`tcgcsv responded ${response.status} for ${path}`);
     }
@@ -178,14 +227,25 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
         return [];
       }
 
-      // Resolving groups costs one request per category, so an un-narrowed
-      // search over 90 categories is refused before it starts.
-      if (!query.setName && inScope.length > 1) {
+      // Resolving groups costs one request *per category*, so a search spanning
+      // the whole catalogue is refused before it starts — with or without a set
+      // name. A set name narrows which groups are downloaded, but not how many
+      // group *lists* have to be read to find them, and 90 requests to a
+      // community CDN to answer one question is not acceptable.
+      if (inScope.length > maxCategories) {
         throw new Error(
-          `tcgcsv needs a set name, or a game, to search: it has no search endpoint and must ` +
-            `download whole set files. Narrow the query (${inScope.length} categories in scope).`,
+          `tcgcsv needs a game to search: finding a set otherwise means reading the group list of ` +
+            `every product line (${inScope.length} in scope, limit ${maxCategories}). ` +
+            `Pass a game such as "Pokemon" or "Magic".`,
         );
       }
+
+      // No separate "needs a set name" guard. It would be dead code: a query
+      // spanning several product lines is already refused above, and one narrowed
+      // to a single line but no set is refused by the group cap below — Magic
+      // alone has 453. The two caps are the resource protection; *requiring* a
+      // set is a review-size policy and belongs to the caller that has an opinion
+      // about review size, which is MatchingService.
 
       const wantedSet = query.setName;
       const candidateGroups: TcgcsvGroup[] = [];
@@ -211,11 +271,25 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
 
       const matched: CatalogCandidate[] = [];
       for (const group of candidateGroups) {
-        const csv = await fetchText(
-          ctx,
-          `/${group.categoryId}/${group.groupId}/ProductsAndPrices.csv`,
-        );
-        const rows = parseProductsAndPrices(csv).filter((row) => looseIncludes(row.name, text));
+        const path = `/${group.categoryId}/${group.groupId}/ProductsAndPrices.csv`;
+        const all = parseProductsAndPrices(await fetchText(ctx, path));
+
+        // Index the whole set, not only the rows that matched the query. The
+        // caller confirms one product out of a set it searched, and which one it
+        // picks is not knowable here.
+        for (const row of all) {
+          productIndex.set(row.productId, {
+            path,
+            ...(categoryById.get(row.categoryId) !== undefined
+              ? { categoryName: categoryById.get(row.categoryId) }
+              : {}),
+            ...(groupById.get(row.groupId) !== undefined
+              ? { groupName: groupById.get(row.groupId) }
+              : {}),
+          });
+        }
+
+        const rows = all.filter((row) => looseIncludes(row.name, text));
 
         matched.push(
           ...toCandidates(rows, {
@@ -228,10 +302,45 @@ export function createTcgcsvSource(options: TcgcsvSourceOptions = {}): CatalogSo
       return query.limit ? matched.slice(0, query.limit) : matched;
     },
 
-    // `fetchById` is deliberately not implemented. The source's own id is a
-    // `productId`, and tcgcsv publishes no product-to-set index — so resolving
-    // one would mean scanning set files until it turned up. The interface marks
-    // the method optional for exactly this case, and an implementation that
-    // sometimes worked (only for sets already cached) would be worse than none.
+    /**
+     * Re-fetch one product by its `productId`, from a set already downloaded.
+     *
+     * tcgcsv publishes no product-to-set index, so an id alone cannot be located
+     * — there is nowhere to look it up. What *is* available is the sets this
+     * source has already read, and that covers the case that matters: the core
+     * re-verifies a candidate it just searched for, and refuses to trust a
+     * client-supplied name or external id when writing `CatalogExternalRef`
+     * (see `IntakeDto`). Searching a set then confirming from it is exactly the
+     * flow, and the set is in the cache by then.
+     *
+     * Returns null for anything unseen rather than guessing or scanning ~4,000
+     * set files. `CatalogService.fetchCandidate` already treats null as "cannot
+     * re-verify" and the caller reports it, so the failure is explicit.
+     */
+    async fetchById(ctx: CatalogCtx, sourceId: string): Promise<CatalogCandidate | null> {
+      const productId = sourceId.trim();
+      if (productId === '') return null;
+
+      const known = productIndex.get(productId);
+      if (!known) {
+        ctx.logger.debug(
+          `tcgcsv cannot re-fetch product ${productId}: no set containing it has been read. ` +
+            `Search its set first.`,
+        );
+        return null;
+      }
+
+      const rows = parseProductsAndPrices(await fetchText(ctx, known.path)).filter(
+        (row) => row.productId === productId,
+      );
+      if (rows.length === 0) return null;
+
+      const [candidate] = toCandidates(rows, {
+        categoryName: () => known.categoryName,
+        groupName: () => known.groupName,
+      });
+
+      return candidate ?? null;
+    },
   };
 }

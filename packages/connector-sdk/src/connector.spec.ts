@@ -41,6 +41,24 @@ describe('capability declarations', () => {
     expect(problems[0]?.message).toMatch(/updateQuantity/);
   });
 
+  it('holds discovery to the same rule as every other capability', () => {
+    const c = connector({ capabilities: ['listing.enumerate'] });
+    const problems = validateConnector(c);
+    expect(problems.map((p) => p.code)).toContain('missing_method');
+    expect(problems[0]?.message).toMatch(/enumerateListings/);
+  });
+
+  /**
+   * Enumeration deliberately does not affect `syncMode`. It says nothing about
+   * how fresh a channel's *orders* are, and letting it promote a manual channel
+   * to "continuous" would make reconciliation treat expected staleness as drift.
+   */
+  it('does not change sync mode', () => {
+    expect(syncModeOf(['listing.enumerate'])).toBe('outbound-only');
+    expect(syncModeOf(['orders.import', 'listing.enumerate'])).toBe('manual');
+    expect(syncModeOf(['orders.webhook', 'listing.enumerate'])).toBe('continuous');
+  });
+
   /**
    * The reverse case matters just as much: the core dispatches on capabilities,
    * so an implemented-but-undeclared method is dead code that an author almost

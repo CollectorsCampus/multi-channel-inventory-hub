@@ -45,6 +45,19 @@ export const CAPABILITIES = [
   /** Fetch live listing state for drift detection. */
   'reconcile',
 
+  // --- discovery ------------------------------------------------------------
+  /**
+   * Enumerate the listings that already exist on the channel.
+   *
+   * Distinct from `reconcile`, and the distinction is the whole point.
+   * `fetchLiveState` answers "what does the channel say about *these* ids",
+   * which presupposes we already hold them. Nothing answered "what are you
+   * selling that I have never heard of" — so an operator arriving with a
+   * populated storefront had no path from it to an allocation except typing a
+   * variant id per item, by hand, forever.
+   */
+  'listing.enumerate',
+
   // --- file transport (ADR 0002) --------------------------------------------
   /** Render desired listings to a file for the operator to upload. */
   'listing.export',
@@ -72,6 +85,7 @@ export const CAPABILITY_METHODS = {
   'orders.webhook': 'parseWebhook',
   'orders.poll': 'pollChanges',
   reconcile: 'fetchLiveState',
+  'listing.enumerate': 'enumerateListings',
   'listing.export': 'exportListings',
   'orders.import': 'importOrders',
   'inventory.import': 'importInventory',

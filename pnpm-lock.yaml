@@ -51,6 +51,9 @@ importers:
       '@hub/catalog-scryfall':
         specifier: workspace:^
         version: link:../../packages/catalog-scryfall
+      '@hub/catalog-tcgcsv':
+        specifier: workspace:^
+        version: link:../../packages/catalog-tcgcsv
       '@hub/connector-sdk':
         specifier: workspace:*
         version: link:../../packages/connector-sdk

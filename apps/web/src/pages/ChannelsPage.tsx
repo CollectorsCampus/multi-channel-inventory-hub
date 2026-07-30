@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import {
   describeDriftKind,
   describeSyncMode,
@@ -233,6 +234,16 @@ function ChannelCard({ channel }: { channel: Channel }) {
           <br />
           Point the platform&apos;s order-created webhook here. Deliveries are rejected unless
           signed with the secret above.
+        </p>
+      )}
+
+      {/* An allocation cannot push until it holds the channel's own listing id,
+          and for Shopify that id belongs to a variant the operator already
+          created. This is where those get joined up. */}
+      {channel.capabilities.includes('listing.enumerate') && (
+        <p className="field-hint">
+          <Link to="/match">Match listings →</Link> Link products already on this channel to
+          inventory, one set at a time.
         </p>
       )}
 

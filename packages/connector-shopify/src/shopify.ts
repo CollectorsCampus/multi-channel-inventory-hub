@@ -1,8 +1,11 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type {
+  ChannelListing,
+  ChannelListingPage,
   Connector,
   Ctx,
   DelistRequest,
+  EnumerateListingsRequest,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -121,6 +124,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'listing.delist',
       'orders.webhook',
       'reconcile',
+      'listing.enumerate',
     ],
 
     // Shopify's standard Admin API allowance is 2 requests/second sustained.
@@ -289,6 +293,80 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       }
 
       return states;
+    },
+
+    // -----------------------------------------------------------------------
+    // Discovery
+    // -----------------------------------------------------------------------
+
+    /**
+     * Walk the store's product variants so they can be matched to inventory.
+     *
+     * **Deliberately does not report quantity.** Fetching inventory levels for
+     * every variant on a page would multiply the query cost by the page size and
+     * run into Shopify's calculated-cost limit on any real catalogue — and
+     * matching does not need it. Quantity for a listing we already know about is
+     * what `fetchLiveState` is for; this answers the different question of what
+     * exists at all.
+     *
+     * `sku` and `barcode` are carried because they are the only fields that can
+     * make a match *certain* rather than probable. Most TCG stores populate
+     * neither, so both are optional and the matcher treats them as evidence.
+     */
+    async enumerateListings(ctx: Ctx, req: EnumerateListingsRequest): Promise<ChannelListingPage> {
+      // Shopify caps a connection page at 250. Asking for more is an error
+      // rather than a truncation, so it is clamped here instead.
+      const first = Math.min(Math.max(req.limit ?? 100, 1), 250);
+
+      const data = await client.request<{
+        productVariants?: {
+          pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+          nodes?: Array<EnumeratedVariantNode | null>;
+        };
+      }>(ctx, ENUMERATE_LISTINGS_QUERY, {
+        first,
+        after: req.cursor ?? null,
+        // Shopify's own full-text search over variants. Best-effort: it narrows
+        // the page, and the core does not rely on it having done so.
+        query: req.search?.trim() ? req.search.trim() : null,
+      });
+
+      const connection = data.productVariants;
+      const listings: ChannelListing[] = [];
+
+      for (const node of connection?.nodes ?? []) {
+        // A variant with no id cannot be linked to anything, and a placeholder
+        // would be worse than an omission — it would be confirmable.
+        if (!node?.id) continue;
+
+        const listing: ChannelListing = {
+          externalListingId: node.id,
+          // `displayName` is already "Product - Variant", which is what the
+          // operator is being asked to recognise.
+          title: node.displayName ?? node.product?.title ?? node.title ?? node.id,
+        };
+
+        if (node.sku) listing.sku = node.sku;
+        if (node.barcode) listing.barcode = node.barcode;
+
+        if (node.price) {
+          listing.price = priceToCents(node.price);
+          listing.currency = 'USD';
+        }
+
+        // Shopify's product status, not our allocation status: a draft or
+        // archived product is not on sale, and proposing it as a live listing
+        // would invite the operator to link stock to something no one can buy.
+        if (node.product?.status) listing.active = node.product.status === 'ACTIVE';
+
+        listings.push(listing);
+      }
+
+      const cursor = connection?.pageInfo?.hasNextPage ? connection.pageInfo.endCursor : undefined;
+
+      // Only when there is genuinely another page *and* a cursor to ask with.
+      // Returning a cursor on the last page walks the caller in circles.
+      return cursor ? { listings, nextCursor: cursor } : { listings };
     },
   };
 
@@ -536,6 +614,40 @@ const VARIANT_QUERY = /* GraphQL */ `
               }
             }
           }
+        }
+      }
+    }
+  }
+`;
+
+/** Only what a matcher can use. See `enumerateListings` on why quantity is absent. */
+interface EnumeratedVariantNode {
+  id?: string;
+  title?: string;
+  displayName?: string;
+  sku?: string;
+  barcode?: string;
+  price?: string;
+  product?: { title?: string; status?: string };
+}
+
+const ENUMERATE_LISTINGS_QUERY = /* GraphQL */ `
+  query EnumerateListings($first: Int!, $after: String, $query: String) {
+    productVariants(first: $first, after: $after, query: $query) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        title
+        displayName
+        sku
+        barcode
+        price
+        product {
+          title
+          status
         }
       }
     }

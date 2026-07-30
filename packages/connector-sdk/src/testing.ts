@@ -185,5 +185,62 @@ export function runConnectorContractTests(options: ContractTestOptions): void {
         });
       });
     }
+
+    if (hasCapability(connector.capabilities, 'listing.enumerate')) {
+      describe('listing.enumerate', () => {
+        it('returns a page with a listings array', async () => {
+          const page = await connector.enumerateListings!(makeCtx(), {});
+          expect(Array.isArray(page.listings)).toBe(true);
+        });
+
+        /**
+         * A confirmed match writes `externalListingId` straight onto an
+         * allocation, and every later push reads it back. A blank one produces a
+         * link that points at nothing and fails on the first sale rather than at
+         * confirmation, when someone was watching.
+         */
+        it('gives every listing a non-empty id and title', async () => {
+          const page = await connector.enumerateListings!(makeCtx(), {});
+
+          for (const listing of page.listings) {
+            expect(listing.externalListingId).toBeTruthy();
+            expect(typeof listing.externalListingId).toBe('string');
+            // The operator has to recognise the thing they are confirming.
+            expect(listing.title).toBeTruthy();
+          }
+        });
+
+        it('never repeats an id within a page', async () => {
+          const page = await connector.enumerateListings!(makeCtx(), {});
+          const ids = page.listings.map((l) => l.externalListingId);
+
+          // Two rows for one listing would offer the operator the same match
+          // twice and, confirmed twice, race for one allocation.
+          expect(new Set(ids).size).toBe(ids.length);
+        });
+
+        it('reports prices in integer cents, never a float', async () => {
+          const page = await connector.enumerateListings!(makeCtx(), {});
+
+          for (const listing of page.listings) {
+            if (listing.price === undefined) continue;
+            expect(Number.isInteger(listing.price)).toBe(true);
+            expect(listing.price).toBeGreaterThanOrEqual(0);
+          }
+        });
+
+        /**
+         * The cursor is opaque to the core, which stores and returns it
+         * unchanged. A connector that returns one on its final page sends the
+         * core round again forever.
+         */
+        it('omits the cursor rather than returning an empty one', async () => {
+          const page = await connector.enumerateListings!(makeCtx(), {});
+          if (page.nextCursor !== undefined) {
+            expect(page.nextCursor).not.toBe('');
+          }
+        });
+      });
+    }
   });
 }

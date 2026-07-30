@@ -147,6 +147,82 @@ export interface LiveListingState {
 }
 
 // ---------------------------------------------------------------------------
+// Discovery
+// ---------------------------------------------------------------------------
+
+/**
+ * A listing that already exists on the channel, for matching against inventory.
+ *
+ * Everything but the id is optional and *must* be treated as such. These fields
+ * are evidence offered to a matcher, not a schema: platforms differ in which of
+ * them they populate, and a seller can leave any of them blank. A matcher that
+ * assumes `sku` is present will simply stop proposing anything on a store that
+ * does not use it.
+ */
+export interface ChannelListing {
+  /**
+   * The channel's own id for this listing.
+   *
+   * **Must be byte-identical to what the connector's other methods use as
+   * `externalListingId`.** A confirmed match writes this straight onto an
+   * allocation, so an id in a different shape here than `pushListing` and
+   * `updateQuantity` expect produces a link that points at nothing and fails on
+   * the first sale rather than at confirmation time.
+   */
+  externalListingId: string;
+
+  /** What a human would recognise it by. Usually product plus variant. */
+  title: string;
+
+  /** The seller's own code, where the platform has such a field. */
+  sku?: string;
+  /** UPC/EAN/GTIN. Present on some sealed product and almost no singles. */
+  barcode?: string;
+
+  /** Cents, never a float. Omitted when the platform does not report it. */
+  price?: number;
+  currency?: string;
+  /** The channel's advertised quantity, where it reports one. */
+  quantity?: number;
+  active?: boolean;
+}
+
+/** One page of {@link ChannelListing}s. */
+export interface ChannelListingPage {
+  listings: ChannelListing[];
+  /**
+   * Opaque cursor for the next page, absent on the last.
+   *
+   * Opaque on purpose: the core stores and returns it without interpretation,
+   * so a platform can change from a page number to a keyset cursor without the
+   * core caring.
+   */
+  nextCursor?: string;
+}
+
+export interface EnumerateListingsRequest {
+  /** Absent on the first page; otherwise a cursor a previous page returned. */
+  cursor?: string;
+  /** A hint, not a contract — a platform may return fewer or cap it lower. */
+  limit?: number;
+
+  /**
+   * Free text to narrow the page to, where the platform can.
+   *
+   * **Best-effort by design.** A connector whose platform has no search passes it
+   * over and returns everything; the core must therefore treat the result as
+   * unfiltered and never assume a returned listing matches. Filtering here is an
+   * efficiency, not a correctness boundary.
+   *
+   * It earns its place because matching is scoped to one set while a page of a
+   * real storefront is not: enumerating 100 variants of a Pokémon shop to match
+   * one set produced 2 matches and 98 rows of noise, and the noise is what stops
+   * a review screen being read.
+   */
+  search?: string;
+}
+
+// ---------------------------------------------------------------------------
 // File transport (ADR 0002)
 // ---------------------------------------------------------------------------
 

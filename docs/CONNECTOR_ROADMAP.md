@@ -49,23 +49,83 @@ Before writing code, a candidate should have all of these settled:
 
 ## Candidates
 
-### eBay — _highest expected value; research first_
+### eBay — _highest expected value; access model researched_
 
-**Confidence: high that a suitable API exists.**
+**Confidence: high that a suitable API exists, and high that it is open to us.**
 
 - Sell APIs cover the shape we need: an Inventory API for offers and quantities, a
   Fulfillment API for orders, and an Account API. OAuth 2.0.
 - Believed to support **bulk price and quantity update**, which maps directly onto our push
   model, and an event/notification mechanism for order events — so a continuous-sync
   connector with real webhooks looks plausible.
-- Expect a developer account, and a **production keyset that needs an application review**.
-  That review is the gate to confirm first.
 - **Note the ownership:** eBay acquired TCGplayer in 2022, so the two are the same corporate
   parent. Worth knowing when reasoning about why TCGplayer's programme closed, and whether
   eBay's own access is likely to follow.
 - **Modelling risk:** eBay listings are listing-centric with variations, which may not map
   cleanly onto our SKU-per-condition model. Settle question 6 above early — this is the part
   most likely to be awkward.
+
+#### The access gate, researched 2026-07-29 — _not_ what this document assumed
+
+This section previously said to expect "a production keyset that needs an application review"
+and called that review "the gate to confirm first". From eBay's published documentation, that
+is **the wrong gate**, and it is pointing at the wrong API family.
+
+**The approval machinery applies to the Buy APIs, not the Sell APIs.** The alarming language —
+eBay Partner Network membership, "no guarantee that your application for production use will
+be approved", a mandatory Application Growth Check before production — is written about the
+**Buy** APIs, which are for partners building shopping experiences. This connector needs
+**Sell**: Inventory, Fulfillment, Account. Those are documented as a self-serve production
+keyset. So on present evidence eBay is **nothing like ADR 0002** — the door is open, and the
+reason to be careful is different.
+
+**The actual gate is the Marketplace Account Deletion/Closure notification**, and it is a
+configuration step rather than a review. Every third-party developer must either subscribe to
+it or formally opt out **before their first production API call**; the keyset stays inactive
+until one of the two is done. Subscribing means standing up an endpoint that:
+
+- is reachable over **public HTTPS** — the documentation explicitly forbids `localhost` and
+  internal IP addresses;
+- answers a `GET ?challenge_code=…` with a hash of the challenge code, a verification token
+  and the endpoint URL, before eBay will accept it.
+
+**That is a genuine problem for self-hosted software, and it is the thing to settle.** It is
+the Shopify webhook shape again, but worse: there, a tunnel was a convenience for testing an
+optional feature, and here a publicly routable HTTPS endpoint is a precondition for the
+credential working at all. Requiring every operator to expose one before they can sync a
+single listing is a serious onboarding cost for a product whose whole premise is that you run
+it yourself.
+
+**The opt-out is the escape hatch, and we have an unusually good claim to it.** eBay grants an
+exemption to developers who do not persist eBay user data — the portal has a "Not persisting
+eBay data" toggle and an exemption reason. This hub already refuses to ingest customer
+identity on principle: ADR 0002's TCGPlayer work bans `ShippingExport` and `PackingSlips`
+outright because they carry names and postal addresses. An eBay connector built to the same
+rule would take an order id, its line items and their quantities — everything allocation
+needs — and no buyer PII, because **the hub does not fulfil orders, it only decrements
+stock.**
+
+So the question to settle before writing code is a design decision, not a research task:
+**can the connector be specified to persist no eBay user data at all, and is that enough for
+eBay to grant the exemption?** If yes, the public-endpoint requirement disappears and eBay
+becomes the easiest connector yet. If no, the connector needs a story for exposing an endpoint
+that most self-hosters will not have, and that story should exist before any code does.
+
+Two caveats on the above, stated plainly because they are not verified:
+
+- **Exemption eligibility is eBay's call, not ours.** Community threads show developers being
+  asked to justify it and not always succeeding. The argument above is a good one; it is not a
+  guarantee, and nobody has filed it.
+- **Nothing here has been tested against a real account.** This is documentation research
+  only. The first real step is a developer account and a **Sandbox** keyset, which needs none
+  of the above — build and prove the whole connector in Sandbox, then deal with the
+  notification question at the point of going live. That ordering also matches eBay's own
+  expectation that a selling application demonstrate its end-to-end flow in Sandbox.
+
+**One capacity note for later:** the default keyset is documented around **5,000 calls/day**,
+with more available only after the Application Growth Check. For a continuous-sync product
+that is a real ceiling worth sizing against expected listing counts, and it is the one place
+the Growth Check does become our problem.
 
 ### Cardmarket (MKM) — _biggest European reach_
 
@@ -134,7 +194,10 @@ not fit `fixed`/`pooled` allocation and would need its own thinking before any c
 1. **eBay** — largest reach, most likely to have a genuinely usable API, and the strongest
    test of whether the connector SDK generalises past Shopify. Everything so far has been
    built against one continuous-sync platform, so the second one is where the seam either
-   holds or does not.
+   holds or does not. **The access research is done** (2026-07-29): the Sell APIs are
+   self-serve, so the feared approval gate does not apply, and the real blocker is the account
+   deletion notification's public-HTTPS endpoint — which the persistence exemption may remove
+   entirely. Start in **Sandbox**, which needs none of it.
 2. **Cardmarket or CardTrader** — European reach. Do the access research for both before
    picking, since the answer to "is it open to us" should decide it rather than feature
    lists.

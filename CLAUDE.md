@@ -1111,7 +1111,7 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Open decisions, not open bugs
 
-Five things are deliberately unfinished. Each is a choice someone should make rather than
+Six things are deliberately unfinished. Each is a choice someone should make rather than
 a defect to fix, and none blocks anything else.
 
 1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
@@ -1183,7 +1183,43 @@ a defect to fix, and none blocks anything else.
    extensions, and cannot make an Admin API call. The 24-hour client-credentials token
    machinery in `connector-shopify/src/tokens.ts` stays exactly as it is.
 
-5. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
+5. **Creating Shopify products for cards the store does not carry yet.** Requested by the
+   operator 2026-07-30. Their Shopify holds sealed product and a few promos; the ledger will
+   hold singles, and there is currently no way to get one onto the storefront except
+   creating the product by hand first.
+
+   `connector-shopify`'s `pushListing` **refuses to create**, deliberately, and its comment
+   gives the reason: a Shopify product carries titles, images, SEO and publication state the
+   hub has no opinion about, and "inventing them would produce listings no seller wants".
+   That reasoning still holds — so this is not "delete the guard", it is "decide what the
+   hub is entitled to invent".
+
+   **The operator's own constraint is the important one: it must not be automatic.** Their
+   words — it "probably shouldn't be automatic to create everything that's in say your
+   tcgplayer export". A 1,333-row import must never become 1,333 new storefront products.
+   So creation is an explicit, selected action over specific SKUs, never a mirror of intake
+   and never a side effect of a push.
+
+   Decisions to settle before building:
+
+   - **What fills the product.** tcgcsv supplies name, set, image URL and a market price,
+     which is enough for a usable draft. It supplies nothing for SEO, description or
+     collections.
+   - **Product-per-card, variant-per-condition** is the shape that matches `Sku`
+     (`condition` + `printing` + `language`) and the way the store already models sealed
+     items as a single "Default Title" variant. Worth confirming against how the operator
+     wants singles browsed.
+   - **Create as draft, never active.** Nothing should become buyable because a background
+     job ran. Publication is the seller's decision.
+   - **Idempotency is now cheap** and was not before: the seller-SKU field carries the
+     tcgcsv product id (below), so "does this card already exist in the store" is a lookup
+     rather than a guess. Build creation on that, or it will make duplicates.
+   - **Cards absent from the catalogue.** The operator notes "some won't be listed on
+     TCGPlayer". Creation must therefore work from a `Sku` with no `CatalogExternalRef` at
+     all, using whatever the ledger holds — otherwise the feature covers everything except
+     the cases that most need it.
+
+6. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
    as a generic `sync_failure` warning, so an operator cannot tell "your secret is wrong,
    go fix it" — which fails forever and is deliberately not retried — from "the platform
    hiccuped", which will clear on its own. Separating them properly means the SDK giving

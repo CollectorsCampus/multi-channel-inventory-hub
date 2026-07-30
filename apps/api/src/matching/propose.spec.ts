@@ -218,6 +218,58 @@ describe('proposeMatch', () => {
     }
   });
 
+  /**
+   * The live case this tie-break was written for.
+   *
+   * tcgcsv carries a card called "Winterspell" in the Winterspell set, so it is
+   * *contained by* every sealed listing in that set. Both candidates were
+   * `possible · name-partial`, so nothing in the reason vocabulary separated
+   * them, and all four sealed products in the set came back ambiguous on a live
+   * run — asking the operator to arbitrate between the right answer and a card.
+   */
+  it('prefers the candidate whose name explains more of the listing', () => {
+    const result = proposeMatch(
+      listing({ title: 'Disney Lorcana: Winterspell Booster Pack - Default Title' }),
+      [
+        target({ id: 'card', name: 'Winterspell' }),
+        target({ id: 'sealed', name: 'Disney Lorcana: Winterspell Booster Pack' }),
+      ],
+    );
+
+    expect(result.status).toBe('matched');
+    if (result.status === 'matched') expect(result.candidate.target.id).toBe('sealed');
+  });
+
+  /**
+   * The guard on the above: length is only allowed to break a tie, never to
+   * invent one. Two reprints with identical names are still the operator's call.
+   */
+  it('still reports a tie when the names are equally close', () => {
+    const result = proposeMatch(listing(), [
+      target({ id: 'a', setName: 'Surging Sparks' }),
+      target({ id: 'b', setName: 'Prismatic Evolutions' }),
+    ]);
+
+    expect(result.status).toBe('ambiguous');
+  });
+
+  /**
+   * Overlap must not leak into evidence that is not a resemblance. A short id
+   * that matches exactly is not weaker than a long one.
+   */
+  it('does not let name length outrank an exact id match', () => {
+    const result = proposeMatch(listing({ sku: '42', title: 'A Very Long Listing Title Indeed' }), [
+      target({ id: 'exact', name: 'X', externalIds: { tcgcsv: '42' } }),
+      target({ id: 'namey', name: 'A Very Long Listing Title Indee' }),
+    ]);
+
+    expect(result.status).toBe('matched');
+    if (result.status === 'matched') {
+      expect(result.candidate.target.id).toBe('exact');
+      expect(result.candidate.confidence).toBe('certain');
+    }
+  });
+
   it('is not ambiguous when one candidate is genuinely stronger', () => {
     const result = proposeMatch(listing({ barcode: '111' }), [
       target({ id: 'weak', setName: 'Surging Sparks' }),

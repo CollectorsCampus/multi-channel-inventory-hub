@@ -96,6 +96,25 @@ export interface MatchCandidate {
   confidence: MatchConfidence;
   /** Human-readable justification, for the review screen. */
   detail: string;
+  /**
+   * How much of the two names the match actually accounts for, 0–1.
+   *
+   * `min(len) / max(len)` over the normalised names, and **1 for any reason that
+   * is not a name resemblance** — an id or a barcode either matches or does not,
+   * so there is nothing partial about it.
+   *
+   * This exists because containment is not a measure of similarity. A catalogue
+   * product called "Winterspell" is *contained by* every listing in the
+   * Winterspell set, so on a live run it tied with the correct product for all
+   * four sealed items in that set and made every one of them `ambiguous`. Both
+   * candidates were `possible · name-partial`, so nothing in the reason
+   * vocabulary could separate them — but they were never equally good evidence:
+   * one name accounted for 76% of the listing's, the other for 22%.
+   *
+   * Any set containing a card named after the set reproduces this, which is not
+   * rare.
+   */
+  overlap: number;
 }
 
 /**
@@ -245,10 +264,32 @@ export function scoreCandidates(
       reason: reason.reason,
       confidence: REASON_CONFIDENCE[reason.reason],
       detail: reason.detail,
+      overlap: reason.overlap,
     });
   }
 
-  return candidates.sort((a, b) => CONFIDENCE_RANK[a.confidence] - CONFIDENCE_RANK[b.confidence]);
+  // Confidence first, then how much of the name the match explains. The second
+  // key only ever separates candidates the first could not.
+  return candidates.sort(
+    (a, b) =>
+      CONFIDENCE_RANK[a.confidence] - CONFIDENCE_RANK[b.confidence] || b.overlap - a.overlap,
+  );
+}
+
+/**
+ * How much two normalised names have in common, by length alone.
+ *
+ * Deliberately crude. It is not a similarity metric and must not grow into one:
+ * it exists only to separate candidates that are already known to match by
+ * containment, where the shorter name is by definition the weaker evidence.
+ * Anything cleverer — edit distance, token overlap — would start *creating*
+ * matches rather than ordering them, which is the engine's job to refuse.
+ */
+function overlapOf(a: string, b: string): number {
+  const longer = Math.max(a.length, b.length);
+  if (longer === 0) return 0;
+
+  return Math.min(a.length, b.length) / longer;
 }
 
 function bestReasonFor(
@@ -259,10 +300,14 @@ function bestReasonFor(
     normalizedName: string;
     squashedName: string;
   },
-): { reason: MatchReason; detail: string } | undefined {
+): { reason: MatchReason; detail: string; overlap: number } | undefined {
   // 1. Barcode. The only field here that identifies a physical product outright.
   if (ctx.listingBarcode && target.barcode && ctx.listingBarcode === target.barcode.trim()) {
-    return { reason: 'barcode', detail: `barcode ${ctx.listingBarcode} matches exactly` };
+    return {
+      reason: 'barcode',
+      detail: `barcode ${ctx.listingBarcode} matches exactly`,
+      overlap: 1,
+    };
   }
 
   // 2. The seller's SKU field holding a platform id. Common where a store was
@@ -272,7 +317,7 @@ function bestReasonFor(
       if (!value) continue;
 
       if (ctx.listingSku === value) {
-        return { reason: 'external-id', detail: `SKU is the ${namespace} id ${value}` };
+        return { reason: 'external-id', detail: `SKU is the ${namespace} id ${value}`, overlap: 1 };
       }
 
       // Embedded rather than equal: "PKM-697344-NM" carries the id but is not it.
@@ -281,6 +326,7 @@ function bestReasonFor(
         return {
           reason: 'external-id-embedded',
           detail: `SKU "${ctx.listingSku}" contains the ${namespace} id ${value}`,
+          overlap: 1,
         };
       }
     }
@@ -298,9 +344,10 @@ function bestReasonFor(
       return {
         reason: 'name-and-set',
         detail: `name matches "${target.name}" in ${target.setName}`,
+        overlap: 1,
       };
     }
-    return { reason: 'name', detail: `name matches "${target.name}"` };
+    return { reason: 'name', detail: `name matches "${target.name}"`, overlap: 1 };
   }
 
   // 4. Containment, either direction. Weakest thing worth showing a human.
@@ -308,7 +355,11 @@ function bestReasonFor(
     ctx.normalizedName.length >= 4 &&
     (targetNormalized.includes(ctx.normalizedName) || ctx.normalizedName.includes(targetNormalized))
   ) {
-    return { reason: 'name-partial', detail: `name resembles "${target.name}"` };
+    return {
+      reason: 'name-partial',
+      detail: `name resembles "${target.name}"`,
+      overlap: overlapOf(ctx.normalizedName, targetNormalized),
+    };
   }
 
   return undefined;
@@ -333,7 +384,17 @@ export function proposeMatch(
   const best = candidates[0];
   if (!best) return { ...base, status: 'unmatched' };
 
-  const tied = candidates.filter((c) => c.confidence === best.confidence);
+  // Equal confidence *and* equal overlap. Adding the second test is not a
+  // loosening of the "never resolve a tie" rule — it is a correction to what
+  // counted as a tie. Two candidates whose names explain 76% and 22% of the
+  // listing were never equally good evidence; reporting them as tied asked the
+  // operator to arbitrate something the data already answers.
+  //
+  // Names of the same length still tie exactly, so the case the rule exists for
+  // — two reprints with different ids and identical names — is untouched.
+  const tied = candidates.filter(
+    (c) => c.confidence === best.confidence && Math.abs(c.overlap - best.overlap) < 1e-9,
+  );
 
   // More than one thing fits equally well. Which one is a question for the
   // person who owns the stock.

@@ -182,6 +182,28 @@ describeDb('MatchingService', () => {
       expect(result.proposals[0]?.listing.externalListingId).toBe(PIKACHU_GID);
     });
 
+    /**
+     * The request's `sourceKey` reaches an object key, which CodeQL flagged as
+     * remote property injection. The registry's own key is used instead — it is
+     * canonical, constrained to `[a-z0-9-]` by `validateCatalogSource`, and not
+     * user-controlled.
+     */
+    it('keys candidates on the registry key, not the string the caller sent', async () => {
+      const result = await matching.propose({
+        channelInstanceId: channelId,
+        sourceKey: 'TCGCSV',
+        setName: '30th Celebration',
+      });
+
+      const matched = result.proposals.find((p) => p.status === 'matched');
+      const ids = matched?.status === 'matched' ? matched.candidate.target.externalIds : {};
+
+      expect(Object.keys(ids ?? {})).toContain('tcgcsv');
+      // Not the caller's spelling, and nothing prototype-shaped either.
+      expect(Object.keys(ids ?? {})).not.toContain('TCGCSV');
+      expect(Object.keys(ids ?? {}).every((k) => /^[a-z0-9][a-z0-9-]*$/.test(k))).toBe(true);
+    });
+
     it('refuses a channel that cannot enumerate', async () => {
       const manual = {
         resolve: vi.fn(async () => ({

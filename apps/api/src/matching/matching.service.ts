@@ -140,7 +140,12 @@ export class MatchingService {
       },
     );
 
-    const targets = candidates.map((candidate) => toTarget(candidate, request.sourceKey));
+    // `source.key`, not `request.sourceKey`. The registry's own key is canonical
+    // and, unlike the request string, is not a user-controlled value being used
+    // as a property name — CodeQL flagged that as remote property injection and
+    // was right to. `validateCatalogSource` constrains the real key to
+    // `[a-z0-9-]`, so this is also the only spelling that can match anything.
+    const targets = candidates.map((candidate) => toTarget(candidate, source.key));
     const alreadyLinked = await this.linkedIds(request.channelInstanceId);
 
     const { proposals, summary, skipped } = proposeMatches(page.listings, targets, alreadyLinked);

@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -16,6 +17,13 @@ export class ProposeMatchesDto {
   @ApiProperty({ example: 'tcgcsv', description: 'Catalog source to draw candidates from.' })
   @IsString()
   @MaxLength(50)
+  // Same shape `validateCatalogSource` enforces on a real source key. Constrained
+  // here too because the value reaches an object key, and `__proto__` arriving
+  // from a request body should be rejected at the edge rather than reasoned about
+  // further in.
+  @Matches(/^[a-z0-9][a-z0-9-]*$/, {
+    message: 'sourceKey must be lowercase alphanumeric with dashes.',
+  })
   sourceKey!: string;
 
   @ApiProperty({
@@ -65,6 +73,9 @@ export class ConfirmLinkDto {
   @ApiProperty({ example: 'tcgcsv' })
   @IsString()
   @MaxLength(50)
+  @Matches(/^[a-z0-9][a-z0-9-]*$/, {
+    message: 'sourceKey must be lowercase alphanumeric with dashes.',
+  })
   sourceKey!: string;
 
   @ApiProperty({ description: "The source's own product id." })

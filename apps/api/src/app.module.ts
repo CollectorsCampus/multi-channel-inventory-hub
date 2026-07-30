@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ConnectorsModule } from './connectors/connectors.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { CatalogIngestModule } from './catalog/catalog-ingest.module';
 import { QueueModule } from './queue/queue.module';
 import { SyncModule } from './sync/sync.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -31,6 +32,7 @@ import { HealthController } from './health/health.controller';
     InventoryModule,
     ConnectorsModule,
     CatalogModule,
+    CatalogIngestModule,
     SyncModule,
     WebhooksModule,
     ChannelsModule,

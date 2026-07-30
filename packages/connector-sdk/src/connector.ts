@@ -6,8 +6,10 @@ import {
   type SyncMode,
 } from './capabilities';
 import type {
+  ChannelListingPage,
   Ctx,
   DelistRequest,
+  EnumerateListingsRequest,
   ExportListingsRequest,
   ExportedFile,
   ImportResult,
@@ -106,6 +108,21 @@ export interface Connector {
 
   // --- reconciliation ------------------------------------------------------
   fetchLiveState?(ctx: Ctx, externalListingIds: string[]): Promise<LiveListingState[]>;
+
+  // --- discovery -----------------------------------------------------------
+  /**
+   * Walk the listings that already exist on the channel, a page at a time.
+   *
+   * Paginated rather than returning everything, because a real storefront has
+   * thousands of variants and the core wants to show the operator the first page
+   * while the rest arrives — and because every platform worth enumerating pages
+   * its own catalogue anyway.
+   *
+   * Connectors report what the platform says and nothing more. Deciding which
+   * listing corresponds to which SKU is the core's job (rule 6), and a connector
+   * that tried to guess would be guessing without the catalogue in front of it.
+   */
+  enumerateListings?(ctx: Ctx, req: EnumerateListingsRequest): Promise<ChannelListingPage>;
 
   // --- file transport (ADR 0002) -------------------------------------------
   exportListings?(ctx: Ctx, req: ExportListingsRequest): Promise<ExportedFile>;

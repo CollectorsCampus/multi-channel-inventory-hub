@@ -785,6 +785,25 @@ describe('creating a listing', () => {
     expect(find?.variables?.query).toBe(`sku:"${CODE}"`);
   });
 
+  /**
+   * Escaping quotes but not backslashes leaves the escape character itself
+   * unescaped, so a value ending in `\` escapes the closing quote and the rest
+   * of the query joins the string — the search then means something nobody
+   * asked for. CodeQL caught this as `js/incomplete-sanitization` on the first
+   * version of this connector method.
+   */
+  it('escapes backslashes as well as quotes in the search value', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req({ sku: 'weird\\"sku\\' }));
+
+    const find = calls.find((c) => c.query.includes('FindVariantBySku'));
+    // The backslashes are doubled, so the trailing one cannot eat the closing
+    // quote, and the embedded quote stays escaped.
+    expect(find?.variables?.query).toBe('sku:"weird\\\\\\"sku\\\\"');
+  });
+
   it('adds a variant to the sibling’s product rather than making a second one', async () => {
     const { client, calls } = mockClient();
     const connector = createShopifyConnector({ client });

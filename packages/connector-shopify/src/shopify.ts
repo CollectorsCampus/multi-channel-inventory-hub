@@ -614,7 +614,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
   async function findVariantBySku(ctx: Ctx, sku: string): Promise<string | undefined> {
     const data = await client.request<{
       productVariants: { nodes: Array<{ id?: string; sku?: string | null }> };
-    }>(ctx, FIND_VARIANT_BY_SKU_QUERY, { query: `sku:"${sku.replace(/"/g, '\\"')}"` });
+    }>(ctx, FIND_VARIANT_BY_SKU_QUERY, { query: `sku:"${escapeSearchValue(sku)}"` });
 
     // Shopify's search is not an exact-match engine, so the equality is
     // re-checked here rather than trusted. A near-match returned as an exact
@@ -734,6 +734,24 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     }
     return id;
   }
+}
+
+/**
+ * Quote a value for Shopify's search syntax.
+ *
+ * **Backslashes first, then quotes, and the order is the whole point.** Doing
+ * quotes alone leaves the escape character itself unescaped, so a value ending
+ * in `\` escapes the closing quote this function just added and the rest of the
+ * query becomes part of the string — the search then means something the caller
+ * never asked for. CodeQL flagged exactly that (`js/incomplete-sanitization`)
+ * on the first version of this, and was right to.
+ *
+ * Reachable even though a hub SKU code cannot contain either character:
+ * `createListing` takes `sku` as an opaque string from the core, and a
+ * connector must not assume its caller validated anything.
+ */
+function escapeSearchValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 function requireListing(externalListingId: string | null): void {

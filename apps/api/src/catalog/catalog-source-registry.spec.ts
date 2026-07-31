@@ -84,6 +84,20 @@ describe('CatalogSourceRegistry', () => {
     });
   });
 
+  /**
+   * The ingest UI defaults to an ingestable source, so the summary must say
+   * which ones are — a source with half the pair is rejected at registration,
+   * so this is a plain both-or-neither fact.
+   */
+  it('reports which sources can fill the local catalog', () => {
+    registry.register(source({ key: 'bulk', listSets: async () => [], fetchSet: async () => [] }));
+    registry.register(source({ key: 'searchonly' }));
+
+    const byKey = new Map(registry.list().map((s) => [s.key, s.canIngest]));
+    expect(byKey.get('bulk')).toBe(true);
+    expect(byKey.get('searchonly')).toBe(false);
+  });
+
   it('finds sources that can supply a given id namespace', () => {
     registry.register(source({ key: 'scryfall', providesExternalIds: ['tcgplayer'] }));
     registry.register(source({ key: 'other' }));

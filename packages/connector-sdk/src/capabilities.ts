@@ -95,6 +95,23 @@ export const CAPABILITIES = [
    */
   'listing.enumerate',
 
+  /**
+   * Read back the tag vocabulary the channel already uses.
+   *
+   * Only worth declaring on a platform where a tag *does* something. On the
+   * store this was built for, all 23 collections are smart collections keyed on
+   * a single tag equality rule, so a tag is the only thing that puts a product
+   * in front of a customer — and a product created with a tag nobody uses
+   * exists in the admin and appears nowhere in the shop, which is a failure
+   * that reports nothing.
+   *
+   * The hub therefore never derives a tag: catalogue names are not the store's
+   * tags (`Pokemon` against `Pokémon`, `Magic` against `Magic: The Gathering`).
+   * This exists so an operator can pick from what the store actually says
+   * rather than retype it from memory.
+   */
+  'listing.tags',
+
   // --- file transport (ADR 0002) --------------------------------------------
   /** Render desired listings to a file for the operator to upload. */
   'listing.export',
@@ -124,6 +141,7 @@ export const CAPABILITY_METHODS = {
   'orders.poll': 'pollChanges',
   reconcile: 'fetchLiveState',
   'listing.enumerate': 'enumerateListings',
+  'listing.tags': 'listTags',
   'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',
   'orders.import': 'importOrders',

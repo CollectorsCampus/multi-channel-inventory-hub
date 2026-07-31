@@ -16,6 +16,7 @@ import type {
   ExportedFile,
   ImportResult,
   ImportedFile,
+  ListTagsRequest,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -143,6 +144,20 @@ export interface Connector {
    * that tried to guess would be guessing without the catalogue in front of it.
    */
   enumerateListings?(ctx: Ctx, req: EnumerateListingsRequest): Promise<ChannelListingPage>;
+
+  /**
+   * The tags this channel's own listings already carry.
+   *
+   * Not paginated, unlike `enumerateListings`: a store has a few hundred tags
+   * against tens of thousands of variants, and the whole vocabulary is the
+   * point — half of it offered to someone choosing from a list is worse than
+   * none, because the tag they need may be the half that was cut.
+   *
+   * Returned as the platform spells them. Nothing here normalises case or
+   * accents: `Pokémon` is a different tag from `Pokemon`, and only one of them
+   * is wired to a collection.
+   */
+  listTags?(ctx: Ctx, req: ListTagsRequest): Promise<string[]>;
 
   // --- file transport (ADR 0002) -------------------------------------------
   exportListings?(ctx: Ctx, req: ExportListingsRequest): Promise<ExportedFile>;

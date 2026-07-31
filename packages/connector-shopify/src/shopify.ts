@@ -8,6 +8,7 @@ import type {
   Ctx,
   DelistRequest,
   EnumerateListingsRequest,
+  ListTagsRequest,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -129,6 +130,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'orders.webhook',
       'reconcile',
       'listing.enumerate',
+      'listing.tags',
       'listing.sku',
     ],
 
@@ -467,6 +469,46 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       // Only when there is genuinely another page *and* a cursor to ask with.
       // Returning a cursor on the last page walks the caller in circles.
       return cursor ? { listings, nextCursor: cursor } : { listings };
+    },
+
+    /**
+     * Every tag the store's products already carry.
+     *
+     * Paginated internally rather than by the caller, because a partial
+     * vocabulary is a trap: the operator picks from what they are shown, and a
+     * tag missing from the list looks exactly like a tag the store does not
+     * use. `productTags` is a plain string connection, so a few hundred tags
+     * cost a handful of cheap requests.
+     *
+     * Returned as Shopify spells them. `Pokémon` and `Pokemon` are two
+     * different tags here and only one of them is wired to a collection, so
+     * normalising would quietly offer the wrong one.
+     */
+    async listTags(ctx: Ctx, req: ListTagsRequest): Promise<string[]> {
+      const ceiling = Math.max(req.limit ?? 500, 1);
+      const tags: string[] = [];
+      let cursor: string | null = null;
+
+      while (tags.length < ceiling) {
+        const first = Math.min(ceiling - tags.length, 250);
+
+        const data: {
+          productTags?: {
+            pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+            edges?: Array<{ node?: string | null } | null>;
+          };
+        } = await client.request(ctx, PRODUCT_TAGS_QUERY, { first, after: cursor });
+
+        for (const edge of data.productTags?.edges ?? []) {
+          if (edge?.node) tags.push(edge.node);
+        }
+
+        const pageInfo = data.productTags?.pageInfo;
+        if (!pageInfo?.hasNextPage || !pageInfo.endCursor) break;
+        cursor = pageInfo.endCursor;
+      }
+
+      return tags;
     },
   };
 
@@ -888,6 +930,25 @@ const ENUMERATE_LISTINGS_QUERY = /* GraphQL */ `
           title
           status
         }
+      }
+    }
+  }
+`;
+
+/**
+ * `productTags` is an edge/node string connection, not a `nodes` list — one of
+ * the few connections in this schema that is, so the shape here deliberately
+ * does not mirror the queries above it.
+ */
+const PRODUCT_TAGS_QUERY = /* GraphQL */ `
+  query HubProductTags($first: Int!, $after: String) {
+    productTags(first: $first, after: $after) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        node
       }
     }
   }

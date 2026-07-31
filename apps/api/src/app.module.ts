@@ -12,6 +12,7 @@ import { SyncModule } from './sync/sync.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { ChannelsModule } from './channels/channels.module';
 import { MatchingModule } from './matching/matching.module';
+import { ListingsModule } from './listings/listings.module';
 import { QueryConsoleModule } from './query-console/query-console.module';
 import { HealthController } from './health/health.controller';
 
@@ -37,6 +38,7 @@ import { HealthController } from './health/health.controller';
     WebhooksModule,
     ChannelsModule,
     MatchingModule,
+    ListingsModule,
     // Registered unconditionally; the service reports itself unavailable when
     // ENABLE_QUERY_CONSOLE is off. Conditional module registration would make
     // the route table depend on env, which is far harder to reason about than

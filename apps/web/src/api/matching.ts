@@ -14,7 +14,14 @@ import { apiFetch } from './client';
 export type MatchConfidence = 'certain' | 'probable' | 'possible';
 
 export type MatchReason =
-  'barcode' | 'external-id' | 'external-id-embedded' | 'name-and-set' | 'name' | 'name-partial';
+  | 'barcode'
+  /** The listing's SKU is a code this hub wrote, naming this exact printing. */
+  | 'hub-sku'
+  | 'external-id'
+  | 'external-id-embedded'
+  | 'name-and-set'
+  | 'name'
+  | 'name-partial';
 
 export interface ChannelListing {
   externalListingId: string;
@@ -137,6 +144,8 @@ export function describeReason(reason: MatchReason): string {
   switch (reason) {
     case 'barcode':
       return 'barcode';
+    case 'hub-sku':
+      return 'our SKU code';
     case 'external-id':
       return 'id match';
     case 'external-id-embedded':

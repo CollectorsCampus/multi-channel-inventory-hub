@@ -50,6 +50,7 @@ let enumerateListings: ReturnType<typeof vi.fn>;
 let search: ReturnType<typeof vi.fn>;
 let canRefetch: ReturnType<typeof vi.fn>;
 let updateListingSku: ReturnType<typeof vi.fn>;
+let searchLocal: ReturnType<typeof vi.fn>;
 
 describeDb('MatchingService', () => {
   beforeAll(async () => {
@@ -116,6 +117,10 @@ describeDb('MatchingService', () => {
     } as unknown as CatalogSourceRegistry;
 
     canRefetch = vi.fn(() => true);
+    // Empty by default: nothing ingested, so every existing test still exercises
+    // the live-source path it was written against.
+    searchLocal = vi.fn(async () => [] as Array<CatalogCandidate & { sourceKey: string }>);
+
     const catalog = {
       fetchCandidate: vi.fn(async (_key: string, sourceId: string) => {
         if (sourceId === ETB.sourceId) return ETB;
@@ -123,6 +128,7 @@ describeDb('MatchingService', () => {
         return null;
       }),
       canRefetch,
+      searchLocal,
     } as unknown as CatalogService;
 
     const inventory = new InventoryService(prisma as unknown as PrismaService);
@@ -163,6 +169,34 @@ describeDb('MatchingService', () => {
       expect(result.candidateCount).toBe(2);
       expect(result.summary.matched).toBe(2);
       expect(result.proposals.every((p) => p.status === 'matched')).toBe(true);
+    });
+
+    /**
+     * A proposal run needs the *whole* set as candidates, which is the request
+     * tcgcsv is least willing to serve — it caps set files per search and
+     * refuses anything un-narrowed. An ingested set answers instantly, offline,
+     * and without spending a rate-limited request on data already stored.
+     */
+    it('draws candidates from the local catalog when the set is ingested', async () => {
+      searchLocal.mockResolvedValue([{ ...ETB, sourceKey: 'tcgcsv' }]);
+
+      const result = await propose();
+
+      expect(result.candidateCount).toBe(1);
+      // The whole point: no request to the third party.
+      expect(search).not.toHaveBeenCalled();
+      expect(searchLocal).toHaveBeenCalledWith(
+        expect.objectContaining({ setName: '30th Celebration' }),
+      );
+    });
+
+    it('falls back to the live source for a set that was never ingested', async () => {
+      searchLocal.mockResolvedValue([]);
+
+      const result = await propose();
+
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(result.candidateCount).toBe(2);
     });
 
     it('refuses an unscoped run rather than walking the catalogue', async () => {

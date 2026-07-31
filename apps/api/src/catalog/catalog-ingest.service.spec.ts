@@ -244,6 +244,86 @@ describeDb('CatalogIngestService', () => {
     });
   });
 
+  /**
+   * The half of the ingest that makes it useful rather than merely durable.
+   * tcgcsv refuses an un-narrowed search, so before this a caller had to already
+   * know a set name to find anything in it.
+   */
+  describe('local search', () => {
+    const service = () =>
+      new CatalogService(
+        {
+          get: vi.fn(() => ({ key: 'tcgcsv', displayName: 'tcgcsv', games: [], search: vi.fn() })),
+        } as unknown as CatalogSourceRegistry,
+        prisma as unknown as PrismaService,
+      );
+
+    it('lists the sets held, with counts, needing no set name', async () => {
+      await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+      const sets = await service().listLocalSets('Pokemon');
+
+      expect(sets).toEqual([
+        { game: 'Pokemon', setName: 'Prismatic Evolutions', items: 1 },
+        { game: 'Pokemon', setName: 'Surging Sparks', items: 2 },
+      ]);
+    });
+
+    it('searches by name within the local catalog', async () => {
+      await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+      const found = await service().searchLocal({ text: 'charizard' });
+
+      expect(found).toHaveLength(1);
+      expect(found[0]?.name).toBe('Charizard ex');
+    });
+
+    /**
+     * Sources store a set under its catalogue name while an operator types the
+     * one on the box. Without containment the local catalog misses on the
+     * spelling people actually use and silently falls through to the network.
+     */
+    it('finds a set by the name an operator would type, not just the stored one', async () => {
+      fetchSet.mockImplementation(async (_ctx: unknown, setId: string) =>
+        setId === '3:1' ? [card({ setName: 'SV08: Surging Sparks' })] : [],
+      );
+      await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+      const natural = await service().searchLocal({ text: '', setName: 'Surging Sparks' });
+      const exact = await service().searchLocal({ text: '', setName: 'SV08: Surging Sparks' });
+
+      expect(natural).toHaveLength(1);
+      expect(exact).toHaveLength(1);
+      expect(natural[0]?.setName).toBe('SV08: Surging Sparks');
+    });
+
+    /** Browsing: no text at all, the set is the filter. */
+    it('returns a whole set when given no text', async () => {
+      await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+      const found = await service().searchLocal({ text: '', setName: 'Surging Sparks' });
+
+      expect(found).toHaveLength(2);
+      expect(found.map((c) => c.name).sort()).toEqual(['Charizard ex', 'Pikachu ex']);
+    });
+
+    /**
+     * A candidate needs one `(sourceKey, sourceId)` pair, because that pair is
+     * what `fetchCandidate` is later asked to re-verify — and an ingested item
+     * carries two.
+     */
+    it('attributes a candidate to one source, preferring the re-fetchable one', async () => {
+      await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+      const [found] = await service().searchLocal({ text: 'pikachu' });
+
+      expect(found?.sourceKey).toBe('tcgcsv');
+      expect(found?.sourceId).toBe('100');
+      // Still carries every id, so linking keeps backfilling as before.
+      expect(found?.externalIds).toMatchObject({ tcgcsv: '100', tcgplayer: '100' });
+    });
+  });
+
   /** Linking is identity. An ingest must never look like stock arriving. */
   it('credits no stock and records no movement', async () => {
     await ingest.ingest({ sourceKey: 'tcgcsv' });

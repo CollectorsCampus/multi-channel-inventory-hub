@@ -32,6 +32,45 @@ export class CatalogSearchQueryDto {
   limit?: number;
 }
 
+export class LocalSetsQueryDto {
+  @ApiPropertyOptional({ example: 'Pokemon' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  game?: string;
+}
+
+export class LocalSearchQueryDto {
+  @ApiPropertyOptional({
+    example: 'pikachu',
+    description: 'Omitted returns the set or game unfiltered, which is the browse case.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  text?: string;
+
+  @ApiPropertyOptional({ example: 'Pokemon' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  game?: string;
+
+  @ApiPropertyOptional({ example: 'ME02: Phantasmal Flames' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  setName?: string;
+
+  @ApiPropertyOptional({ default: 50, maximum: 500 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  limit?: number;
+}
+
 @ApiTags('catalog')
 @Controller('catalog')
 export class CatalogController {
@@ -61,5 +100,36 @@ export class CatalogController {
       setName: query.setName,
       limit: query.limit ?? 25,
     });
+  }
+
+  /**
+   * The local catalog, which answers questions no source here will take.
+   *
+   * Separate from `/search` rather than a flag on it, because the two differ in
+   * kind: `/search` fans out to third parties and reports per-source failures,
+   * while this is one database query that either works or does not. Collapsing
+   * them would mean a response shape that is half about network problems.
+   */
+  @Get('local/sets')
+  @RequireRole('viewer')
+  @ApiOperation({ summary: 'Sets held in the local catalog, with item counts.' })
+  localSets(@Query() query: LocalSetsQueryDto) {
+    return this.catalog.listLocalSets(query.game);
+  }
+
+  @Get('local/search')
+  @RequireRole('viewer')
+  @ApiOperation({ summary: 'Search the local catalog. Needs no network.' })
+  async localSearch(@Query() query: LocalSearchQueryDto) {
+    const candidates = await this.catalog.searchLocal({
+      text: query.text ?? '',
+      ...(query.game !== undefined ? { game: query.game } : {}),
+      ...(query.setName !== undefined ? { setName: query.setName } : {}),
+      limit: query.limit ?? 50,
+    });
+
+    // No `failures` key, deliberately: there is nothing here that can partially
+    // fail, and echoing the remote search's shape would imply otherwise.
+    return { candidates };
   }
 }

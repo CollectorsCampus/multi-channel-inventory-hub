@@ -25,7 +25,7 @@ Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fi
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
 because it explains _why_ each landed, which the CHANGELOG does not.
 
-`main` is green: **754 tests** (api 426, tcgplayer 102, shopify 87, sdk 61, tcgcsv 45,
+`main` is green: **763 tests** (api 435, tcgplayer 102, shopify 87, sdk 61, tcgcsv 45,
 scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
@@ -231,7 +231,7 @@ normal for open source and was not treated as a defect.
 ### After v0.1.1 — PRs #13, #15–#18 (2026-07-29/30)
 
 Everything in this section is on `main` and shipped in **v0.2.0**. It is the work that
-turned a store the hub could not touch into one it can enumerate and link. (PRs #21–#24,
+turned a store the hub could not touch into one it can enumerate and link. (PRs #21–#26,
 below, landed _after_ the v0.2.0 tag and are in no released image.)
 
 #### The published images cannot start offline (#13)
@@ -499,7 +499,7 @@ genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins 
 "Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
 lines are untouched.
 
-### After v0.2.0 — PRs #21–#24 (2026-07-30), on `main`, in no released image
+### After v0.2.0 — PRs #21–#26 (2026-07-30), on `main`, in no released image
 
 #21 and #22 are research only — webhook delivery over a cloud bus, and the connector
 candidates — and their findings live under "Open decisions" below, where they gate real
@@ -569,12 +569,51 @@ restart failure was itself only proven by restarting the container and reproduci
 original error — the first version did not actually fix it, because `fetchCandidate`
 still went to the source.
 
+#### The local catalog is browsable and matched against (#26)
+
+The ingest made the catalogue durable; #26 makes it usable. `GET /catalog/local/sets`
+answers "what is in here" with per-set item counts — the question no remote source here
+will take — and `GET /catalog/local/search` searches it with no network at all. Both are
+deliberately separate from `/catalog/search`, which fans out to third parties and reports
+per-source failures; the local query is one database read that either works or does not,
+and a shared response shape would be half about network problems that cannot occur.
+
+**Matching now draws candidates from the local catalog first**, which is where it is
+worth most: a proposal run needs the _whole_ set as candidates, precisely the request
+tcgcsv is least willing to serve. Measured live: 158 candidates for Phantasmal Flames
+from the ingested set against 28 from a live tcgcsv search. It falls back to the source
+for any set never ingested.
+
+Three things learned building and reviewing it:
+
+- **Exact set-name match first, then containment** — sources store
+  `ME02: Phantasmal Flames`, operators type `Phantasmal Flames`, and exact-only matching
+  missed on the only spelling a human uses, silently falling through to the network while
+  looking like it worked. Found by driving the app, not by the tests. The match is
+  **case-sensitive and stays so**: there is no lowercased copy of `setName` the way
+  `searchName` exists for names, and `mode: "insensitive"` is PostgreSQL-only.
+  Callers wanting certainty take a name from `local/sets` rather than typing one.
+- **`pickAttribution` presents an item under one `(sourceKey, sourceId)` pair** — an
+  ingested item carries both `tcgcsv` and `tcgplayer` refs, and that pair is what
+  `fetchCandidate` is later asked to re-verify. Sorted before picking so the choice does
+  not depend on database row order.
+- **Matching only offers local rows the _requested_ source can re-verify** (review
+  finding, fixed pre-merge). Confirmation re-verifies the `(sourceKey, sourceId)` pair
+  the client sends, and the `/match` form sends the source the run was asked for — so a
+  local row ingested from a different source would have filled the review screen with
+  plausible matches whose every confirm then fails with "no such product", after the
+  human already did the review work. Local rows are filtered to those carrying a ref for
+  the requested source, with the proposed id re-read from that ref; a set ingested from a
+  different source falls back to the live search exactly as an un-ingested one does. Not
+  reachable while tcgcsv is the only ingesting source — the first Magic ingest plus one
+  scryfall-scoped propose would have hit it.
+
 ### Unmerged work
 
-**PR #26 is open — CI green, unreviewed**: `GET /catalog/local/sets` and
-`/catalog/local/search`, and matching prefers the local catalog over a live source
-search. `shopify-client-credentials` was merged on 2026-07-29 once webhook delivery was
-proven against the live store (below), which was the one thing holding it back.
+None. #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
+during review. `shopify-client-credentials` was merged on 2026-07-29 once webhook
+delivery was proven against the live store (below), which was the one thing holding it
+back.
 
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.

@@ -199,6 +199,42 @@ describeDb('MatchingService', () => {
       expect(result.candidateCount).toBe(2);
     });
 
+    /**
+     * Confirmation re-verifies the (sourceKey, sourceId) pair the client sends,
+     * and the client sends the source this run was asked for. A local row
+     * ingested from a different source would propose an id that every confirm
+     * then fails to resolve — reviewed matches dying in a wall of "no such
+     * product" — so it must not be offered at all.
+     */
+    it('ignores local rows the requested source does not know, and asks the live source', async () => {
+      searchLocal.mockResolvedValue([
+        {
+          ...ETB,
+          sourceKey: 'scryfall',
+          sourceId: '56ebc372-aabd-4174-a943-c7bf59e5028d',
+          externalIds: { scryfall: '56ebc372-aabd-4174-a943-c7bf59e5028d' },
+        },
+      ]);
+
+      const result = await propose();
+
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(result.candidateCount).toBe(2);
+    });
+
+    it('proposes the id the requested source can re-verify, whatever the local attribution', async () => {
+      searchLocal.mockResolvedValue([{ ...ETB, sourceKey: 'tcgplayer', sourceId: '999999' }]);
+
+      const result = await propose();
+
+      expect(result.candidateCount).toBe(1);
+      const matchedIds = result.proposals.flatMap((p) =>
+        p.status === 'matched' ? [p.candidate.target.id] : [],
+      );
+      expect(matchedIds).toContain('704143');
+      expect(matchedIds).not.toContain('999999');
+    });
+
     it('refuses an unscoped run rather than walking the catalogue', async () => {
       await expect(
         matching.propose({ channelInstanceId: channelId, sourceKey: 'tcgcsv', setName: '  ' }),

@@ -178,8 +178,9 @@ export class MatchingService {
     // ingested set answers instantly, offline, and without spending a
     // rate-limited request on data already stored.
     //
-    // Falls back to the live source when the set is not ingested, so nothing
-    // that worked before this needs an ingest to keep working.
+    // Falls back to the live source when the set is not ingested — or was
+    // ingested from a source other than the requested one — so nothing that
+    // worked before this needs an ingest to keep working.
     const local = await this.catalog.searchLocal({
       // Empty text: the set is the filter. A text search *within* the set would
       // return a fraction of it, and a fraction is not a candidate list.
@@ -189,9 +190,23 @@ export class MatchingService {
       limit: LOCAL_CANDIDATE_LIMIT,
     });
 
+    // Only rows the requested source knows, under that source's own id.
+    // Confirmation re-verifies the (sourceKey, sourceId) pair the client sends,
+    // and the client sends the source this run was asked for — the review
+    // screen's form has exactly one source picker. A local row ingested from a
+    // different source would propose an id that every confirm then fails to
+    // resolve: a screen full of plausible matches, reviewed, and then a wall of
+    // "no such product" errors. The id is re-read from the refs for the same
+    // reason — it must be the requested source's spelling of it, not the
+    // ingesting source's.
+    const usable = local.flatMap((candidate) => {
+      const sourceId = candidate.externalIds?.[source.key];
+      return sourceId === undefined ? [] : [{ ...candidate, sourceId }];
+    });
+
     const candidates =
-      local.length > 0
-        ? local
+      usable.length > 0
+        ? usable
         : await source.search(
             {
               logger: ctx.logger,

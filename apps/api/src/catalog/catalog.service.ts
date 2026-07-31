@@ -33,6 +33,109 @@ export class CatalogService {
   }
 
   /**
+   * Search the local catalog — what has been ingested, not what a source will
+   * say.
+   *
+   * This is the half of the ingest that makes it useful rather than merely
+   * durable. tcgcsv refuses an un-narrowed search by design, so before this
+   * existed a caller had to already know a set's name to find anything in it,
+   * and working out which sets a real store held meant reading group lists by
+   * hand. Here the question "what do we know about Pokemon?" is answerable.
+   *
+   * Matches on `searchName`, the pre-lowercased copy maintained on write. That
+   * column exists precisely so this comparison is identical on PostgreSQL, MySQL
+   * and SQLite — Prisma's `mode: "insensitive"` is PostgreSQL-only (§3).
+   */
+  async searchLocal(query: CatalogSearchQuery): Promise<AttributedCandidate[]> {
+    const text = query.text?.trim().toLowerCase() ?? '';
+    const setName = query.setName?.trim();
+
+    // Prisma accepts either an exact string or a filter object here.
+    const find = (setFilter: string | { contains: string } | undefined) =>
+      this.prisma.catalogItem.findMany({
+        where: {
+          ...(text !== '' ? { searchName: { contains: text } } : {}),
+          ...(query.game !== undefined ? { game: query.game } : {}),
+          ...(setFilter !== undefined ? { setName: setFilter } : {}),
+        },
+        select: {
+          name: true,
+          game: true,
+          setName: true,
+          imageUrl: true,
+          externalRefs: { select: { source: true, externalId: true } },
+        },
+        // Stable and useful: a set reads in name order rather than insertion order.
+        orderBy: [{ setName: 'asc' }, { searchName: 'asc' }],
+        take: query.limit ?? 50,
+      });
+
+    let items = await find(setName === undefined || setName === '' ? undefined : setName);
+
+    // Exact first, then containment — the same order tcgcsv's own matcher uses,
+    // and necessary rather than generous. Sources store a set under its
+    // catalogue name ("ME02: Phantasmal Flames") while an operator types the one
+    // on the box ("Phantasmal Flames"). Without this the local catalog silently
+    // misses on the spelling people actually use, falls through to the network,
+    // and looks like it is not working while quietly working.
+    //
+    // Case-sensitive, deliberately: there is no lowercased copy of `setName` the
+    // way `searchName` exists for names, and `mode: "insensitive"` is
+    // PostgreSQL-only (§3). Callers wanting certainty should take a name from
+    // `listLocalSets` rather than typing one.
+    if (items.length === 0 && setName !== undefined && setName !== '') {
+      items = await find({ contains: setName });
+    }
+
+    const candidates: AttributedCandidate[] = [];
+    for (const item of items) {
+      const externalIds: Record<string, string> = {};
+      for (const ref of item.externalRefs) externalIds[ref.source] = ref.externalId;
+
+      // An item with no refs cannot be re-verified or linked, so returning it
+      // would offer the operator something they cannot act on.
+      const attribution = pickAttribution(item.externalRefs);
+      if (!attribution) continue;
+
+      candidates.push({
+        sourceKey: attribution.source,
+        sourceId: attribution.externalId,
+        name: item.name,
+        externalIds,
+        ...(item.game !== null ? { game: item.game } : {}),
+        ...(item.setName !== null ? { setName: item.setName } : {}),
+        ...(item.imageUrl !== null ? { imageUrl: item.imageUrl } : {}),
+      });
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Sets the local catalog holds, with how much of each.
+   *
+   * The browse entry point: it answers "what is in here" without a set name,
+   * which is the question no remote source here will take.
+   */
+  async listLocalSets(
+    game?: string,
+  ): Promise<Array<{ game: string | null; setName: string; items: number }>> {
+    const groups = await this.prisma.catalogItem.groupBy({
+      by: ['game', 'setName'],
+      where: {
+        setName: { not: null },
+        ...(game !== undefined ? { game } : {}),
+      },
+      _count: { _all: true },
+      orderBy: [{ game: 'asc' }, { setName: 'asc' }],
+    });
+
+    return groups
+      .filter((g): g is typeof g & { setName: string } => g.setName !== null)
+      .map((g) => ({ game: g.game, setName: g.setName, items: g._count._all }));
+  }
+
+  /**
    * Re-fetch one candidate from its source.
    *
    * Intake goes through this rather than trusting the candidate the browser
@@ -152,6 +255,34 @@ export class CatalogService {
       },
     };
   }
+}
+
+/**
+ * Which of an item's external ids to present it under.
+ *
+ * An item can carry several — a tcgcsv ingest records both `tcgcsv` and
+ * `tcgplayer` for the same product — and a candidate needs exactly one
+ * `(sourceKey, sourceId)` pair, because that pair is what `fetchCandidate` is
+ * later asked to re-verify.
+ *
+ * Preference order is by usefulness downstream rather than alphabetical:
+ * `tcgcsv` first because it is the source that can still be re-fetched live if
+ * the local row is ever missing, then `tcgplayer` because it is the id a
+ * marketplace listing is keyed on, then whatever else exists. Sorted before
+ * picking so the choice does not depend on database row order.
+ */
+function pickAttribution(
+  refs: ReadonlyArray<{ source: string; externalId: string }>,
+): { source: string; externalId: string } | undefined {
+  const preference = ['tcgcsv', 'tcgplayer', 'scryfall'];
+
+  const ranked = [...refs].sort((a, b) => {
+    const ai = preference.indexOf(a.source);
+    const bi = preference.indexOf(b.source);
+    return (ai === -1 ? preference.length : ai) - (bi === -1 ? preference.length : bi);
+  });
+
+  return ranked[0];
 }
 
 export type { CatalogCandidate };

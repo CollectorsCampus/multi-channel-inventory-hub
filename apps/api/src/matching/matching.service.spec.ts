@@ -50,6 +50,7 @@ let enumerateListings: ReturnType<typeof vi.fn>;
 let search: ReturnType<typeof vi.fn>;
 let canRefetch: ReturnType<typeof vi.fn>;
 let updateListingSku: ReturnType<typeof vi.fn>;
+let searchLocal: ReturnType<typeof vi.fn>;
 
 describeDb('MatchingService', () => {
   beforeAll(async () => {
@@ -116,6 +117,10 @@ describeDb('MatchingService', () => {
     } as unknown as CatalogSourceRegistry;
 
     canRefetch = vi.fn(() => true);
+    // Empty by default: nothing ingested, so every existing test still exercises
+    // the live-source path it was written against.
+    searchLocal = vi.fn(async () => [] as Array<CatalogCandidate & { sourceKey: string }>);
+
     const catalog = {
       fetchCandidate: vi.fn(async (_key: string, sourceId: string) => {
         if (sourceId === ETB.sourceId) return ETB;
@@ -123,6 +128,7 @@ describeDb('MatchingService', () => {
         return null;
       }),
       canRefetch,
+      searchLocal,
     } as unknown as CatalogService;
 
     const inventory = new InventoryService(prisma as unknown as PrismaService);
@@ -163,6 +169,70 @@ describeDb('MatchingService', () => {
       expect(result.candidateCount).toBe(2);
       expect(result.summary.matched).toBe(2);
       expect(result.proposals.every((p) => p.status === 'matched')).toBe(true);
+    });
+
+    /**
+     * A proposal run needs the *whole* set as candidates, which is the request
+     * tcgcsv is least willing to serve — it caps set files per search and
+     * refuses anything un-narrowed. An ingested set answers instantly, offline,
+     * and without spending a rate-limited request on data already stored.
+     */
+    it('draws candidates from the local catalog when the set is ingested', async () => {
+      searchLocal.mockResolvedValue([{ ...ETB, sourceKey: 'tcgcsv' }]);
+
+      const result = await propose();
+
+      expect(result.candidateCount).toBe(1);
+      // The whole point: no request to the third party.
+      expect(search).not.toHaveBeenCalled();
+      expect(searchLocal).toHaveBeenCalledWith(
+        expect.objectContaining({ setName: '30th Celebration' }),
+      );
+    });
+
+    it('falls back to the live source for a set that was never ingested', async () => {
+      searchLocal.mockResolvedValue([]);
+
+      const result = await propose();
+
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(result.candidateCount).toBe(2);
+    });
+
+    /**
+     * Confirmation re-verifies the (sourceKey, sourceId) pair the client sends,
+     * and the client sends the source this run was asked for. A local row
+     * ingested from a different source would propose an id that every confirm
+     * then fails to resolve — reviewed matches dying in a wall of "no such
+     * product" — so it must not be offered at all.
+     */
+    it('ignores local rows the requested source does not know, and asks the live source', async () => {
+      searchLocal.mockResolvedValue([
+        {
+          ...ETB,
+          sourceKey: 'scryfall',
+          sourceId: '56ebc372-aabd-4174-a943-c7bf59e5028d',
+          externalIds: { scryfall: '56ebc372-aabd-4174-a943-c7bf59e5028d' },
+        },
+      ]);
+
+      const result = await propose();
+
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(result.candidateCount).toBe(2);
+    });
+
+    it('proposes the id the requested source can re-verify, whatever the local attribution', async () => {
+      searchLocal.mockResolvedValue([{ ...ETB, sourceKey: 'tcgplayer', sourceId: '999999' }]);
+
+      const result = await propose();
+
+      expect(result.candidateCount).toBe(1);
+      const matchedIds = result.proposals.flatMap((p) =>
+        p.status === 'matched' ? [p.candidate.target.id] : [],
+      );
+      expect(matchedIds).toContain('704143');
+      expect(matchedIds).not.toContain('999999');
     });
 
     it('refuses an unscoped run rather than walking the catalogue', async () => {

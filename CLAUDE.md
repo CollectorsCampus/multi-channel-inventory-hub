@@ -25,7 +25,7 @@ Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fi
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
 because it explains _why_ each landed, which the CHANGELOG does not.
 
-`main` is green: **737 tests** (api 411, tcgplayer 102, shopify 87, sdk 59, tcgcsv 45,
+`main` is green: **763 tests** (api 435, tcgplayer 102, shopify 87, sdk 61, tcgcsv 45,
 scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
@@ -230,8 +230,9 @@ normal for open source and was not treated as a defect.
 
 ### After v0.1.1 — PRs #13, #15–#18 (2026-07-29/30)
 
-Everything in this section is on `main` and **in no released image**. It is the work that
-turned a store the hub could not touch into one it can enumerate and link.
+Everything in this section is on `main` and shipped in **v0.2.0**. It is the work that
+turned a store the hub could not touch into one it can enumerate and link. (PRs #21–#26,
+below, landed _after_ the v0.2.0 tag and are in no released image.)
 
 #### The published images cannot start offline (#13)
 
@@ -298,7 +299,8 @@ Four things about it that are not guessable:
 
 The honest production shape is a scheduled bulk ingest into `CatalogItem` /
 `CatalogExternalRef` with search served from the database. That needs ingest machinery the
-core does not have, which is why this is labelled a prototype.
+core does not have, which is why this is labelled a prototype. **That machinery now
+exists** — see the catalog ingest (#24) below.
 
 #### The hard blocker this all existed to fix (#17)
 
@@ -404,7 +406,7 @@ resemblance to an exact id — the `certain` path.
 **It overwrites, and a seller SKU usually means something to its owner.** The operator's
 Shopify variants carry a live internal scheme (two prefix families, populated on every
 variant sampled) and this replaces it. That was raised with evidence and **explicitly
-authorised** — but see "The SKU decision" below: no live write has ever been performed.
+authorised** — and has since been carried out; see "The SKU decision" below.
 
 The code is built so it cannot happen by accident: off unless the request asks; only ever
 applied to a listing whose link was _just confirmed_; requesting it on a connector that
@@ -447,24 +449,35 @@ different **non-null** id, and a test pins that so it cannot tighten into blocki
 Verified live: submitting both ETBs returned `linked: 3` plus one problem, and the first
 link survived. Before the fix the same request returned `linked: 4` with three rows.
 
-#### The SKU decision, authorised but never run
+#### The SKU decision — carried out 2026-07-30
 
-**No live SKU write has ever been performed.** Before any real run: export the current SKUs
-from Shopify, and try a single row first.
+**139 SKUs have been written to the live store and verified — zero mismatches.** The
+precaution held: **all 867 original SKUs were exported first**, to
+`private/shopify-sku-backup-2026-07-30T16-38-55.csv` (gitignored), so the overwritten
+scheme is recoverable if the operator ever wants it back.
 
-**The store's own SKU field is half empty and not unique**, which was measured rather than
+**The store's own SKU field was half empty and not unique**, which was measured rather than
 sampled and corrects the earlier note that two prefix families were "populated on every
-variant sampled". Of **867 listings, 434 carry a SKU** — so the overwrite is a no-op for
+variant sampled". Of **867 listings, 434 carried a SKU** — so the overwrite was a no-op for
 half the store — across many more than two families (`##-#####-###`, `###-#####`,
-`UGDSQR######`, `ULP#####`, `PKU#####`, …). And it does not identify a variant: the Psyduck
-and Golduck 3-pack blisters share both SKU `10-10050-122` and barcode `196214136106`.
-Whatever that field is, it is not a key.
+`UGDSQR######`, `ULP#####`, `PKU#####`, …). And it did not identify a variant: the Psyduck
+and Golduck 3-pack blisters shared both SKU `10-10050-122` and barcode `196214136106`.
+Whatever that field was, it was not a key — which is why overwriting it was cheap.
+
+**What was written is TCGPlayer's _product_-level id** (tcgcsv's `productId`), not the
+SKU-level `TCGplayer Id` a TCGPlayer allocation's `externalListingId` holds. That is the
+right granularity for sealed product, where one product is one variant — and the **wrong**
+granularity for singles, where condition, printing and language all live below the product
+id. Settle the singles id scheme before matching singles, or the `certain` path will
+equate different conditions of the same card.
 
 #### Matching against the live store, as it actually behaves
 
-Every live match comes back **`possible` · `name-partial`**, because store titles are
-prefixed ("Pokémon TCG: Mega Evolution Phantasmal Flames …") and tcgcsv's are not.
-`certain` is 0 and stays 0 until SKUs carry the id.
+Every live match to date has come back **`possible` · `name-partial`**, because store
+titles are prefixed ("Pokémon TCG: Mega Evolution Phantasmal Flames …") and tcgcsv's are
+not. `certain` was 0 on every run before the SKU write; the 139 linked listings now carry
+the catalogue product id in their SKU field, so their re-matches can reach `certain` — but
+a live `certain` has still never been observed.
 
 Two things about the shape of the data, both of which cost time to work out:
 
@@ -479,17 +492,128 @@ Two things about the shape of the data, both of which cost time to work out:
   absorbs it, so it does no harm today — but it is why nothing here will ever match on a
   whole-string comparison.
 
-**Progress: 93 allocations, all sealed Pokémon**, up from 3. Every one is a distinct listing
+**Progress: 139 allocations, all sealed Pokémon**, up from 3. Every one is a distinct listing
 and a distinct inventory item, all priced, `listedQuantity` 0, and the ledger still holds a
 single `StockMovement` — linking credits no stock, as designed. What remains unmatched is
 genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins and
 "Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
 lines are untouched.
 
+### After v0.2.0 — PRs #21–#26 (2026-07-30), on `main`, in no released image
+
+#21 and #22 are research only — webhook delivery over a cloud bus, and the connector
+candidates — and their findings live under "Open decisions" below, where they gate real
+choices.
+
+#### `overlap` — what counts as a `name-partial` tie (#23)
+
+Containment is not a measure of similarity, and treating it as one made the review screen
+unusable for a whole set on a live run: tcgcsv carries a card literally named
+"Winterspell" in the Winterspell set, and because `name-partial` fires on containment in
+either direction, that card was contained by every sealed listing in the set — so it tied
+with the correct product on all four and every one came back `ambiguous`.
+
+They were never equally good evidence: for the booster pack the right product's name
+accounted for 76% of the listing's title, the card's for 22%. `MatchCandidate` now
+carries that ratio as `overlap` — `min(len)/max(len)` over the normalised names —
+candidates sort by confidence then by it, and the tie test gains the same term.
+
+**This is not a loosening of the never-resolve-a-tie rule; it is a correction to what
+counted as a tie.** Names of equal length still tie exactly, so two reprints with
+identical names behave exactly as before, and a test pins it. `overlap` is 1 for every
+reason that is not a name resemblance — an exact id must not lose to a long name that
+nearly matches — and it is **deliberately crude**: edit distance or token overlap would
+start _creating_ matches rather than ordering them, which the engine exists to refuse.
+
+#### The local catalog is filled by ingest, and read first (#24)
+
+The tcgcsv source has described a bulk ingest as its "honest production shape" since it
+was written; #24 built it. Three live failures made the case, and none is the
+connectivity worry that usually motivates a cache: `fetchById` forgets its product index
+on restart (a confirm after a container restart failed with "tcgcsv has no product
+654154" **mid-way through writing SKUs to a live storefront**); an un-narrowed tcgcsv
+search throws by design, so nothing could browse; and it is a community CDN with no SLA.
+
+- **`listSets` / `fetchSet` are two new optional `CatalogSource` methods, declared
+  together** — `validateCatalogSource` rejects one without the other. They are not
+  `search()` with a broad query: search makes the source decide what to omit and cannot
+  enumerate a set exhaustively. The pairing mirrors `listing.enumerate` for the same
+  reason. tcgcsv's `fetchSet` populates its product index as a side effect, which is what
+  makes `fetchById` work for anything ingested.
+- **Catalog-item creation stays owned by `IntakeService`** (`ensureCatalogItem`), because
+  a second implementation of "are these the same product" would eventually disagree, and
+  that disagreement surfaces as duplicate items nobody can merge. Ingest passes an
+  ingest-only `refresh` option — re-reading the authoritative source is the point of a
+  bulk run, while an intake has no business rewriting an item's identity — and refresh
+  writes only when something differs, so a nightly re-ingest does not bump `updatedAt` on
+  unchanged rows.
+- **`CatalogIngestModule` is its own module** because it needs both the source registry
+  and `IntakeService`, and putting it in `CatalogModule` would need `forwardRef` — which
+  works, then quietly turns every future construction-time dependency between the two
+  modules into a runtime undefined.
+- **A run wider than `maxSets` is refused, not truncated** — the first 50 of Magic's 453
+  groups would leave a catalog that looks complete and is not. One unreadable set is
+  reported and the rest still land.
+- **Prices are deliberately not stored.** tcgcsv republishes them daily; a stored price is
+  a stale price with a timestamp nobody checks. Identity is durable, prices are not. No
+  schema change — `CatalogItem` / `CatalogExternalRef` already model this.
+- **`fetchCandidate` resolves locally first** — `CatalogExternalRef` then `CatalogItem` —
+  and that is **not a cache**: the caller must not choose what gets written to
+  `CatalogExternalRef`, and a row we wrote ourselves satisfies that completely, without a
+  network call. Falls back to the source for anything never ingested. The local candidate
+  carries no `marketPrice`, deliberately: a caller wanting a live price should ask the
+  source explicitly rather than silently receive a stale one.
+
+**Live state: 433 catalog items ingested across 27 Pokémon sets.** The ingest fixing the
+restart failure was itself only proven by restarting the container and reproducing the
+original error — the first version did not actually fix it, because `fetchCandidate`
+still went to the source.
+
+#### The local catalog is browsable and matched against (#26)
+
+The ingest made the catalogue durable; #26 makes it usable. `GET /catalog/local/sets`
+answers "what is in here" with per-set item counts — the question no remote source here
+will take — and `GET /catalog/local/search` searches it with no network at all. Both are
+deliberately separate from `/catalog/search`, which fans out to third parties and reports
+per-source failures; the local query is one database read that either works or does not,
+and a shared response shape would be half about network problems that cannot occur.
+
+**Matching now draws candidates from the local catalog first**, which is where it is
+worth most: a proposal run needs the _whole_ set as candidates, precisely the request
+tcgcsv is least willing to serve. Measured live: 158 candidates for Phantasmal Flames
+from the ingested set against 28 from a live tcgcsv search. It falls back to the source
+for any set never ingested.
+
+Three things learned building and reviewing it:
+
+- **Exact set-name match first, then containment** — sources store
+  `ME02: Phantasmal Flames`, operators type `Phantasmal Flames`, and exact-only matching
+  missed on the only spelling a human uses, silently falling through to the network while
+  looking like it worked. Found by driving the app, not by the tests. The match is
+  **case-sensitive and stays so**: there is no lowercased copy of `setName` the way
+  `searchName` exists for names, and `mode: "insensitive"` is PostgreSQL-only.
+  Callers wanting certainty take a name from `local/sets` rather than typing one.
+- **`pickAttribution` presents an item under one `(sourceKey, sourceId)` pair** — an
+  ingested item carries both `tcgcsv` and `tcgplayer` refs, and that pair is what
+  `fetchCandidate` is later asked to re-verify. Sorted before picking so the choice does
+  not depend on database row order.
+- **Matching only offers local rows the _requested_ source can re-verify** (review
+  finding, fixed pre-merge). Confirmation re-verifies the `(sourceKey, sourceId)` pair
+  the client sends, and the `/match` form sends the source the run was asked for — so a
+  local row ingested from a different source would have filled the review screen with
+  plausible matches whose every confirm then fails with "no such product", after the
+  human already did the review work. Local rows are filtered to those carrying a ref for
+  the requested source, with the proposed id re-read from that ref; a set ingested from a
+  different source falls back to the live search exactly as an un-ingested one does. Not
+  reachable while tcgcsv is the only ingesting source — the first Magic ingest plus one
+  scryfall-scoped propose would have hit it.
+
 ### Unmerged work
 
-None. `shopify-client-credentials` was merged on 2026-07-29 once webhook delivery was
-proven against the live store (below), which was the one thing holding it back.
+None. #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
+during review. `shopify-client-credentials` was merged on 2026-07-29 once webhook
+delivery was proven against the live store (below), which was the one thing holding it
+back.
 
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.
@@ -1252,11 +1376,12 @@ Worth stating plainly, because the README is optimistic by nature:
   hand against a running instance — but no live Shopify store has ever drifted and been
   caught. The diff is thoroughly tested; what is unproven is whether `fetchLiveState`
   returns what the Admin API actually says.
-- **No SKU has ever been written to a live listing.** `listing.sku` is proven against
-  mocks only. The operator authorised overwriting their Shopify SKUs; nobody has done it.
-- **Matching has been run live, and only ever produced `possible`.** `enumerateListings`
-  and the proposal engine work against the real store, but no confirmation has been
-  accepted from a live run, so `MatchingService.confirm` against a real storefront is
-  unexercised outside integration tests.
-- **`catalog-tcgcsv` has no bulk-ingest path.** It is a prototype that downloads set files
-  on demand; nothing has run it at catalogue scale.
+- **Matching has never produced a live `certain`.** `enumerateListings`, the proposal
+  engine, `MatchingService.confirm` and `listing.sku` are all proven against the real
+  store — 139 links and 139 SKU writes came through them — but every live proposal to
+  date has been `possible · name-partial`. The linked listings now carry the catalogue
+  product id in their SKU field, so a re-match _should_ reach `certain`; nobody has run
+  one.
+- **The ingest has never run at catalogue scale.** #24 built the bulk path and 27 Pokémon
+  sets (433 items) have been through it, but no full-game ingest — Magic is 453 groups —
+  has ever run.

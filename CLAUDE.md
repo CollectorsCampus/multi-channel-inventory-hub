@@ -852,6 +852,46 @@ normal run. Its value is realised on **re-derivation** — a hub rebuilt from no
 listing detached and re-matched — which is exactly the scenario `listing.sku` exists for.
 The detach above is how to demonstrate it, and it is safe.
 
+#### A product has now been created on the live store, and deleted (2026-07-31)
+
+The whole path run once, end to end, and then cleaned up. **The only unlisted item in the
+entire ledger was a leftover `Black Lotus` test row** (Magic Online Promos, NM FOIL, qty 4)
+— there are no real singles in the ledger yet, which is worth knowing before planning a
+first "real" run.
+
+Created with one tag picked from the store's vocabulary (`Magic: The Gathering`) and vendor
+`Wizards of the Coast`. Read back from Shopify, everything the design promised held:
+
+| Claim                              | What the store returned                                        |
+| ---------------------------------- | -------------------------------------------------------------- |
+| Title composed from ledger fields  | `Black Lotus - Magic Online Promos`                            |
+| Draft, never buyable               | `status: DRAFT`                                                |
+| Tag and vendor verbatim            | `["Magic: The Gathering"]`, `Wizards of the Coast`             |
+| Option from `formatCondition`      | `Condition` = `Near Mint Foil`                                 |
+| Tracked, or quantity pushes vanish | `inventoryItem.tracked: true`                                  |
+| One variant, not two               | exactly one — `productCreate` made it, `fillVariant` filled it |
+| Image from the catalog item        | one `MediaImage`                                               |
+
+Three things only a live run showed:
+
+- **`displayName` came back `Black Lotus - Magic Online Promos - Near Mint Foil`**, and
+  that is the round trip working: `splitChannelTitle` takes the tail because it parses as a
+  condition, leaving the product name intact. The option value being TCGPlayer's spelling
+  is what makes that true.
+- **The SKU code fell through to `scryfall`** — `scryfall:b9203f23-…:NM:FOIL:EN` — because
+  that item carries only a Scryfall ref. `pickAttribution`'s fallback works, and a uuid
+  passes the code's `sourceId` shape.
+- **Stock arrived by itself.** Creation set no quantity, `upsertAllocation` queued a push,
+  and the outbound worker wrote it: the allocation went to `listedQuantity 4` / `listed`,
+  and Shopify reported **available 4** at the pinned location. That is the whole argument
+  for rule 5 demonstrated in one run — creation and sync are one code path into a
+  platform's numbers, not two.
+
+The product was then deleted through the Admin API and the allocation detached, leaving the
+channel back at 139 links. **The hub cannot delete a product**, deliberately, so cleanup
+after a smoke test is a manual step — the same shape as the test order that had to be
+cancelled by hand.
+
 #### How the store's collections actually work (measured 2026-07-31)
 
 Not code, but it decides what a created product must carry, and getting it wrong is
@@ -1577,11 +1617,12 @@ a defect to fix, and none blocks anything else.
    and a few promos; the ledger will hold singles, and there was no way to get one onto the
    storefront except creating the product by hand first.
 
-   **Built, and never run against a real store.** The SKU code (#32), `listing.create`
-   (#33) and the core service, endpoint and screen (#34) are all on `main`; what is left is
-   pressing the button once, with one card, and looking at what appears. The decisions the
-   three layers settled, kept here because they are the constraints any change must
-   preserve:
+   **Built and proven live.** The SKU code (#32), `listing.create` (#33) and the core
+   service, endpoint and screen (#34) are on `main`, and one draft product has been created
+   on the real store and deleted again (above). This entry stays open only because the
+   add-a-variant path has never met Shopify and no real single has ever been listed. The
+   decisions the three layers settled, kept here because they are the constraints any
+   change must preserve:
 
    - **Selected SKUs only, never automatic.** The operator's constraint, verbatim: it
      "probably shouldn't be automatic to create everything that's in say your tcgplayer
@@ -1671,10 +1712,14 @@ Worth stating plainly, because the README is optimistic by nature:
   after the re-stamp (above). Everything below `certain` is still what a live run of an
   _unlinked_ set returns: `possible · name-partial`, because store titles are prefixed
   and tcgcsv's are not. Nothing has changed about that half.
-- **Nothing has ever been created on a real store.** The whole path now exists — service,
-  endpoint, screen — and was driven live as far as it goes without writing: the real
-  channel offers creation, the store's 249 tags load into the picker, selection and the
-  unknown-tag warning behave. **Nobody has pressed create.** No product, no variant.
+- **Creation is proven live, once, on a test row** — one draft product created, verified
+  field by field, its quantity pushed by the normal worker, then deleted (above). What
+  remains untried is the shape that matters for singles: **a second condition of a card
+  already listed**, i.e. the add-a-variant path with a real `siblingListingId`. It is
+  covered by tests and has never met Shopify.
+- **There are no real singles in the ledger at all.** Everything in it is sealed product
+  the store already carries, so nothing has exercised creation for stock somebody means
+  to sell.
 - **The ingest has never run at catalogue scale.** #24 built the bulk path and 27 Pokémon
   sets (433 items) have been through it, but no full-game ingest — Magic is 453 groups —
   has ever run.

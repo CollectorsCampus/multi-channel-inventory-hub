@@ -25,7 +25,7 @@ Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fi
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
 because it explains _why_ each landed, which the CHANGELOG does not.
 
-`main` is green: **763 tests** (api 435, tcgplayer 102, shopify 87, sdk 61, tcgcsv 45,
+`main` is green: **782 tests** (api 454, tcgplayer 102, shopify 87, sdk 61, tcgcsv 45,
 scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
@@ -231,7 +231,7 @@ normal for open source and was not treated as a defect.
 ### After v0.1.1 — PRs #13, #15–#18 (2026-07-29/30)
 
 Everything in this section is on `main` and shipped in **v0.2.0**. It is the work that
-turned a store the hub could not touch into one it can enumerate and link. (PRs #21–#26,
+turned a store the hub could not touch into one it can enumerate and link. (PRs #21–#30,
 below, landed _after_ the v0.2.0 tag and are in no released image.)
 
 #### The published images cannot start offline (#13)
@@ -499,7 +499,7 @@ genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins 
 "Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
 lines are untouched.
 
-### After v0.2.0 — PRs #21–#26 (2026-07-30), on `main`, in no released image
+### After v0.2.0 — PRs #21–#30 (2026-07-30), on `main`, in no released image
 
 #21 and #22 are research only — webhook delivery over a cloud bus, and the connector
 candidates — and their findings live under "Open decisions" below, where they gate real
@@ -622,6 +622,33 @@ actually ingest and disables the ones that cannot — before that it defaulted t
 whose only possible answer was the "cannot be ingested" error. Driven live: listed 217
 Pokémon sets from tcgcsv, ingested `ME: 30th Celebration` (67 created, 1.1 s) through the
 browser, and watched the sets table pick it up without a reload.
+
+#### zod 4, and the test that should have existed first (#30)
+
+Dependabot's zod major (#7) had been green since it opened, and **that meant nothing**:
+zod has exactly one consumer here — `apps/api/src/config/env.ts`, the boot-time config
+validator — and it had **no tests at all**, because every suite sets its own config. The
+tests were written first against zod 3, then the upgrade ran.
+
+The worry was zod 4's `.default()` no longer feeding its value through the rest of the
+pipeline. Three env vars are booleans derived from strings and **two fail towards less
+safety** if that degrades — `ENABLE_QUERY_CONSOLE='false'` and
+`OIDC_ALLOW_LOCAL_LOGIN='false'` are truthy _as strings_, and the second leaves the
+password door open on an SSO deployment that closed it. It did not bite, because the
+transform sits **outside** the default in this chain rather than inside it.
+
+**The assertions are `toBe(false)`, not `toBeFalsy()`, and that is the whole point** —
+`Boolean('false')` is `true`, so only an identity check catches a coercion degrading into
+a non-empty string. Mutation checked: one `v === 'true'` → `Boolean(v)` fails 8 of 18.
+
+Verified in the real container too: the image boots healthy, the workers start (a real
+`true`), the query console reports disabled (a real `false`), and a short
+`CREDENTIAL_MASTER_KEY` is still refused at boot.
+
+**Dependabot: 0 security alerts, four non-security PRs left** — #6 TypeScript 5→6, #8
+ESLint 9→10, #9 `@vitejs/plugin-react` 4→6, #11 a minor-and-patch group. All majors, none
+urgent. The lesson from #7 generalises: check what actually consumes the package before
+trusting green CI on a bump.
 
 ### Unmerged work
 

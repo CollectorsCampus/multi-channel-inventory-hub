@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { runConnectorContractTests } from '@hub/connector-sdk/testing';
-import type { Ctx } from '@hub/connector-sdk';
+import type { CreateListingRequest, Ctx } from '@hub/connector-sdk';
 import { centsToPrice, createShopifyConnector, priceToCents } from './shopify';
 import type { ShopifyClient } from './client';
 
@@ -18,6 +18,9 @@ const LOCATION = 'gid://shopify/Location/1';
 const VARIANT = 'gid://shopify/ProductVariant/111';
 const INVENTORY_ITEM = 'gid://shopify/InventoryItem/222';
 const PRODUCT = 'gid://shopify/Product/333';
+const NEW_PRODUCT = 'gid://shopify/Product/444';
+const NEW_VARIANT = 'gid://shopify/ProductVariant/555';
+const CODE = 'tcgcsv:662182:NM:NORMAL:EN';
 
 const ctx = (overrides: Partial<Ctx> = {}): Ctx => ({
   channelInstanceId: 'chan-1',
@@ -127,6 +130,28 @@ function mockClient(overrides: Record<string, unknown> = {}) {
 
       if (query.includes('SetVariantPrice')) {
         return { productVariantsBulkUpdate: { userErrors: overrides.priceErrors ?? [] } } as T;
+      }
+
+      if (query.includes('FindVariantBySku')) {
+        return (overrides.findBySku ?? { productVariants: { nodes: [] } }) as T;
+      }
+
+      if (query.includes('CreateDraftProduct')) {
+        return (overrides.createProduct ?? {
+          productCreate: {
+            product: { id: NEW_PRODUCT, variants: { nodes: [{ id: NEW_VARIANT }] } },
+            userErrors: overrides.createProductErrors ?? [],
+          },
+        }) as T;
+      }
+
+      if (query.includes('CreateProductVariant')) {
+        return (overrides.createVariant ?? {
+          productVariantsBulkCreate: {
+            productVariants: [{ id: NEW_VARIANT }],
+            userErrors: overrides.createVariantErrors ?? [],
+          },
+        }) as T;
       }
 
       throw new Error(`Unexpected query: ${query.slice(0, 40)}`);
@@ -363,8 +388,15 @@ describe('outbound', () => {
     expect(calls.some((c) => /delete/i.test(c.query))).toBe(false);
   });
 
+  /**
+   * A push still refuses to create, and that is not an oversight now that
+   * `listing.create` exists — it is the division of labour. A
+   * `PushListingRequest` carries no title, image or vendor, so a connector
+   * creating from one would be inventing them. Creation is a separate call
+   * where the operator supplies the content.
+   */
   it('refuses to invent a Shopify product', async () => {
-    const { client } = mockClient();
+    const { client, calls } = mockClient();
     const connector = createShopifyConnector({ client });
 
     await expect(
@@ -376,7 +408,10 @@ describe('outbound', () => {
         price: 100,
         currency: 'USD',
       }),
-    ).rejects.toThrow(/Create the product in Shopify/);
+    ).rejects.toThrow(/Create the listing first/);
+
+    // Refused before anything reached Shopify, not part-way through.
+    expect(calls).toEqual([]);
   });
 
   it('reports a missing locationId as configuration, not a crash', async () => {
@@ -628,6 +663,238 @@ describe('writing our id into the SKU field', () => {
     await expect(
       connector.updateListingSku!(ctx(), { externalListingId: VARIANT, sku: '704143' }),
     ).rejects.toThrow(/SKU already in use/);
+  });
+});
+
+describe('creating a listing', () => {
+  const req = (overrides: Partial<CreateListingRequest> = {}): CreateListingRequest => ({
+    sku: CODE,
+    title: 'Pikachu ex - 013/094',
+    optionName: 'Condition',
+    optionValue: 'Near Mint',
+    ...overrides,
+  });
+
+  it('creates the product as a draft, never active', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.createListing!(ctx(), req());
+
+    const create = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    // Nothing should become buyable because a background job ran.
+    expect((create?.variables?.product as { status: string }).status).toBe('DRAFT');
+    expect(result).toEqual({
+      externalListingId: NEW_VARIANT,
+      createdProduct: true,
+      alreadyExisted: false,
+    });
+  });
+
+  it('declares the condition as a product option, so the card is one product', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req());
+
+    const create = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    expect((create?.variables?.product as { productOptions: unknown }).productOptions).toEqual([
+      { name: 'Condition', values: [{ name: 'Near Mint' }] },
+    ]);
+  });
+
+  it('marks the variant tracked, or every later quantity push is ignored', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req({ price: 1299 }));
+
+    const fill = calls.find((c) => c.query.includes('SetVariantSku'));
+    const variants = fill?.variables?.variants as Array<Record<string, unknown>>;
+    expect(variants[0]).toMatchObject({
+      id: NEW_VARIANT,
+      price: '12.99',
+      inventoryItem: { sku: CODE, tracked: true },
+    });
+  });
+
+  it('sets no quantity, leaving stock to the one code path that owns it', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req());
+
+    // Rule 5: quantities move through InventoryService and the push path only.
+    expect(calls.some((c) => c.query.includes('SetInventoryQuantity'))).toBe(false);
+    const create = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    expect(JSON.stringify(create?.variables)).not.toContain('inventoryQuantities');
+  });
+
+  /**
+   * The failure that is visible to customers. Re-running a selection must not
+   * put a second copy of a card on the storefront.
+   */
+  it('returns the existing variant instead of creating a duplicate', async () => {
+    const { client, calls } = mockClient({
+      findBySku: { productVariants: { nodes: [{ id: VARIANT, sku: CODE }] } },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.createListing!(ctx(), req());
+
+    expect(result).toEqual({
+      externalListingId: VARIANT,
+      createdProduct: false,
+      alreadyExisted: true,
+    });
+    expect(calls.some((c) => c.query.includes('CreateDraftProduct'))).toBe(false);
+  });
+
+  /**
+   * Shopify's variant search is not an exact-match engine, and `sku:` is a
+   * prefix-ish query. Trusting it would hand back somebody else's variant to be
+   * linked, which points the ledger at the wrong listing.
+   */
+  it('ignores a near-match the search returned', async () => {
+    const { client } = mockClient({
+      findBySku: {
+        productVariants: { nodes: [{ id: VARIANT, sku: 'tcgcsv:662182:LP:NORMAL:EN' }] },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.createListing!(ctx(), req());
+
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.externalListingId).toBe(NEW_VARIANT);
+  });
+
+  /**
+   * Our codes contain colons, and Shopify's search syntax uses a colon as its
+   * field separator. Unquoted, `sku:tcgcsv:662182:...` parses as a field named
+   * `tcgcsv`, matches nothing, and reads as "not there" — which duplicates the
+   * product.
+   */
+  it('quotes the SKU in the search, because a code contains colons', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req());
+
+    const find = calls.find((c) => c.query.includes('FindVariantBySku'));
+    expect(find?.variables?.query).toBe(`sku:"${CODE}"`);
+  });
+
+  /**
+   * Escaping quotes but not backslashes leaves the escape character itself
+   * unescaped, so a value ending in `\` escapes the closing quote and the rest
+   * of the query joins the string — the search then means something nobody
+   * asked for. CodeQL caught this as `js/incomplete-sanitization` on the first
+   * version of this connector method.
+   */
+  it('escapes backslashes as well as quotes in the search value', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req({ sku: 'weird\\"sku\\' }));
+
+    const find = calls.find((c) => c.query.includes('FindVariantBySku'));
+    // The backslashes are doubled, so the trailing one cannot eat the closing
+    // quote, and the embedded quote stays escaped.
+    expect(find?.variables?.query).toBe('sku:"weird\\\\\\"sku\\\\"');
+  });
+
+  it('adds a variant to the sibling’s product rather than making a second one', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.createListing!(
+      ctx(),
+      req({
+        sku: 'tcgcsv:662182:LP:NORMAL:EN',
+        optionValue: 'Lightly Played',
+        siblingListingId: VARIANT,
+      }),
+    );
+
+    expect(calls.some((c) => c.query.includes('CreateDraftProduct'))).toBe(false);
+    const add = calls.find((c) => c.query.includes('CreateProductVariant'));
+    // The product resolved from the sibling variant, not invented.
+    expect(add?.variables?.productId).toBe(PRODUCT);
+    expect((add?.variables?.variants as Array<Record<string, unknown>>)[0]).toMatchObject({
+      optionValues: [{ optionName: 'Condition', name: 'Lightly Played' }],
+      inventoryItem: { sku: 'tcgcsv:662182:LP:NORMAL:EN', tracked: true },
+    });
+    expect(result).toEqual({
+      externalListingId: NEW_VARIANT,
+      createdProduct: false,
+      alreadyExisted: false,
+    });
+  });
+
+  /**
+   * Shopify has changed whether `productCreate` materialises a variant for a
+   * declared option before, and this connector has already been caught by three
+   * schema changes in one sitting. Both shapes must work.
+   */
+  it('creates the variant itself when productCreate returned none', async () => {
+    const { client, calls } = mockClient({
+      createProduct: {
+        productCreate: { product: { id: NEW_PRODUCT, variants: { nodes: [] } }, userErrors: [] },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.createListing!(ctx(), req());
+
+    const add = calls.find((c) => c.query.includes('CreateProductVariant'));
+    expect(add?.variables?.productId).toBe(NEW_PRODUCT);
+    expect(result.externalListingId).toBe(NEW_VARIANT);
+    expect(result.createdProduct).toBe(true);
+  });
+
+  it('applies tags verbatim and only when given', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req({ tags: ['Pokémon', 'ME02 Phantasmal Flames'] }));
+    const withTags = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    // Not normalised: the store's collections match an exact tag, accent and all.
+    expect((withTags?.variables?.product as { tags: string[] }).tags).toEqual([
+      'Pokémon',
+      'ME02 Phantasmal Flames',
+    ]);
+
+    const second = mockClient();
+    await createShopifyConnector({ client: second.client }).createListing!(ctx(), req());
+    const noTags = second.calls.find((c) => c.query.includes('CreateDraftProduct'));
+    expect((noTags?.variables?.product as Record<string, unknown>).tags).toBeUndefined();
+  });
+
+  it('refuses a request with no SKU, because that is the idempotency key', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await expect(connector.createListing!(ctx(), req({ sku: '  ' }))).rejects.toThrow(/no SKU/i);
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses a request with no title', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await expect(connector.createListing!(ctx(), req({ title: ' ' }))).rejects.toThrow(/no title/i);
+  });
+
+  it('surfaces a Shopify user error rather than reporting success', async () => {
+    const { client } = mockClient({
+      createProduct: {
+        productCreate: { product: null, userErrors: [{ message: 'Title cannot be blank' }] },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(connector.createListing!(ctx(), req())).rejects.toThrow(/Title cannot be blank/);
   });
 });
 

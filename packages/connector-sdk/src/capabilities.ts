@@ -28,6 +28,28 @@ export const CAPABILITIES = [
   // --- outbound, live -------------------------------------------------------
   /** Create or update a listing. */
   'listing.push',
+
+  /**
+   * Bring a listing into existence that the platform does not have yet.
+   *
+   * Separate from `listing.push`, which syncs stock and price to a listing that
+   * already exists and carries nothing a platform needs in order to *create*
+   * one — no title, no image, no vendor. `connector-shopify`'s `pushListing`
+   * refuses to create for exactly that reason: "a Shopify product carries
+   * titles, images, SEO and publication state the hub has no opinion about, and
+   * inventing them would produce listings no seller wants."
+   *
+   * This capability does not delete that objection; it answers it, by making
+   * the content an explicit input the operator supplies rather than something
+   * the hub invents.
+   *
+   * **Never a side effect.** A thirteen-hundred-row import must not become
+   * thirteen hundred storefront products, so the core only calls this for
+   * items an operator selected. Connectors must create as a **draft** or the
+   * platform's nearest unpublished equivalent: nothing should become buyable
+   * because a background job ran.
+   */
+  'listing.create',
   /** Change a listing's price. */
   'listing.price',
   /** Change a listing's advertised quantity. */
@@ -94,6 +116,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  */
 export const CAPABILITY_METHODS = {
   'listing.push': 'pushListing',
+  'listing.create': 'createListing',
   'listing.price': 'updatePrice',
   'listing.quantity': 'updateQuantity',
   'listing.delist': 'delist',

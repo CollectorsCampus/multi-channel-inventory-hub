@@ -7,6 +7,8 @@ export interface CatalogSourceSummary {
   description?: string;
   games: string[];
   providesExternalIds: string[];
+  /** Whether the source can fill the local catalog (bulk ingest). */
+  canIngest: boolean;
 }
 
 export interface CatalogCandidate {
@@ -54,6 +56,95 @@ export function useCatalogSearch(text: string, game?: string, setName?: string) 
     // limits; only ask once the operator has typed something meaningful.
     enabled: trimmed.length >= 3,
     staleTime: 60_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The local catalog — what has been ingested, served from our own database.
+// ---------------------------------------------------------------------------
+
+export interface LocalSetSummary {
+  game: string | null;
+  setName: string;
+  items: number;
+}
+
+export function useLocalSets(game?: string) {
+  return useQuery({
+    queryKey: ['catalog', 'local', 'sets', game],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (game) params.set('game', game);
+      const qs = params.toString();
+      return apiFetch<LocalSetSummary[]>(`/catalog/local/sets${qs ? `?${qs}` : ''}`);
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useLocalSearch(text: string, game?: string, setName?: string) {
+  const trimmed = text.trim();
+  const set = setName?.trim();
+  return useQuery({
+    queryKey: ['catalog', 'local', 'search', trimmed, game, set],
+    queryFn: () => {
+      const params = new URLSearchParams({ text: trimmed, limit: '100' });
+      if (game) params.set('game', game);
+      if (set) params.set('setName', set);
+      return apiFetch<{ candidates: CatalogCandidate[] }>(
+        `/catalog/local/search?${params.toString()}`,
+      );
+    },
+    // Unlike the remote search this is our own database, so a set alone — the
+    // browse case — is a valid query and there is no rate limit to protect.
+    enabled: trimmed.length >= 2 || Boolean(set),
+    staleTime: 30_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Ingest — filling the local catalog from a source. Admin only.
+// ---------------------------------------------------------------------------
+
+export interface IngestableSet {
+  setId: string;
+  name: string;
+  game?: string;
+  releasedAt?: string;
+}
+
+export function useIngestableSets(sourceKey: string, game: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['catalog', 'ingest', 'sets', sourceKey, game],
+    queryFn: () => {
+      const params = new URLSearchParams({ sourceKey });
+      if (game) params.set('game', game);
+      return apiFetch<IngestableSet[]>(`/catalog/ingest/sets?${params.toString()}`);
+    },
+    // Listing a source's sets is a third-party call; only on request.
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export interface IngestReport {
+  sourceKey: string;
+  sets: number;
+  products: number;
+  created: number;
+  refreshed: number;
+  unchanged: number;
+  problems: Array<{ set: string; message: string }>;
+  durationMs: number;
+}
+
+export function useRunIngest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { sourceKey: string; game?: string; setIds?: string[] }) =>
+      apiFetch<IngestReport>('/catalog/ingest', { method: 'POST', body: JSON.stringify(body) }),
+    // The local catalog just changed; every local view is stale.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['catalog', 'local'] }),
   });
 }
 

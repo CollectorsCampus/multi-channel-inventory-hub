@@ -231,6 +231,37 @@ pre.payload {
   padding-left: 1.2rem;
 }
 
+/* A button that acts as navigation within the page — set names on the catalog
+   page fill the search rather than submitting anything. */
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  text-align: left;
+}
+
+.linklike:hover {
+  text-decoration: underline;
+}
+
+.num {
+  text-align: right;
+}
+
+/* The ingest picker: many small checkbox rows, columnar so a 100-set game
+   stays scannable. */
+.ingest-sets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 0.25rem 1rem;
+  margin: 0.75rem 0;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
 /* A difference table sits inside a card, so it drops the full-width chrome the
    browse tables carry. */
 table.compact {

@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, type OnModuleInit } from '@nestj
 import {
   assertValidCatalogSource,
   providesExternalId,
+  supportsBulkIngest,
   type CatalogCandidate,
   type CatalogCtx,
   type CatalogSearchQuery,
@@ -26,6 +27,12 @@ export interface CatalogSourceSummary {
   description?: string;
   games: readonly string[];
   providesExternalIds: readonly string[];
+  /**
+   * Whether the source can fill the local catalog (`listSets` + `fetchSet`).
+   * Exposed so the ingest UI never offers a source whose only possible answer
+   * is the "cannot be ingested" error.
+   */
+  canIngest: boolean;
 }
 
 /** A candidate plus which source produced it. */
@@ -85,6 +92,7 @@ export class CatalogSourceRegistry implements OnModuleInit {
       description: s.description,
       games: s.games,
       providesExternalIds: s.providesExternalIds ?? [],
+      canIngest: supportsBulkIngest(s),
     }));
   }
 

@@ -608,6 +608,21 @@ Three things learned building and reviewing it:
   reachable while tcgcsv is the only ingesting source — the first Magic ingest plus one
   scryfall-scoped propose would have hit it.
 
+#### The catalog screen (#29)
+
+`/catalog` in the web app, in the top nav: the local catalog browsable (sets held with
+counts, click a set to browse it — the click fills the search with the **stored**
+spelling, because set names are case-sensitive downstream), local search, and an
+admin-only ingest panel that lists a source's sets (newest first), takes an explicit
+selection, runs, and shows the report. Ingest was API-only before this; every hole the
+session prompt named — "no UI for ingest, local browse or set listing" — is this screen.
+
+`CatalogSourceSummary` gained **`canIngest`** so the panel defaults to a source that can
+actually ingest and disables the ones that cannot — before that it defaulted to Scryfall,
+whose only possible answer was the "cannot be ingested" error. Driven live: listed 217
+Pokémon sets from tcgcsv, ingested `ME: 30th Celebration` (67 created, 1.1 s) through the
+browser, and watched the sets table pick it up without a reload.
+
 ### Unmerged work
 
 None. #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added

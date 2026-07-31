@@ -3,6 +3,7 @@ import { AppShell } from './AppShell';
 import { InventoryListPage } from './pages/InventoryListPage';
 import { ItemDetailPage } from './pages/ItemDetailPage';
 import { IntakePage } from './pages/IntakePage';
+import { CatalogPage } from './pages/CatalogPage';
 import { ChannelsPage } from './pages/ChannelsPage';
 import { MatchPage } from './pages/MatchPage';
 import { ActivityPage } from './pages/ActivityPage';
@@ -73,6 +74,12 @@ const intakeRoute = createRoute({
   component: IntakePage,
 });
 
+const catalogRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/catalog',
+  component: CatalogPage,
+});
+
 const channelsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/channels',
@@ -110,6 +117,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   itemRoute,
   intakeRoute,
+  catalogRoute,
   channelsRoute,
   matchRoute,
   activityRoute,

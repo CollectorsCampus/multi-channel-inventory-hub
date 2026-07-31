@@ -25,7 +25,7 @@ Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fi
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
 because it explains _why_ each landed, which the CHANGELOG does not.
 
-`main` is green: **782 tests** (api 454, tcgplayer 102, shopify 87, sdk 61, tcgcsv 45,
+`main` is green: **830 tests** (api 489, tcgplayer 102, shopify 100, sdk 61, tcgcsv 45,
 scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
@@ -499,7 +499,7 @@ genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins 
 "Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
 lines are untouched.
 
-### After v0.2.0 — PRs #21–#30 (2026-07-30), on `main`, in no released image
+### After v0.2.0 — PRs #21–#33 (2026-07-30/31), on `main`, in no released image
 
 #21 and #22 are research only — webhook delivery over a cloud bus, and the connector
 candidates — and their findings live under "Open decisions" below, where they gate real
@@ -649,6 +649,132 @@ Verified in the real container too: the image boots healthy, the workers start (
 ESLint 9→10, #9 `@vitejs/plugin-react` 4→6, #11 a minor-and-patch group. All majors, none
 urgent. The lesson from #7 generalises: check what actually consumes the package before
 trusting green CI on a bump.
+
+#### The hub's SKU is a composite code, not a bare product id (#32)
+
+`apps/api/src/inventory/sku-code.ts` — `encodeSkuCode` / `parseSkuCode`, pure functions
+the way `allocation.ts` and `propose.ts` are, plus a new match reason `hub-sku` ranked
+**certain**, and `MatchingService.confirm` now stamps the full code through `listing.sku`.
+
+The 139 SKUs on the live store carry tcgcsv's **product**-level id, which is right for
+sealed product and wrong for singles: a card in Near Mint and the same card in Damaged
+share that id, so the matcher's `certain` path — an equality test — would equate them.
+The code carries `Sku`'s natural key instead, which already has the shape:
+
+```
+tcgcsv:662182:NM:1ST_EDITION_HOLOFOIL:EN
+```
+
+`<sourceKey>:<sourceId>:<condition>:<printing>:<language>`, **one format for singles and
+sealed alike** — sealed is `tcgcsv:704143:SEALED:NORMAL:EN` — because two formats would
+mean every reader has to work out which one it is looking at. That was the operator's
+call: "do the composite skus for singles and sealed".
+
+- **Edition gets no segment**, deliberately. `printing` already packs edition and finish
+  into one composite token, because TCGPlayer's `Condition` column packs the same four
+  dimensions into one string and `condition.ts` splits and rebuilds it losslessly. A
+  segment of its own would mean changing `Sku`'s natural key to express something already
+  expressible.
+- **Colons, because the operator's existing seller SKUs are dash-heavy** (`10-10050-122`,
+  `UGDSQR######`) — a dash separator could not be told apart from a code someone else
+  wrote. A colon appears in none of them. (It does appear in Shopify's search syntax,
+  which is what #33's quoting is about.)
+- **The parser is strict because it runs on other people's data.** It sees every listing
+  SKU in the store, and 434 of the operator's 867 carry a seller SKU with nothing to do
+  with this hub. Reading one of those as a code would report `certain` — the one tier
+  offered for bulk acceptance — on a guess. It validates **shapes, not vocabularies**, so
+  a new language code needs no change here, and it never trims or normalises: a value that
+  changes shape between writing and reading turns tomorrow's exact match into a guess.
+- **`hub-sku` is checked across every namespace before the embedded-id test, and that
+  ordering is load-bearing.** A code contains the bare id, and an ingested item carries
+  both a `tcgcsv` and a `tcgplayer` ref holding the same number, so the embedded test is
+  genuinely reachable first and would report `probable` for exact evidence. Mutation
+  checked twice — disabling the branch, and folding it into the shared loop, each fail the
+  ordering test.
+- **The code is assembled from the re-fetched candidate and the row `ensureSku` actually
+  wrote, never from the request.** `language` is defaulted from the catalogue before `EN`,
+  so a code built from the request would name a printing that does not exist — on a
+  storefront, where nothing notices until a re-match fails. `ensureSku` now returns the
+  dimensions it stored, for that reason.
+
+The payoff beyond matching: `deriveSkuDimensions` reads condition out of the listing
+_title_ and returns `undefined` rather than defaulting, because software guessing a card's
+condition is software guessing its value. A code carries it as data, so the guess goes.
+
+**The 139 live SKUs still hold bare ids.** Re-stamping them is authorised in principle and
+has not been done.
+
+#### `listing.create` — a connector may bring a listing into existence (#33)
+
+The connector half of Shopify product creation (open decision 5, now two-thirds built).
+A new capability + `Connector.createListing`, `CreateListingRequest` /
+`CreateListingResult` in the SDK, and Shopify's implementation.
+
+**A new capability, not a change to `listing.push`.** `pushListing` still refuses to
+create and the reason has not changed — a `PushListingRequest` carries no title, image or
+vendor, so a connector creating from one would be inventing them. `listing.create` answers
+that objection rather than deleting it: the content is an input the operator supplies.
+
+- **One product per card, a variant per condition** — the operator's choice, and the shape
+  `Sku`'s natural key already has. So creation is sometimes an _add a variant_, and the
+  core names a **sibling variant it already drives** (`siblingListingId`) and lets the
+  connector resolve whatever the platform calls the thing above it. The core sends no
+  product id because it does not store one, and **should not start**: adding a column to
+  express something it can already point at is the wrong trade.
+- **Draft is hard-coded, not a request field.** Nothing should become buyable because a
+  background job ran, and a parameter is an invitation for some future caller to pass
+  `ACTIVE`.
+- **No quantity is set at creation.** Stock flows through `listing.quantity` like
+  everything else, so there is exactly one code path from the ledger to a platform's
+  numbers (rule 5). `inventoryItem.tracked` **is** set, because an untracked variant
+  silently ignores every quantity push that follows — a failure that looks like nothing
+  happening.
+- **Idempotency is a SKU lookup, checked first**, and the equality is re-checked in the
+  connector rather than trusted to Shopify's search, which is not an exact-match engine: a
+  near-match returned as exact would hand back somebody else's variant to be linked.
+- **The SKU must be quoted in that search.** Our codes contain colons and Shopify's search
+  syntax uses a colon as its field separator, so unquoted
+  `sku:tcgcsv:704143:SEALED:NORMAL:EN` parses as a field named `tcgcsv`, matches nothing,
+  reads as "not there", and duplicates the product.
+- **CodeQL caught a real `js/incomplete-sanitization`** in the first version of that
+  quoting: escaping `"` without `\` lets a value ending in a backslash escape the closing
+  quote, and the rest of the query becomes part of the string — which for an idempotency
+  check reads as "not there" and duplicates a product. Backslashes first, then quotes, in
+  one named helper. Reachable even though a hub code contains neither character, because
+  `createListing` takes `sku` as an opaque string and a connector must not assume its
+  caller validated anything. **Watch for this in any new search-string building.**
+- **Both `productCreate` shapes are handled** — Shopify has changed whether it materialises
+  a variant for a declared option, and this connector has already been caught by three
+  schema changes in one sitting. It fills in the variant it made, or creates one if it
+  made none.
+
+All three GraphQL documents were validated against the live `2026-07` schema with
+`validate_graphql_codeblocks` **before** being written into the connector. They need
+`read_products` and `write_products`, both already declared — no scope change.
+
+**Nothing has been created on a real store yet**, and the core service, endpoint and UI
+that call this do not exist.
+
+#### How the store's collections actually work (measured 2026-07-31)
+
+Not code, but it decides what a created product must carry, and getting it wrong is
+invisible rather than loud.
+
+- **All 23 collections are smart collections on a single TAG equality rule.** A tag is the
+  only thing that puts a product in front of a customer. A product with the wrong tags
+  exists in the admin and appears nowhere in the shop.
+- **Catalogue names are not the store's tags.** tcgcsv says `Pokemon`, the rule wants
+  `Pokémon`; tcgcsv says `Magic`, the tag is `Magic: The Gathering`. Set tags are _usually_
+  the tcgcsv name minus the colon (`SV04: Paradox Rift` → `SV04 Paradox Rift`) — but
+  `SV: Prismatic Evolutions` exists as **both** `SV085 Prismatic Evolutions` and
+  `SV85 Prismatic Evolutions`.
+- **So the hub must never derive a tag.** `CreateListingRequest.tags` is applied verbatim
+  and only when given; the operator picks from the store's real vocabulary
+  (`productTags`), pre-filled with a guess, and blank means no tags. That subsumes the
+  alternatives, which is why it was chosen over a formal question.
+- `vendor` is the publisher, `productType` is unused, and tags follow kind / game / set
+  (`Booster Pack`, `Pokémon`, `SV04 Paradox Rift`). **No singles tag exists yet** — singles
+  are new ground for this store.
 
 ### Unmerged work
 
@@ -1349,41 +1475,32 @@ a defect to fix, and none blocks anything else.
    extensions, and cannot make an Admin API call. The 24-hour client-credentials token
    machinery in `connector-shopify/src/tokens.ts` stays exactly as it is.
 
-5. **Creating Shopify products for cards the store does not carry yet.** Requested by the
-   operator 2026-07-30. Their Shopify holds sealed product and a few promos; the ledger will
-   hold singles, and there is currently no way to get one onto the storefront except
-   creating the product by hand first.
+5. **Creating Shopify products for cards the store does not carry yet — two of three
+   layers built.** Requested by the operator 2026-07-30. Their Shopify holds sealed product
+   and a few promos; the ledger will hold singles, and there was no way to get one onto the
+   storefront except creating the product by hand first.
 
-   `connector-shopify`'s `pushListing` **refuses to create**, deliberately, and its comment
-   gives the reason: a Shopify product carries titles, images, SEO and publication state the
-   hub has no opinion about, and "inventing them would produce listings no seller wants".
-   That reasoning still holds — so this is not "delete the guard", it is "decide what the
-   hub is entitled to invent".
+   Every decision this entry once listed as open has been settled and built: the SKU code
+   (#32) and `listing.create` (#33) above. **What remains is the core third** — a service,
+   an endpoint and a screen that select SKUs and call the connector. Its shape is fixed by
+   what the connector already expects:
 
-   **The operator's own constraint is the important one: it must not be automatic.** Their
-   words — it "probably shouldn't be automatic to create everything that's in say your
-   tcgplayer export". A 1,333-row import must never become 1,333 new storefront products.
-   So creation is an explicit, selected action over specific SKUs, never a mirror of intake
-   and never a side effect of a push.
-
-   Decisions to settle before building:
-
-   - **What fills the product.** tcgcsv supplies name, set, image URL and a market price,
-     which is enough for a usable draft. It supplies nothing for SEO, description or
-     collections.
-   - **Product-per-card, variant-per-condition** is the shape that matches `Sku`
-     (`condition` + `printing` + `language`) and the way the store already models sealed
-     items as a single "Default Title" variant. Worth confirming against how the operator
-     wants singles browsed.
-   - **Create as draft, never active.** Nothing should become buyable because a background
-     job ran. Publication is the seller's decision.
-   - **Idempotency is now cheap** and was not before: the seller-SKU field carries the
-     tcgcsv product id (below), so "does this card already exist in the store" is a lookup
-     rather than a guess. Build creation on that, or it will make duplicates.
-   - **Cards absent from the catalogue.** The operator notes "some won't be listed on
-     TCGPlayer". Creation must therefore work from a `Sku` with no `CatalogExternalRef` at
-     all, using whatever the ledger holds — otherwise the feature covers everything except
-     the cases that most need it.
+   - **Selected SKUs only, never automatic.** The operator's constraint, verbatim: it
+     "probably shouldn't be automatic to create everything that's in say your tcgplayer
+     export". A 1,333-row import must never become 1,333 storefront products, so creation
+     is an explicit action over specific SKUs and never a side effect of intake or a push.
+   - **The core decides grouping.** Find a sibling allocation for another `Sku` of the same
+     `CatalogItem` on this channel and pass its `externalListingId` as `siblingListingId`.
+     Deciding two SKUs are the same card is a catalogue judgement, which is the core's
+     (rule 6) — and the core still stores no product ids.
+   - **It must work from a `Sku` with no `CatalogExternalRef` at all.** The operator notes
+     "some won't be listed on TCGPlayer", so title and image fall back to whatever the
+     ledger holds. Otherwise the feature covers everything except the cases that most need
+     it.
+   - **Record the allocation and link it, then let the normal push path set quantity.**
+     Creation deliberately sets none.
+   - **Tags come from the operator's pick, never derived** — see the collections section
+     above, which is the reason.
 
 6. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
    as a generic `sync_failure` warning, so an operator cannot tell "your secret is wrong,
@@ -1455,9 +1572,17 @@ Worth stating plainly, because the README is optimistic by nature:
 - **Matching has never produced a live `certain`.** `enumerateListings`, the proposal
   engine, `MatchingService.confirm` and `listing.sku` are all proven against the real
   store — 139 links and 139 SKU writes came through them — but every live proposal to
-  date has been `possible · name-partial`. The linked listings now carry the catalogue
-  product id in their SKU field, so a re-match _should_ reach `certain`; nobody has run
-  one.
+  date has been `possible · name-partial`. The linked listings carry the catalogue
+  product id in their SKU field, so a re-match _should_ reach `external-id`; nobody has
+  run one.
+- **No hub SKU code has ever been written to a live listing.** #32's `hub-sku` reason is
+  the only path to a live `certain`, and the 139 live SKUs still hold bare product ids.
+  Re-stamping them is authorised and pending — take a fresh backup first (the previous
+  one is `private/shopify-sku-backup-2026-07-30T16-38-55.csv`) and try a single row
+  before the batch.
+- **Nothing has ever been created on a real store.** `createListing` (#33) is proven
+  against mocks and its documents against the live `2026-07` schema, but no product and
+  no variant has been created, and the core service that would call it does not exist.
 - **The ingest has never run at catalogue scale.** #24 built the bulk path and 27 Pokémon
   sets (433 items) have been through it, but no full-game ingest — Magic is 453 groups —
   has ever run.

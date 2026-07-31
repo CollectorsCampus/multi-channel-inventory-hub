@@ -5,6 +5,7 @@ import { ChannelContextFactory } from '../connectors/channel-context.service';
 import { CatalogSourceRegistry } from '../catalog/catalog-source-registry.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { MinIntervalLimiter, intervalFor } from '../catalog/rate-limiter';
+import { encodeSkuCode } from '../inventory/sku-code';
 import { IntakeService } from '../inventory/intake.service';
 import { InventoryService } from '../inventory/inventory.service';
 import {
@@ -278,7 +279,7 @@ export class MatchingService {
     // them concurrently would spend the retry budget contending with itself.
     for (const link of links) {
       try {
-        const outcome = await this.applyLink(channelInstanceId, link);
+        const { outcome, skuCode } = await this.applyLink(channelInstanceId, link);
         if (outcome === 'unchanged') result.unchanged++;
         else result.linked++;
 
@@ -289,7 +290,7 @@ export class MatchingService {
           await this.limiter.run(connector.key, intervalFor(connector.rateLimit), () =>
             connector.updateListingSku!(ctx, {
               externalListingId: link.externalListingId,
-              sku: link.sourceId,
+              sku: skuCode,
             }),
           );
           result.skuWritten++;
@@ -316,7 +317,7 @@ export class MatchingService {
   private async applyLink(
     channelInstanceId: string,
     link: ConfirmLink,
-  ): Promise<'linked' | 'unchanged'> {
+  ): Promise<{ outcome: 'linked' | 'unchanged'; skuCode: string }> {
     const externalListingId = link.externalListingId.trim();
     if (externalListingId === '') {
       throw new BadRequestException('A link needs the channel listing id.');
@@ -355,6 +356,20 @@ export class MatchingService {
 
     const inventoryItemId = ensured.inventoryItemId;
 
+    // Built from the re-fetched candidate and the dimensions `ensureSku`
+    // actually stored, never from the request: the client's `sourceKey` may be a
+    // different spelling of the registry's, and `printing`/`language` are
+    // defaulted server-side — `language` from the *catalogue* before `EN`. A
+    // code assembled from the request would disagree with the row it names, on
+    // a storefront, where nothing would notice until a re-match failed.
+    const skuCode = encodeSkuCode({
+      sourceKey: candidate.sourceKey,
+      sourceId: candidate.sourceId,
+      condition: ensured.condition,
+      printing: ensured.printing,
+      language: ensured.language,
+    });
+
     if (conflicting && conflicting.inventoryItemId !== inventoryItemId) {
       throw new BadRequestException(
         `Listing ${externalListingId} is already linked to a different inventory item. ` +
@@ -373,7 +388,7 @@ export class MatchingService {
       existing?.externalListingId === externalListingId &&
       (link.price === undefined || existing.price === link.price)
     ) {
-      return 'unchanged';
+      return { outcome: 'unchanged', skuCode };
     }
 
     // The mirror of the guard above, and the one that was missing.
@@ -410,7 +425,7 @@ export class MatchingService {
       ...(link.price !== undefined ? { price: link.price } : {}),
     });
 
-    return 'linked';
+    return { outcome: 'linked', skuCode };
   }
 
   /** Every listing id this channel already drives, so matching skips them. */

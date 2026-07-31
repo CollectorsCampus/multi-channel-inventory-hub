@@ -1,5 +1,6 @@
 import { parseCondition, toPrinting } from '@hub/connector-tcgplayer';
 import type { ChannelListing } from '@hub/connector-sdk';
+import { parseSkuCode, type SkuCode } from '../inventory/sku-code';
 
 /**
  * Proposing links between a channel's existing listings and the catalogue.
@@ -48,6 +49,15 @@ const CONFIDENCE_RANK: Record<MatchConfidence, number> = {
 export type MatchReason =
   /** The channel's barcode equals the catalogue's. Only real evidence of identity here. */
   | 'barcode'
+  /**
+   * The channel's SKU field holds a code this hub wrote, naming this product.
+   *
+   * Stronger than `external-id` even though both are exact, because a code
+   * names the *printing* — condition, finish and language — where a bare
+   * product id names only the card. That is the difference between knowing
+   * which listing to link and knowing which listing to link a Damaged copy to.
+   */
+  | 'hub-sku'
   /** The channel's SKU field equals a platform id the catalogue holds. */
   | 'external-id'
   /** The channel's SKU field contains such an id, alongside other text. */
@@ -61,6 +71,7 @@ export type MatchReason =
 
 const REASON_CONFIDENCE: Record<MatchReason, MatchConfidence> = {
   barcode: 'certain',
+  'hub-sku': 'certain',
   'external-id': 'certain',
   'external-id-embedded': 'probable',
   'name-and-set': 'probable',
@@ -219,6 +230,15 @@ export function splitChannelTitle(title: string): {
 export function deriveSkuDimensions(
   listing: ChannelListing,
 ): { condition: string; printing: string; language: string } | undefined {
+  // A code this hub wrote states the dimensions outright, so read them rather
+  // than re-deriving them from prose. The title is what a human typed; the code
+  // is what we wrote. This holds whether or not the code resolves to a
+  // catalogue product — it describes the listing either way.
+  const code = parseSkuCode(listing.sku);
+  if (code) {
+    return { condition: code.condition, printing: code.printing, language: code.language };
+  }
+
   const { qualifier } = splitChannelTitle(listing.title);
   if (qualifier === undefined) return undefined;
 
@@ -246,6 +266,9 @@ export function scoreCandidates(
 
   const listingBarcode = listing.barcode?.trim();
   const listingSku = listing.sku?.trim();
+  // Parsed once, not per target: it depends only on the listing, and a store
+  // page is a hundred listings against several hundred candidates.
+  const listingSkuCode = parseSkuCode(listing.sku);
   const { productName } = splitChannelTitle(listing.title);
   const normalizedName = normalizeTitle(productName);
   const squashedName = squash(productName);
@@ -254,6 +277,7 @@ export function scoreCandidates(
     const reason = bestReasonFor(target, {
       listingBarcode,
       listingSku,
+      listingSkuCode,
       normalizedName,
       squashedName,
     });
@@ -297,6 +321,7 @@ function bestReasonFor(
   ctx: {
     listingBarcode?: string;
     listingSku?: string;
+    listingSkuCode?: SkuCode;
     normalizedName: string;
     squashedName: string;
   },
@@ -310,7 +335,32 @@ function bestReasonFor(
     };
   }
 
-  // 2. The seller's SKU field holding a platform id. Common where a store was
+  // 2. A code this hub wrote. Checked across every namespace before anything
+  // below, and that ordering is load-bearing: a code *contains* the bare
+  // product id, so the embedded test in step 3 would otherwise fire first and
+  // report `probable` for what is actually exact evidence. An ingested item
+  // carries both a `tcgcsv` and a `tcgplayer` ref holding the same number, so
+  // the wrong one is genuinely reachable first.
+  //
+  // Compared by iterating entries rather than indexing `externalIds` with the
+  // parsed key: that key comes off a listing in someone else's store, and using
+  // remote data as a property name is what CodeQL flagged in `MatchingService`.
+  if (ctx.listingSkuCode) {
+    const code = ctx.listingSkuCode;
+    for (const [namespace, value] of Object.entries(target.externalIds ?? {})) {
+      if (namespace !== code.sourceKey || value !== code.sourceId) continue;
+
+      return {
+        reason: 'hub-sku',
+        detail:
+          `SKU "${ctx.listingSku}" is this hub's code for the ${namespace} id ${value} ` +
+          `(${code.condition} / ${code.printing} / ${code.language})`,
+        overlap: 1,
+      };
+    }
+  }
+
+  // 3. The seller's SKU field holding a platform id. Common where a store was
   // previously run by another tool, which is exactly the migration case.
   if (ctx.listingSku) {
     for (const [namespace, value] of Object.entries(target.externalIds ?? {})) {
@@ -332,7 +382,7 @@ function bestReasonFor(
     }
   }
 
-  // 3. Names. Everything below here is a resemblance, not an identity.
+  // 4. Names. Everything below here is a resemblance, not an identity.
   const targetNormalized = normalizeTitle(target.name);
   const targetSquashed = squash(target.name);
   if (targetNormalized === '') return undefined;
@@ -350,7 +400,7 @@ function bestReasonFor(
     return { reason: 'name', detail: `name matches "${target.name}"`, overlap: 1 };
   }
 
-  // 4. Containment, either direction. Weakest thing worth showing a human.
+  // 5. Containment, either direction. Weakest thing worth showing a human.
   if (
     ctx.normalizedName.length >= 4 &&
     (targetNormalized.includes(ctx.normalizedName) || ctx.normalizedName.includes(targetNormalized))

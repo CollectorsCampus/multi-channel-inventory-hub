@@ -306,6 +306,17 @@ export interface EnumerateListingsRequest {
   search?: string;
 }
 
+export interface ListTagsRequest {
+  /**
+   * Most tags to return. A ceiling, not a page size.
+   *
+   * A connector reaching it should return what it has rather than fail: a
+   * truncated vocabulary is still better than none for someone choosing from a
+   * list, and the caller is told nothing it could act on by an error here.
+   */
+  limit?: number;
+}
+
 // ---------------------------------------------------------------------------
 // File transport (ADR 0002)
 // ---------------------------------------------------------------------------

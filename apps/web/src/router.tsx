@@ -6,6 +6,7 @@ import { IntakePage } from './pages/IntakePage';
 import { CatalogPage } from './pages/CatalogPage';
 import { ChannelsPage } from './pages/ChannelsPage';
 import { MatchPage } from './pages/MatchPage';
+import { ListOnChannelPage } from './pages/ListOnChannelPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { QueryConsolePage } from './pages/QueryConsolePage';
 
@@ -96,6 +97,16 @@ const matchRoute = createRoute({
   component: MatchPage,
 });
 
+/**
+ * The mirror of `/match`, and reached the same way — from a channel. Matching
+ * links listings that exist; this makes ones that do not.
+ */
+const listRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/list',
+  component: ListOnChannelPage,
+});
+
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/activity',
@@ -120,6 +131,7 @@ const routeTree = rootRoute.addChildren([
   catalogRoute,
   channelsRoute,
   matchRoute,
+  listRoute,
   activityRoute,
   queryConsoleRoute,
 ]);

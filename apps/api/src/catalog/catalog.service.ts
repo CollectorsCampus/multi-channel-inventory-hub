@@ -270,8 +270,14 @@ export class CatalogService {
  * the local row is ever missing, then `tcgplayer` because it is the id a
  * marketplace listing is keyed on, then whatever else exists. Sorted before
  * picking so the choice does not depend on database row order.
+ *
+ * Exported so that listing creation stamps a SKU code under the same
+ * attribution a later proposal run will present the item under. Two
+ * implementations of this choice would disagree eventually, and the symptom
+ * would be a `hub-sku` code on a live storefront that the matcher no longer
+ * recognises as its own.
  */
-function pickAttribution(
+export function pickAttribution(
   refs: ReadonlyArray<{ source: string; externalId: string }>,
 ): { source: string; externalId: string } | undefined {
   const preference = ['tcgcsv', 'tcgplayer', 'scryfall'];

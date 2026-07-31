@@ -33,6 +33,7 @@ const ctx = (overrides: Partial<Ctx> = {}): Ctx => ({
 /** A mock Admin API that records what it was asked to do. */
 function mockClient(overrides: Record<string, unknown> = {}) {
   const calls: Array<{ query: string; variables?: Record<string, unknown> }> = [];
+  let tagPage = 0;
 
   const client: ShopifyClient = {
     async request<T>(_c: Ctx, query: string, variables?: Record<string, unknown>): Promise<T> {
@@ -152,6 +153,21 @@ function mockClient(overrides: Record<string, unknown> = {}) {
             userErrors: overrides.createVariantErrors ?? [],
           },
         }) as T;
+      }
+
+      if (query.includes('HubProductTags')) {
+        const pages = (overrides.tagPages ?? [
+          {
+            productTags: {
+              pageInfo: { hasNextPage: false },
+              edges: [{ node: 'Pokémon' }, { node: 'SV04 Paradox Rift' }],
+            },
+          },
+        ]) as unknown[];
+
+        // Served in order, so a test can prove pagination is followed rather
+        // than the first page being taken for the whole vocabulary.
+        return (pages[tagPage++] ?? pages[pages.length - 1]) as T;
       }
 
       throw new Error(`Unexpected query: ${query.slice(0, 40)}`);
@@ -1057,6 +1073,69 @@ describe('enumerating existing listings', () => {
     // A placeholder id would be confirmable, and would link stock to nothing.
     expect(page.listings).toHaveLength(1);
     expect(page.listings[0]!.externalListingId).toBe(VARIANT);
+  });
+});
+
+describe('reading the store’s tag vocabulary', () => {
+  it('returns the tags exactly as the store spells them', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const tags = await connector.listTags!(ctx(), {});
+
+    // `Pokémon` and `Pokemon` are two different tags, and only one of them is
+    // wired to a collection. Normalising here would offer the wrong one and
+    // produce a product that is visible in the admin and in no collection.
+    expect(tags).toEqual(['Pokémon', 'SV04 Paradox Rift']);
+  });
+
+  /**
+   * A partial vocabulary is a trap: the operator picks from what they are
+   * shown, and a tag missing from the list looks exactly like a tag the store
+   * does not use.
+   */
+  it('follows pagination rather than taking the first page for the whole vocabulary', async () => {
+    const { client, calls } = mockClient({
+      tagPages: [
+        {
+          productTags: {
+            pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+            edges: [{ node: 'Booster Pack' }],
+          },
+        },
+        {
+          productTags: { pageInfo: { hasNextPage: false }, edges: [{ node: 'Elite Trainer Box' }] },
+        },
+      ],
+    });
+    const connector = createShopifyConnector({ client });
+
+    const tags = await connector.listTags!(ctx(), {});
+
+    expect(tags).toEqual(['Booster Pack', 'Elite Trainer Box']);
+    expect(calls[1]!.variables).toMatchObject({ after: 'cursor-1' });
+  });
+
+  it('stops at the ceiling it was given', async () => {
+    const { client, calls } = mockClient({
+      tagPages: [
+        {
+          productTags: {
+            pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+            edges: [{ node: 'One' }],
+          },
+        },
+      ],
+    });
+    const connector = createShopifyConnector({ client });
+
+    const tags = await connector.listTags!(ctx(), { limit: 1 });
+
+    expect(tags).toEqual(['One']);
+    // Truncated rather than failed, and without asking for a page it would
+    // throw away.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.variables).toMatchObject({ first: 1 });
   });
 });
 

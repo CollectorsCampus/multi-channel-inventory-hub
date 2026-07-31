@@ -66,6 +66,26 @@ export interface SkuCode {
 export const SKU_CODE_SEPARATOR = ':';
 
 /**
+ * Namespace for a SKU the catalogue does not know.
+ *
+ * Listing creation must work for a card with no `CatalogExternalRef` at all —
+ * the operator's words, "some won't be listed on TCGPlayer" — and a code still
+ * needs a namespace and an id. This one takes the hub's own `Sku` id, which is
+ * a uuid and therefore cannot collide with a catalogue product id.
+ *
+ * Such a code never matches a catalogue candidate, and that is correct rather
+ * than a limitation: an uncatalogued card has nothing to match against.
+ * `deriveSkuDimensions` still reads condition, printing and language straight
+ * out of it, which is the part that stops the matcher guessing them from a
+ * title.
+ *
+ * Reserved: no catalog source may register under this key. Nothing enforces
+ * that at runtime because a source is a compiled-in module rather than
+ * operator input, and a test pins it.
+ */
+export const HUB_SOURCE_KEY = 'hub';
+
+/**
  * Shapes rather than vocabularies, deliberately.
  *
  * `printing` is open by construction — it is a composite of two vocabularies —

@@ -247,6 +247,15 @@ function ChannelCard({ channel }: { channel: Channel }) {
         </p>
       )}
 
+      {/* The other direction: stock the ledger holds and the channel does not.
+          Drafts only, for items picked by hand. */}
+      {channel.capabilities.includes('listing.create') && (
+        <p className="field-hint">
+          <Link to="/list">List on this channel →</Link> Create draft listings for selected items
+          the channel does not carry yet.
+        </p>
+      )}
+
       <Reconciliation channel={channel} />
 
       <FileTransport channel={channel} />

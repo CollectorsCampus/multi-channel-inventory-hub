@@ -469,15 +469,18 @@ SKU-level `TCGplayer Id` a TCGPlayer allocation's `externalListingId` holds. Tha
 right granularity for sealed product, where one product is one variant — and the **wrong**
 granularity for singles, where condition, printing and language all live below the product
 id. Settle the singles id scheme before matching singles, or the `certain` path will
-equate different conditions of the same card.
+equate different conditions of the same card. **That is what #32 settled and what the
+2026-07-31 re-stamp replaced these ids with** — every one of the 139 now carries a full
+code. This section is kept because it records what the field held before, and why
+overwriting it was cheap.
 
 #### Matching against the live store, as it actually behaves
 
-Every live match to date has come back **`possible` · `name-partial`**, because store
-titles are prefixed ("Pokémon TCG: Mega Evolution Phantasmal Flames …") and tcgcsv's are
-not. `certain` was 0 on every run before the SKU write; the 139 linked listings now carry
-the catalogue product id in their SKU field, so their re-matches can reach `certain` — but
-a live `certain` has still never been observed.
+Every live match of an **unlinked** listing comes back **`possible` · `name-partial`**,
+because store titles are prefixed ("Pokémon TCG: Mega Evolution Phantasmal Flames …") and
+tcgcsv's are not. That has not changed. What has: the 139 linked listings now carry a hub
+SKU code, and re-matching one of them reaches **`certain` · `hub-sku`** — observed on
+2026-07-31, below.
 
 Two things about the shape of the data, both of which cost time to work out:
 
@@ -701,8 +704,8 @@ The payoff beyond matching: `deriveSkuDimensions` reads condition out of the lis
 _title_ and returns `undefined` rather than defaulting, because software guessing a card's
 condition is software guessing its value. A code carries it as data, so the guess goes.
 
-**The 139 live SKUs still hold bare ids.** Re-stamping them is authorised in principle and
-has not been done.
+**All 139 live SKUs now carry these codes** — re-stamped and verified on 2026-07-31, see
+below.
 
 #### `listing.create` — a connector may bring a listing into existence (#33)
 
@@ -812,6 +815,42 @@ trap, since a tag missing from the list looks exactly like a tag the store does 
 and no singles tag, exactly as measured. Driving the screen reproduced the trap: adding
 `Pokemon` raises "not a tag this store already uses", which is the difference between a
 product in a collection and one nobody can find.
+
+#### The 139 live SKUs now carry composite codes, and `certain` has been seen (2026-07-31)
+
+The re-stamp #32 was written for, carried out. **139 of 139 rewritten from a bare product
+id to a full code, verified by reading the store back: zero mismatches, every one five
+segments.** `565630` is now `tcgcsv:565630:SEALED:NORMAL:EN`.
+
+- **A fresh backup was taken first**, to `private/shopify-sku-backup-2026-07-31T14-43-11.csv`
+  (gitignored) — **875 variants, 506 carrying a SKU**, up from 867/434 in July's backup
+  because the store has grown and because 139 of those SKUs are ones the hub wrote.
+- **One row first, verified, then the batch.** The batch is `POST /match/confirm` with
+  `writeSkuToChannel`, built from the database rather than a review screen: every link
+  already existed, so all 139 came back `unchanged` with `skuWritten: 139`. 81 seconds,
+  which is the connector's own 2/s limit doing its job.
+- **Verified by reading the store, not by trusting the report.** A mutation that answers
+  200 and changes nothing looks identical from this side.
+
+**The first live `certain` in this project's history**, and the thing all three layers were
+for. Proven by detaching one allocation's `externalListingId` locally — the store was not
+touched — and re-proposing its set:
+
+```
+certain | hub-sku | "Pokémon TCG: Scarlet & Violet Surging Sparks Elite Trainer Box - Default Title"
+        | SKU "tcgcsv:565630:SEALED:NORMAL:EN" is this hub's code for the tcgcsv id 565630
+        | derived = SEALED / NORMAL / EN
+```
+
+Note what `derived` says: the dimensions came **out of the code**, not out of the title.
+That is `deriveSkuDimensions` no longer guessing. The link was restored immediately
+afterwards and the channel is back to 139.
+
+**Worth knowing before expecting to see this again: `propose` skips listings that are
+already linked**, so a code on a listing the hub already drives will never surface in a
+normal run. Its value is realised on **re-derivation** — a hub rebuilt from nothing, or a
+listing detached and re-matched — which is exactly the scenario `listing.sku` exists for.
+The detach above is how to demonstrate it, and it is safe.
 
 #### How the store's collections actually work (measured 2026-07-31)
 
@@ -1628,17 +1667,10 @@ Worth stating plainly, because the README is optimistic by nature:
   real platform disagree and caught it (above), but `reconcileAutoCorrect` is off on the
   live channel, so no drift has ever been corrected by a re-queued push against a real
   store.
-- **Matching has never produced a live `certain`.** `enumerateListings`, the proposal
-  engine, `MatchingService.confirm` and `listing.sku` are all proven against the real
-  store — 139 links and 139 SKU writes came through them — but every live proposal to
-  date has been `possible · name-partial`. The linked listings carry the catalogue
-  product id in their SKU field, so a re-match _should_ reach `external-id`; nobody has
-  run one.
-- **No hub SKU code has ever been written to a live listing.** #32's `hub-sku` reason is
-  the only path to a live `certain`, and the 139 live SKUs still hold bare product ids.
-  Re-stamping them is authorised and pending — take a fresh backup first (the previous
-  one is `private/shopify-sku-backup-2026-07-30T16-38-55.csv`) and try a single row
-  before the batch.
+- **Matching has produced a live `certain`** — once, on 2026-07-31, through `hub-sku`
+  after the re-stamp (above). Everything below `certain` is still what a live run of an
+  _unlinked_ set returns: `possible · name-partial`, because store titles are prefixed
+  and tcgcsv's are not. Nothing has changed about that half.
 - **Nothing has ever been created on a real store.** The whole path now exists — service,
   endpoint, screen — and was driven live as far as it goes without writing: the real
   channel offers creation, the store's 249 tags load into the picker, selection and the

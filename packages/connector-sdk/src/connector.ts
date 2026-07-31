@@ -7,6 +7,8 @@ import {
 } from './capabilities';
 import type {
   ChannelListingPage,
+  CreateListingRequest,
+  CreateListingResult,
   Ctx,
   DelistRequest,
   EnumerateListingsRequest,
@@ -91,6 +93,15 @@ export interface Connector {
 
   // --- outbound ------------------------------------------------------------
   pushListing?(ctx: Ctx, req: PushListingRequest): Promise<PushListingResult>;
+
+  /**
+   * Create a listing the platform does not have.
+   *
+   * Must be idempotent on `req.sku`, and must create as a draft: the core calls
+   * this only for items an operator selected, and nothing should become buyable
+   * because a background job ran.
+   */
+  createListing?(ctx: Ctx, req: CreateListingRequest): Promise<CreateListingResult>;
   updateQuantity?(ctx: Ctx, req: UpdateQuantityRequest): Promise<void>;
   updatePrice?(ctx: Ctx, req: UpdatePriceRequest): Promise<void>;
   delist?(ctx: Ctx, req: DelistRequest): Promise<void>;

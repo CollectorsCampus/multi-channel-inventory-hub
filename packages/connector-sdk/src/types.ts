@@ -98,6 +98,74 @@ export interface UpdateListingSkuRequest {
   sku: string;
 }
 
+/**
+ * Bring a listing into existence on a platform that does not have it.
+ *
+ * Everything a platform needs to render a product is an **input**, not
+ * something the connector invents. That is the answer to the objection
+ * `pushListing` raises against creating — that a product carries titles,
+ * images and publication state the hub has no opinion about. The hub still has
+ * no opinion; the operator supplies one.
+ *
+ * ## Grouping, and why the core does not send a product id
+ *
+ * A card is one product with a variant per condition, so creating the Lightly
+ * Played copy of a card whose Near Mint copy already exists must *add a
+ * variant*, not make a second product. The core knows variant ids — that is
+ * what `ChannelAllocation.externalListingId` holds — and nothing else, so it
+ * names a **sibling variant** it already drives and lets the connector resolve
+ * whatever the platform calls the thing above it. Sending a product id would
+ * mean the core storing one, which is a schema change to express something it
+ * can already point at.
+ */
+export interface CreateListingRequest {
+  /**
+   * Seller SKU for the new variant, and the idempotency key.
+   *
+   * A connector must look this up before creating: finding it means the
+   * listing already exists and its id is returned unchanged. Creating a second
+   * product for a card an operator already listed is the failure this prevents,
+   * and on a storefront it is visible to customers.
+   */
+  sku: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  /** Publisher or brand, where the platform models one. */
+  vendor?: string;
+  /** Applied verbatim. The core never derives these; see CreateListingResult. */
+  tags?: readonly string[];
+  /** What distinguishes variants of this product, e.g. "Condition". */
+  optionName?: string;
+  /** This variant's value for that option, e.g. "Near Mint". */
+  optionValue?: string;
+  /** Cents. Omitted leaves the platform's default, which is usually zero. */
+  price?: number;
+  /**
+   * A variant this hub already drives belonging to the same product.
+   *
+   * Present means "add a variant to whatever product this belongs to"; absent
+   * means "create a new product". The core decides which, because deciding that
+   * two SKUs are the same card is a catalogue judgement (rule 6).
+   */
+  siblingListingId?: string;
+}
+
+export interface CreateListingResult {
+  /** The platform's id for the new listing, in the same space as everything else. */
+  externalListingId: string;
+  /** False when a variant was added to an existing product, or nothing was created. */
+  createdProduct: boolean;
+  /**
+   * True when the SKU already existed and its listing was returned untouched.
+   *
+   * Distinct from `createdProduct: false`, which also covers adding a variant.
+   * The core reports it so an operator re-running a selection sees "already
+   * there" rather than a count that suggests work happened.
+   */
+  alreadyExisted: boolean;
+}
+
 /** Enough of a SKU for a connector to describe it to a platform. */
 export interface SkuDescriptor {
   skuId: string;

@@ -3,6 +3,8 @@ import type {
   ChannelListing,
   ChannelListingPage,
   Connector,
+  CreateListingRequest,
+  CreateListingResult,
   Ctx,
   DelistRequest,
   EnumerateListingsRequest,
@@ -120,6 +122,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
     capabilities: [
       'listing.push',
+      'listing.create',
       'listing.quantity',
       'listing.price',
       'listing.delist',
@@ -138,13 +141,14 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
     async pushListing(ctx: Ctx, req: PushListingRequest): Promise<PushListingResult> {
       if (!req.externalListingId) {
-        // Creating products from the hub is out of scope for v1: a Shopify
-        // product carries titles, images, SEO and publication state that the
-        // hub has no opinion about, and inventing them would produce listings
-        // no seller wants. Operators map to variants they already created.
+        // Still refuses to create, and the reason has not changed: a Shopify
+        // product carries titles, images, SEO and publication state that a
+        // `PushListingRequest` does not carry and that this connector must not
+        // invent. Creation is `listing.create`, where the operator supplies
+        // them — a push is for a listing that already exists.
         throw new Error(
-          'This channel links to existing Shopify variants. Create the product in Shopify, ' +
-            'then set the variant id on this allocation.',
+          'This channel links to existing Shopify variants. Create the listing first — ' +
+            'from the ledger, or by hand in Shopify — then set the variant id on this allocation.',
         );
       }
 
@@ -154,6 +158,68 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       }
 
       return { externalListingId: req.externalListingId };
+    },
+
+    /**
+     * Bring a variant into existence, as a **draft**.
+     *
+     * Three paths, tried in this order, and the order is the safety property:
+     *
+     * 1. **The SKU already exists** → return that variant untouched. Creating a
+     *    second product for a card the operator already listed is the failure
+     *    this prevents, and unlike most mistakes here it is visible to
+     *    customers. Checked first so a re-run of the same selection is a no-op
+     *    rather than a duplicate.
+     * 2. **A sibling variant was named** → add a variant to *its* product. This
+     *    is how a card ends up as one product with a Condition option rather
+     *    than one product per condition.
+     * 3. **Neither** → a new product.
+     *
+     * `status: DRAFT` is hard-coded rather than a request field. Nothing should
+     * become buyable because a background job ran, and a parameter is an
+     * invitation for some future caller to pass ACTIVE. Publication stays the
+     * seller's decision, in Shopify, deliberately.
+     *
+     * No quantity is set here either. Stock flows through `listing.quantity`
+     * like everything else, so a listing created now and pushed a moment later
+     * follows exactly one code path into the ledger's numbers (rule 5).
+     * `inventoryItem.tracked` is set, because an untracked variant silently
+     * ignores every quantity push that follows.
+     */
+    async createListing(ctx: Ctx, req: CreateListingRequest): Promise<CreateListingResult> {
+      const sku = req.sku.trim();
+      if (!sku) {
+        // Without one there is no idempotency key, so a retry would duplicate.
+        throw new Error('Refusing to create a Shopify listing with no SKU.');
+      }
+
+      const title = req.title.trim();
+      if (!title) {
+        throw new Error('Refusing to create a Shopify listing with no title.');
+      }
+
+      const existing = await findVariantBySku(ctx, sku);
+      if (existing) {
+        return { externalListingId: existing, createdProduct: false, alreadyExisted: true };
+      }
+
+      if (req.siblingListingId) {
+        const productId = await resolveProductId(ctx, req.siblingListingId);
+        const externalListingId = await addVariant(ctx, productId, req, sku);
+        return { externalListingId, createdProduct: false, alreadyExisted: false };
+      }
+
+      const { productId, variantId } = await createDraftProduct(ctx, req, title);
+
+      // Shopify has changed whether `productCreate` materialises a variant for
+      // a declared option more than once, and this connector has already been
+      // caught out by three schema changes in one sitting. So handle both: fill
+      // in the variant it made, or create one if it made none.
+      const externalListingId = variantId
+        ? await fillVariant(ctx, productId, variantId, req, sku)
+        : await addVariant(ctx, productId, req, sku);
+
+      return { externalListingId, createdProduct: true, alreadyExisted: false };
     },
 
     async updateQuantity(ctx: Ctx, req: UpdateQuantityRequest): Promise<void> {
@@ -536,6 +602,127 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     return { inventoryItemId, available };
   }
 
+  /**
+   * The variant carrying this SKU, or undefined.
+   *
+   * The idempotency check for creation. Shopify's variant search takes
+   * `sku:<value>`, and our codes contain colons — which that syntax also uses
+   * as a field separator — so the value is quoted. Without the quotes
+   * `sku:tcgcsv:704143:SEALED:NORMAL:EN` parses as a field named `tcgcsv` and
+   * matches nothing, which would read as "not there" and duplicate the product.
+   */
+  async function findVariantBySku(ctx: Ctx, sku: string): Promise<string | undefined> {
+    const data = await client.request<{
+      productVariants: { nodes: Array<{ id?: string; sku?: string | null }> };
+    }>(ctx, FIND_VARIANT_BY_SKU_QUERY, { query: `sku:"${sku.replace(/"/g, '\\"')}"` });
+
+    // Shopify's search is not an exact-match engine, so the equality is
+    // re-checked here rather than trusted. A near-match returned as an exact
+    // one would hand back somebody else's variant to be linked.
+    return data.productVariants?.nodes?.find((node) => node.sku === sku)?.id;
+  }
+
+  async function createDraftProduct(
+    ctx: Ctx,
+    req: CreateListingRequest,
+    title: string,
+  ): Promise<{ productId: string; variantId?: string }> {
+    const product: Record<string, unknown> = { title, status: 'DRAFT' };
+
+    if (req.description) product.descriptionHtml = req.description;
+    if (req.vendor) product.vendor = req.vendor;
+    // Verbatim, and only when given. The core never derives these: the
+    // operator's collections are all smart collections keyed on a single tag,
+    // so a tag this hub invented would put the product in no collection at all
+    // — present in the admin, invisible in the shop.
+    if (req.tags && req.tags.length > 0) product.tags = [...req.tags];
+    if (req.optionName && req.optionValue) {
+      product.productOptions = [{ name: req.optionName, values: [{ name: req.optionValue }] }];
+    }
+
+    const variables: Record<string, unknown> = { product };
+    if (req.imageUrl)
+      variables.media = [{ originalSource: req.imageUrl, mediaContentType: 'IMAGE' }];
+
+    const data = await client.request<{
+      productCreate: {
+        product?: { id?: string; variants?: { nodes?: Array<{ id?: string }> } };
+        userErrors: Array<{ field?: string[]; message: string }>;
+      };
+    }>(ctx, CREATE_PRODUCT_MUTATION, variables);
+
+    throwOnUserErrors(data.productCreate?.userErrors, 'Creating product');
+
+    const productId = data.productCreate?.product?.id;
+    if (!productId) {
+      throw new Error('Shopify reported no product after productCreate; nothing was linked.');
+    }
+
+    const variantId = data.productCreate.product?.variants?.nodes?.[0]?.id;
+    return variantId ? { productId, variantId } : { productId };
+  }
+
+  /** Add a variant to an existing product. */
+  async function addVariant(
+    ctx: Ctx,
+    productId: string,
+    req: CreateListingRequest,
+    sku: string,
+  ): Promise<string> {
+    const variant: Record<string, unknown> = {
+      inventoryItem: { sku, tracked: true },
+    };
+
+    if (req.price !== undefined) variant.price = centsToPrice(req.price);
+    if (req.optionName && req.optionValue) {
+      variant.optionValues = [{ optionName: req.optionName, name: req.optionValue }];
+    }
+    if (req.imageUrl) variant.mediaSrc = [req.imageUrl];
+
+    const data = await client.request<{
+      productVariantsBulkCreate: {
+        productVariants?: Array<{ id?: string }>;
+        userErrors: Array<{ field?: string[]; message: string }>;
+      };
+    }>(ctx, CREATE_VARIANT_MUTATION, { productId, variants: [variant] });
+
+    throwOnUserErrors(data.productVariantsBulkCreate?.userErrors, 'Creating variant');
+
+    const id = data.productVariantsBulkCreate?.productVariants?.[0]?.id;
+    if (!id) {
+      throw new Error('Shopify reported no variant after productVariantsBulkCreate.');
+    }
+    return id;
+  }
+
+  /**
+   * Put the SKU and price onto a variant `productCreate` made for us.
+   *
+   * `optionValues` is deliberately not sent: the variant already holds the
+   * option value the product was created with, and restating it here is how a
+   * second option value gets created by accident.
+   */
+  async function fillVariant(
+    ctx: Ctx,
+    productId: string,
+    variantId: string,
+    req: CreateListingRequest,
+    sku: string,
+  ): Promise<string> {
+    const variant: Record<string, unknown> = {
+      id: variantId,
+      inventoryItem: { sku, tracked: true },
+    };
+    if (req.price !== undefined) variant.price = centsToPrice(req.price);
+
+    const data = await client.request<{
+      productVariantsBulkUpdate: { userErrors: Array<{ field?: string[]; message: string }> };
+    }>(ctx, SET_SKU_MUTATION, { productId, variants: [variant] });
+
+    throwOnUserErrors(data.productVariantsBulkUpdate?.userErrors, 'Setting SKU on new variant');
+    return variantId;
+  }
+
   async function resolveProductId(ctx: Ctx, variantGid: string): Promise<string> {
     const data = await client.request<{ node: VariantNode | null }>(ctx, VARIANT_QUERY, {
       id: variantGid,
@@ -683,6 +870,50 @@ const ENUMERATE_LISTINGS_QUERY = /* GraphQL */ `
           title
           status
         }
+      }
+    }
+  }
+`;
+
+const FIND_VARIANT_BY_SKU_QUERY = /* GraphQL */ `
+  query FindVariantBySku($query: String!) {
+    productVariants(first: 5, query: $query) {
+      nodes {
+        id
+        sku
+      }
+    }
+  }
+`;
+
+const CREATE_PRODUCT_MUTATION = /* GraphQL */ `
+  mutation CreateDraftProduct($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+    productCreate(product: $product, media: $media) {
+      product {
+        id
+        variants(first: 1) {
+          nodes {
+            id
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const CREATE_VARIANT_MUTATION = /* GraphQL */ `
+  mutation CreateProductVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkCreate(productId: $productId, variants: $variants) {
+      productVariants {
+        id
+      }
+      userErrors {
+        field
+        message
       }
     }
   }

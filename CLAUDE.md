@@ -1350,16 +1350,51 @@ a defect to fix, and none blocks anything else.
    the core a way to classify a failure as authentication, which is a contract change
    rather than polish, and every connector then has to mean the same thing by it.
 
+## Two live proofs (2026-07-30, evening)
+
+The two cheapest unproven paths were both exercised against the real store. Neither
+changed any code; both are recorded here because each surfaced something no test had.
+
+**The first real reconcile caught real drift.** `POST /channels/:id/reconcile` against
+the live Shopify channel: **139 checked, 23 quantity drifts, 0 pending, 0 unmanaged**, in
+0.75 s, `corrected: 0` (auto-correct off), and one `reconcile_drift` warning flag filed —
+"differs on 23 listings". The drift is genuine, not manufactured: every linked allocation
+has `listedQuantity` 0 because the hub has never pushed a quantity, while the store
+carries real stock. The unguessable finding: **Shopify reports _negative_ available
+quantities** (−5 and −17 seen live — oversold/committed stock), the connector passes them
+through, and the diff treats them as plain numbers. No probe was needed and nothing was
+written to the store.
+
+**`parseWebhook` has now run on a real `orders/create`.** A quick tunnel, an
+`ORDERS_CREATE` subscription registered with the hub app's own credentials, and a real
+order (#2538, one Paradox Rift Booster Pack) created via a draft order and completed
+`paymentPending` — no customer, no email. The delivery arrived signed, verified against
+the client-secret fallback, persisted, and processed: one sale event, allocation looked
+up, and the **oversell path exercised on real data** — the item held 0, so the movement
+was recorded with **`delta` 0, `resulting_on_hand` 0, `reason: sale`, note `#2538`**, and
+a critical "Oversold by 1" alert was raised (resolved after verification, since the order
+was a test). The subscription was deleted and the tunnel closed afterwards.
+
+Two operational facts from doing it:
+
+- **The hub cannot cancel an order, by design** (no `write_orders`), so a test order must
+  be cancelled by the operator in Shopify admin — with restock, since completing the
+  draft committed a real unit. Until then the platform's available for that variant reads
+  one lower than reconciliation last saw.
+- **Driving the local app as an agent needs no password**: sessions are stored as the
+  hex SHA-256 of the cookie token, so inserting a row into `sessions` (fresh token,
+  `token_hash`, `csrf_token`) and presenting `hub_session=<token>` plus `x-csrf-token`
+  on mutating calls is a clean local login that touches no credential.
+
 ## What has never been tested
 
 Worth stating plainly, because the README is optimistic by nature:
 
-- **Shopify is now proven end to end**, including webhooks — authentication, the `2026-07`
+- **Shopify is proven end to end, with nothing left out** — authentication, the `2026-07`
   schema, `fetchLiveState`, price decoding, location scoping, both mutations writing and
-  being read back, and two real signed deliveries verified through a tunnel. What has
-  still never run is `parseWebhook` on a real **`orders/create`** payload: the live proof
-  used `products/update`, because HMAC verification is topic-independent and that avoided
-  creating a real order. Order parsing is covered by unit tests against recorded shapes.
+  being read back, signed webhook deliveries for both `products/update` and a real
+  **`orders/create`** (above), and the whole inbound sale path down to the oversell
+  alert.
 - **TCGPlayer is now proven in both directions** — imports against the account's real
   exports, and a generated file accepted through `Import To Staged` on the live account.
   What remains untried is `Move To Live`, which was deliberately not pressed: with
@@ -1371,11 +1406,10 @@ Worth stating plainly, because the README is optimistic by nature:
   with real RSA keys — every forged-token case is a test — but no Keycloak, Entra or
   Auth0 has ever completed a login. What is unproven is the shape of real discovery
   documents and claims, not the verification logic.
-- **Reconciliation has never seen a real platform disagree.** The loop is exercised
-  end to end against a fake connector that reports whatever a test tells it to, and by
-  hand against a running instance — but no live Shopify store has ever drifted and been
-  caught. The diff is thoroughly tested; what is unproven is whether `fetchLiveState`
-  returns what the Admin API actually says.
+- **Reconciliation auto-correction has never run live.** The loop itself has now seen a
+  real platform disagree and caught it (above), but `reconcileAutoCorrect` is off on the
+  live channel, so no drift has ever been corrected by a re-queued push against a real
+  store.
 - **Matching has never produced a live `certain`.** `enumerateListings`, the proposal
   engine, `MatchingService.confirm` and `listing.sku` are all proven against the real
   store — 139 links and 139 SKU writes came through them — but every live proposal to

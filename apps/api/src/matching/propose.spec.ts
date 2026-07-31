@@ -98,6 +98,37 @@ describe('deriveSkuDimensions', () => {
   it('returns nothing for an unreadable qualifier instead of guessing', () => {
     expect(deriveSkuDimensions(listing({ title: 'Pikachu ex - Slightly Bent' }))).toBeUndefined();
   });
+
+  /**
+   * The payoff of the composite SKU, and the reason it is worth writing one.
+   * Everything above reads a card's condition out of prose a human typed. A
+   * code is data we wrote, so there is nothing to interpret.
+   */
+  it('reads the dimensions from a hub SKU code rather than the title', () => {
+    const derived = deriveSkuDimensions(
+      listing({ title: 'Pikachu ex', sku: 'tcgcsv:662182:LP:1ST_EDITION_HOLOFOIL:JA' }),
+    );
+
+    expect(derived).toEqual({ condition: 'LP', printing: '1ST_EDITION_HOLOFOIL', language: 'JA' });
+  });
+
+  it('prefers the code over a title that disagrees with it', () => {
+    // The title is a display string a seller can edit at any time; the code is
+    // the identifier this hub stamped on the listing.
+    const derived = deriveSkuDimensions(
+      listing({ title: 'Pikachu ex - Near Mint Foil', sku: 'tcgcsv:662182:DMG:NORMAL:EN' }),
+    );
+
+    expect(derived?.condition).toBe('DMG');
+  });
+
+  it("still reads the title when the SKU is the seller's own code", () => {
+    const derived = deriveSkuDimensions(
+      listing({ title: 'Pikachu ex - Near Mint Foil', sku: '10-10050-122' }),
+    );
+
+    expect(derived).toEqual({ condition: 'NM', printing: 'FOIL', language: 'EN' });
+  });
 });
 
 describe('evidence ranking', () => {
@@ -118,6 +149,54 @@ describe('evidence ranking', () => {
     expect(best?.reason).toBe('external-id');
     expect(best?.confidence).toBe('certain');
     expect(best?.detail).toContain('tcgplayer');
+  });
+
+  it('treats a hub SKU code naming the product as certain', () => {
+    const [best] = scoreCandidates(
+      listing({ sku: 'tcgcsv:662182:NM:NORMAL:EN', title: 'Something Else Entirely' }),
+      [target({ externalIds: { tcgcsv: '662182' } })],
+    );
+
+    expect(best?.reason).toBe('hub-sku');
+    expect(best?.confidence).toBe('certain');
+    expect(best?.detail).toContain('NM / NORMAL / EN');
+  });
+
+  /**
+   * The ordering trap, and the reason `hub-sku` is checked across every
+   * namespace before anything else. A code *contains* the bare product id, and
+   * an ingested item carries both a `tcgcsv` and a `tcgplayer` ref holding the
+   * same number — so the embedded test is genuinely reachable first and would
+   * report `probable` for exact evidence.
+   */
+  it('is not beaten to the answer by the id embedded inside the code', () => {
+    const [best] = scoreCandidates(
+      listing({ sku: 'tcgcsv:662182:NM:NORMAL:EN', title: 'Something Else Entirely' }),
+      [target({ externalIds: { tcgplayer: '662182', tcgcsv: '662182' } })],
+    );
+
+    expect(best?.reason).toBe('hub-sku');
+  });
+
+  it('does not treat a code as certain for a product it does not name', () => {
+    // Same shape, different id. Two cards in one set must not collapse.
+    const [best] = scoreCandidates(
+      listing({ sku: 'tcgcsv:662182:NM:NORMAL:EN', title: 'Something Else Entirely' }),
+      [target({ externalIds: { tcgcsv: '999999' } })],
+    );
+
+    expect(best).toBeUndefined();
+  });
+
+  it('does not match a code against a different source holding the same number', () => {
+    // `tcgcsv:662182` and `scryfall:662182` are different products that happen
+    // to share a number; the namespace is part of the identity.
+    const [best] = scoreCandidates(
+      listing({ sku: 'scryfall:662182:NM:NORMAL:EN', title: 'Something Else Entirely' }),
+      [target({ externalIds: { tcgcsv: '662182' } })],
+    );
+
+    expect(best?.reason).not.toBe('hub-sku');
   });
 
   it('treats a SKU containing a platform id as probable, not certain', () => {

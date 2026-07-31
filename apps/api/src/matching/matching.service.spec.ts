@@ -500,7 +500,7 @@ describeDb('MatchingService', () => {
       expect(updateListingSku).not.toHaveBeenCalled();
     });
 
-    it('stamps the catalog id onto the listing when asked', async () => {
+    it('stamps a full SKU code onto the listing when asked', async () => {
       const result = await matching.confirm(
         channelId,
         [
@@ -518,9 +518,40 @@ describeDb('MatchingService', () => {
       expect(updateListingSku).toHaveBeenCalledWith(
         expect.anything(),
         // The catalog id, not our internal uuid — that is what makes the mapping
-        // re-derivable from the storefront.
-        { externalListingId: ETB_GID, sku: '704143' },
+        // re-derivable from the storefront — and the printing alongside it, so a
+        // re-match knows *which* copy without reading a condition out of prose.
+        // Sealed goes through the same format as a single: two formats would
+        // mean every reader has to guess which one it is looking at.
+        { externalListingId: ETB_GID, sku: 'tcgcsv:704143:SEALED:NORMAL:EN' },
       );
+    });
+
+    /**
+     * Assembled from the re-fetched candidate and the row `ensureSku` actually
+     * wrote, never from the request. `language` in particular is defaulted from
+     * the *catalogue* before `EN`, so a code built from the request would name a
+     * printing that does not exist — on a storefront, where nothing notices
+     * until a re-match fails.
+     */
+    it('encodes the dimensions that were stored, not the ones requested', async () => {
+      await matching.confirm(
+        channelId,
+        [
+          {
+            externalListingId: PIKACHU_GID,
+            sourceKey: 'tcgcsv',
+            sourceId: PIKACHU.sourceId,
+            condition: 'LP',
+            // No printing and no language: both are resolved server-side.
+          },
+        ],
+        { writeSkuToChannel: true },
+      );
+
+      expect(updateListingSku).toHaveBeenCalledWith(expect.anything(), {
+        externalListingId: PIKACHU_GID,
+        sku: 'tcgcsv:696676:LP:NORMAL:EN',
+      });
     });
 
     /**

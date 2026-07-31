@@ -161,6 +161,16 @@ export class IntakeService {
     createdCatalogItem: boolean;
     createdSku: boolean;
     externalIds: Record<string, string>;
+    /**
+     * The dimensions actually stored, which are not always the ones asked for:
+     * `printing` falls back to `NORMAL` and `language` to the *candidate's*
+     * language before `EN`. A caller that re-derived these from its own request
+     * would disagree with the row whenever the catalogue supplied the language —
+     * and one of those callers stamps the result onto a live storefront.
+     */
+    condition: string;
+    printing: string;
+    language: string;
   }> {
     const printing = normalize(dimensions.printing) ?? 'NORMAL';
     const language = normalize(dimensions.language) ?? normalize(candidate.language) ?? 'EN';
@@ -189,6 +199,9 @@ export class IntakeService {
         createdCatalogItem,
         createdSku: false,
         externalIds: { ...candidate.externalIds },
+        condition: existingSku.condition,
+        printing: existingSku.printing,
+        language: existingSku.language,
       };
     }
 
@@ -214,6 +227,9 @@ export class IntakeService {
       createdCatalogItem,
       createdSku: existingSku === null,
       externalIds: { ...candidate.externalIds },
+      condition: sku.condition,
+      printing: sku.printing,
+      language: sku.language,
     };
   }
 

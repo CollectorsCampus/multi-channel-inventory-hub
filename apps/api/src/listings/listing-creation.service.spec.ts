@@ -211,6 +211,71 @@ describeDb('ListingCreationService', () => {
     );
   });
 
+  /**
+   * Every sealed product the operator already sells is a single-variant
+   * "Default Title". A `Condition: Unopened` option on a booster box is a
+   * choice with one answer put in front of a customer.
+   */
+  it('gives sealed product no condition option', async () => {
+    const card = await seedCard();
+    const sealed = await prisma.sku.create({
+      data: {
+        catalogItemId: card.catalogItemId,
+        condition: 'SEALED',
+        printing: 'NORMAL',
+        language: 'EN',
+      },
+    });
+    const item = await prisma.inventoryItem.create({
+      data: { skuId: sealed.id, quantityOnHand: 1 },
+    });
+
+    await create([item.id]);
+
+    const sent = createListing.mock.calls[0]?.[1];
+    expect(sent.optionName).toBeUndefined();
+    expect(sent.optionValue).toBeUndefined();
+  });
+
+  /**
+   * And it follows: something with no option cannot be a variant of anything.
+   * Adding one to a product that has only "Default Title" would be a second
+   * variant with nothing to tell it apart.
+   */
+  it('never makes sealed product a variant of a sibling', async () => {
+    const card = await seedCard();
+    // The Near Mint single is listed first, so a sibling genuinely exists.
+    await create([card.nm.inventoryItemId]);
+
+    const sealed = await prisma.sku.create({
+      data: {
+        catalogItemId: card.catalogItemId,
+        condition: 'SEALED',
+        printing: 'NORMAL',
+        language: 'EN',
+      },
+    });
+    const item = await prisma.inventoryItem.create({
+      data: { skuId: sealed.id, quantityOnHand: 1 },
+    });
+
+    const result = await create([item.id]);
+
+    expect(createListing.mock.calls[1]?.[1].siblingListingId).toBeUndefined();
+    expect(result.listings[0]?.outcome).toBe('created-product');
+  });
+
+  it('still gives singles their condition option', async () => {
+    const card = await seedCard();
+
+    await create([card.nm.inventoryItemId]);
+
+    expect(createListing.mock.calls[0]?.[1]).toMatchObject({
+      optionName: 'Condition',
+      optionValue: 'Near Mint',
+    });
+  });
+
   it('does not call the channel for an item it already drives a listing for', async () => {
     const card = await seedCard();
     await prisma.channelAllocation.create({

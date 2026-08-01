@@ -70,6 +70,14 @@ export const MAX_ITEMS = 50;
 /** What distinguishes variants of a product, when the caller names nothing. */
 export const DEFAULT_OPTION_NAME = 'Condition';
 
+/**
+ * The `Sku.condition` that means "this was never opened".
+ *
+ * Sealed product is the one case where a card's condition is not a dimension:
+ * there is one of it, forever, so it gets one variant and no option.
+ */
+export const SEALED_CONDITION = 'SEALED';
+
 export interface CreateListingsRequest {
   channelInstanceId: string;
   /** Ledger items the operator selected. Never derived from a filter. */
@@ -312,14 +320,28 @@ export class ListingCreationService {
       };
     }
 
-    const siblingListingId = await this.findSibling(channelInstanceId, catalogItem.id, item.id);
+    // Sealed product is one product with one variant, and gets no option at
+    // all: every sealed item the operator already sells is a single-variant
+    // "Default Title", and a `Condition: Unopened` option on a booster box is
+    // a choice with one answer put in front of a customer.
+    //
+    // It follows that a sealed item is never a *variant* of something either,
+    // so no sibling is looked for. Two sealed SKUs of one catalogue product —
+    // an English box and a Japanese one — become two products, which is what a
+    // store with both actually wants; the alternative is a second variant on a
+    // product that has no option to tell them apart.
+    const sealed = item.sku.condition === SEALED_CONDITION;
 
-    const req: CreateListingRequest = {
-      sku,
-      title: titleFor(catalogItem),
-      optionName: content.optionName,
-      optionValue: optionValueFor(item.sku),
-    };
+    const siblingListingId = sealed
+      ? undefined
+      : await this.findSibling(channelInstanceId, catalogItem.id, item.id);
+
+    const req: CreateListingRequest = { sku, title: titleFor(catalogItem) };
+
+    if (!sealed) {
+      req.optionName = content.optionName;
+      req.optionValue = optionValueFor(item.sku);
+    }
 
     if (catalogItem.imageUrl) req.imageUrl = catalogItem.imageUrl;
     if (content.vendor) req.vendor = content.vendor;

@@ -26,8 +26,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not.
 
 `main` is green: **853 tests** (api 508, tcgplayer 102, shopify 104, sdk 61, tcgcsv 45,
-scryfall 26, db 7), lint/typecheck/format/build clean — **867 on `listing-metafields`**,
-which adds 14 to the Shopify suite. **Five jobs run on a push** —
+scryfall 26, db 7), lint/typecheck/format/build clean — **870 on `listing-metafields`**,
+which adds 14 to the Shopify suite and 3 to the API's. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
@@ -973,18 +973,25 @@ names are not this store's vocabulary.
 product the operator already curated must not rewrite that product's description of
 itself.
 
-Two things the first live creations exposed, both waiting on the operator's worked example
-(two drafts were created for them to fill in — a sealed ETB and a single):
+Two things the first live creations exposed, both now settled by the operator:
 
-- **Sealed product should probably have no variant option at all.** Creation gave it
-  `Condition: Unopened`, while every sealed product the store already sells is a
-  single-variant `Default Title`. One product per card with a condition option is right for
-  singles and likely wrong for sealed.
-- **The title rule reads badly for sealed.** "Phantasmal Flames Pokemon Center Elite
-  Trainer Box (Exclusive) - ME02: Phantasmal Flames" — the containment check passes because
-  the name holds `Phantasmal Flames` and the set is `ME02: Phantasmal Flames`, so it
-  appends anyway. The store's own titles are "Pokémon TCG: Mega Evolution Phantasmal
-  Flames …".
+- **Sealed product gets no variant option at all** — their call. Creation had given it
+  `Condition: Unopened`, while every sealed product the store sells is a single-variant
+  `Default Title`; an option with one answer is a choice put in front of a customer for no
+  reason. `Sku.condition === 'SEALED'` is the marker.
+
+  **It follows that sealed is never a _variant_ of anything either**, so no sibling is
+  looked for. Two sealed SKUs of one catalogue product — an English box and a Japanese one
+  — become two products, which is what a store carrying both wants; the alternative is a
+  second variant on a product with no option to tell them apart. Mutation-checked: both
+  halves of the rule fail their tests when it is disabled.
+
+- **The title rule stays as it is** — also their call, after seeing what it produces:
+  "Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive) - ME02: Phantasmal
+  Flames". The containment check passes because the name holds `Phantasmal Flames` while
+  the set is `ME02: Phantasmal Flames`, so it appends anyway. It reads redundantly and is
+  accepted; the store's own titles ("Pokémon TCG: Mega Evolution Phantasmal Flames …") are
+  a house style the hub was not asked to imitate.
 
 #### How the store's collections actually work (measured 2026-07-31)
 

@@ -290,7 +290,8 @@ export function ListOnChannelPage() {
           <p className="field-hint">
             {Object.values(selected).slice(0, 6).join(', ')}
             {selectedIds.length > 6 && ` and ${selectedIds.length - 6} more`}. Two conditions of one
-            card become one product with a variant each.
+            card become one product with a variant each; sealed product gets a product of its own,
+            with no condition option.
           </p>
         )}
 

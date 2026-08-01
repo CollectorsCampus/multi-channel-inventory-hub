@@ -892,6 +892,64 @@ channel back at 139 links. **The hub cannot delete a product**, deliberately, so
 after a smoke test is a manual step — the same shape as the test order that had to be
 cancelled by hand.
 
+#### Metafields on created cards — measured, started, blocked on a scope (2026-07-31)
+
+The operator asked for game, set and similar fields on created cards. **The store already
+models them**, which changes the job from "design some fields" into "write into what is
+there". Measured live, and none of it is guessable:
+
+| Field                            | Type                        | On  |
+| -------------------------------- | --------------------------- | --- |
+| `custom.game`                    | `metaobject_reference`      | 434 |
+| `custom.set`                     | `metaobject_reference`      | 142 |
+| `shopify.rarity`                 | `list.metaobject_reference` | 18  |
+| `shopify.card-attributes`        | `list.metaobject_reference` | 31  |
+| `shopify.trading-card-packaging` | `list.metaobject_reference` | 58  |
+| `shopify.condition`              | `list.metaobject_reference` | 2   |
+
+- **They are metaobject _references_, not text.** The value is a GID —
+  `custom.game` is `gid://shopify/Metaobject/141624803381` on every Pokémon product — which
+  means nothing outside this one shop. So the same rule as tags applies, harder: the hub
+  can carry a value the operator picked and must never derive one.
+- **Variant level has nothing** but eleven `mm-google-shopping` fields. There is no
+  existing home for condition/printing/language on a variant, and the `Condition` option
+  plus the SKU code already carry those, so nothing is proposed there.
+- **A definition's vocabulary is found through `validations`**, which give a
+  `metaobject_definition_id` — not a type string, so `metaobjects(type:)` cannot be reached
+  from a definition without a second lookup.
+- **`ProductCreateInput` and `ProductVariantsBulkInput` both accept `metafields`**, verified
+  against the live `2026-07` schema, so creation needs no extra round trip.
+
+**The blocker, and the trap inside it.** Reading the vocabulary needs `read_metaobjects`
+(and `read_metaobject_definitions`, unless the type is discovered from a product instead —
+see below). The app grants `write_inventory, read_locations, read_orders, write_products`
+and nothing else, and **Shopify answers `null` with no error** — indistinguishable from a
+store that has defined no entries. That silence is why `ListingMetafieldDefinition` carries
+an explicit `unavailable` reason rather than an empty list.
+
+**Changing scopes is subject to the same "releasing is not installing" rule** recorded
+above for the first install: two releases were cut and a freshly minted token still
+reported the old four scopes. As of writing, the re-install is blocked — the Dev Dashboard
+does not offer the store — so the feature is parked.
+
+**A zero-scope fallback exists and may be the better answer anyway.** The GIDs can be read
+off products, which needs only `read_products`: offer each value as "used on 312 products —
+e.g. …" and let the operator pick by recognition. No invented labels, and no scope change.
+Its one real limit is that a set no product uses yet cannot be offered.
+
+Two things the first live creations exposed, both waiting on the operator's worked example
+(two drafts were created for them to fill in — a sealed ETB and a single):
+
+- **Sealed product should probably have no variant option at all.** Creation gave it
+  `Condition: Unopened`, while every sealed product the store already sells is a
+  single-variant `Default Title`. One product per card with a condition option is right for
+  singles and likely wrong for sealed.
+- **The title rule reads badly for sealed.** "Phantasmal Flames Pokemon Center Elite
+  Trainer Box (Exclusive) - ME02: Phantasmal Flames" — the containment check passes because
+  the name holds `Phantasmal Flames` and the set is `ME02: Phantasmal Flames`, so it
+  appends anyway. The store's own titles are "Pokémon TCG: Mega Evolution Phantasmal
+  Flames …".
+
 #### How the store's collections actually work (measured 2026-07-31)
 
 Not code, but it decides what a created product must carry, and getting it wrong is
@@ -915,7 +973,15 @@ invisible rather than loud.
 
 ### Unmerged work
 
-None. #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
+**`listing-metafields`** — the SDK half of writing `custom.game` / `custom.set` on created
+cards: the capability, `ListingMetafield`, `ListingMetafieldDefinition` and
+`ListMetafieldsRequest`. No connector implements it and no core calls it, which is why it
+is a draft rather than a PR. **It is parked on an install, not on a decision** — the
+measurements and the two settled choices are in the metafields section above, and the
+Shopify `listMetafields` / `createListing` change is the next thing to write. Two draft
+products are sitting on the live store for the operator to fill in as the worked example.
+
+#26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
 during review. `shopify-client-credentials` was merged on 2026-07-29 once webhook
 delivery was proven against the live store (below), which was the one thing holding it
 back.

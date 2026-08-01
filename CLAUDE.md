@@ -978,20 +978,74 @@ Two things the first live creations exposed, both now settled by the operator:
 - **Sealed product gets no variant option at all** — their call. Creation had given it
   `Condition: Unopened`, while every sealed product the store sells is a single-variant
   `Default Title`; an option with one answer is a choice put in front of a customer for no
-  reason. `Sku.condition === 'SEALED'` is the marker.
+  reason. **`NA` is treated the same way**, by its own definition — "not applicable" is
+  what a binder, a playmat or a Funko Pop has, and `Condition: NA` on a storefront is the
+  same silliness one step on. `UNVARIED_CONDITIONS` is the list.
 
-  **It follows that sealed is never a _variant_ of anything either**, so no sibling is
-  looked for. Two sealed SKUs of one catalogue product — an English box and a Japanese one
-  — become two products, which is what a store carrying both wants; the alternative is a
-  second variant on a product with no option to tell them apart. Mutation-checked: both
-  halves of the rule fail their tests when it is disabled.
+  **It follows that such an item is never a _variant_ of anything either**, so no sibling
+  is looked for. Two sealed SKUs of one catalogue product — an English box and a Japanese
+  one — become two products, which is what a store carrying both wants; the alternative is
+  a second variant on a product with no option to tell them apart. Mutation-checked: both
+  halves fail their tests when the rule is disabled.
 
-- **The title rule stays as it is** — also their call, after seeing what it produces:
-  "Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive) - ME02: Phantasmal
-  Flames". The containment check passes because the name holds `Phantasmal Flames` while
-  the set is `ME02: Phantasmal Flames`, so it appends anyway. It reads redundantly and is
-  accepted; the store's own titles ("Pokémon TCG: Mega Evolution Phantasmal Flames …") are
-  a house style the hub was not asked to imitate.
+- **The title is the catalogue name and nothing else** — their call, after seeing the
+  alternative. Appending the set produced "Phantasmal Flames Pokemon Center Elite Trainer
+  Box (Exclusive) - ME02: Phantasmal Flames": the containment check does not fire because
+  the name holds `Phantasmal Flames` while the catalogue spells the set `ME02: Phantasmal
+Flames`. **The known consequence, accepted:** two singles of one card from different sets
+  become two products with the same title. They stay distinct products with distinct SKU
+  codes so nothing merges, but telling them apart in the admin means opening them.
+  Appending the set for singles only is a two-line change in `titleFor` if it ever bites.
+
+#### Multi-variant products are mapped, never created (measured 2026-08-01)
+
+**69 of the store's 696 products carry more than one variant**, and not one of them uses
+condition as the axis: it is `Promo` (blisters with different promo cards), `Deck`,
+`Scene`, `Colour`, `Type`, `Eeveelution`. The hub models none of those and could not invent
+them, so **creation will never reproduce that shape** — a card's conditions are the only
+variant axis it knows.
+
+That is not a gap, because the other path already covers it. **7 of the 139 live links
+already point at variants of multi-variant products** — two promos of "Perfect Order
+Premium Checklane Blister" and all five of "MTG Final Fantasy Scene Box" — each carrying
+its own hub SKU code. `enumerateListings` walks _variants_, so every variant of a
+multi-variant product appears as its own listing and links to its own inventory item.
+Matching and creation are separate paths and the sealed rule touches only the second.
+
+Worth knowing about the shape of that data: **tcgcsv models each promo as its own product**
+(`tcgcsv:672409` Clawitzer, `tcgcsv:672407` Cinderace), while the store models them as two
+variants of one. Both are right; the hub's grouping is by `CatalogItem`, so it would have
+created them as two products even before the sealed rule. The store's arrangement is the
+operator's, and mapping is how the two meet.
+
+Also confirmed here: the 1-Pack blisters are **separate single-variant products**, and
+`[Drifloon]` and `[Drifblim]` still share seller SKU `10-10053-110` — the old non-unique
+scheme, exactly as recorded. Where the hub has re-stamped, the ambiguity is gone: the
+Psyduck and Golduck 3-packs now hold `tcgcsv:644357` and `tcgcsv:644356`.
+
+#### Non-TCG goods need no "other" mode — the ledger already holds them
+
+Asked 2026-08-01, and the answer is that nothing needs building. Three things were already
+true and are worth stating so nobody adds a parallel path for them:
+
+- **`CatalogItem.game` is nullable**, and the schema comment has said "null for non-TCG
+  goods" since Phase 0.
+- **`SKU_CONDITIONS` includes `NA`**, meaning "not applicable" — the condition a playmat or
+  a Funko Pop has. It now also means "no variant option", above.
+- **`POST /inventory` creates a ledger item from a name alone** — game and set optional, no
+  catalogue lookup — and the `/intake` screen exposes it. That is the "other" option.
+
+Creation works for them too, because a ledger item with no `CatalogExternalRef` still gets
+a valid identifier: `hub:<skuId>:NA:NORMAL:EN`. And this is not hypothetical — the
+operator's own TCGPlayer export already round-trips sleeves, deck boxes and playmats across
+21 product lines.
+
+**A future Funko connector needs no core change either.** Nothing in the model is
+TCG-specific: a catalogue that knows Funko Pops is a `CatalogSource`, a marketplace that
+sells them is a `Connector`, and `Sku`'s natural key degrades gracefully to
+`NA / NORMAL / EN`. The one TCG-shaped seam is `optionValueFor`, which borrows TCGPlayer's
+condition vocabulary — and it already falls back to raw tokens for anything that vocabulary
+cannot spell.
 
 #### How the store's collections actually work (measured 2026-07-31)
 

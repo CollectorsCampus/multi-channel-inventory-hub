@@ -71,12 +71,21 @@ export const MAX_ITEMS = 50;
 export const DEFAULT_OPTION_NAME = 'Condition';
 
 /**
- * The `Sku.condition` that means "this was never opened".
+ * Conditions that are not a variant axis, so get no option and no sibling.
  *
- * Sealed product is the one case where a card's condition is not a dimension:
- * there is one of it, forever, so it gets one variant and no option.
+ * A `Condition` option is worth showing a customer only where condition is a
+ * real choice, which is singles. `SEALED` has one answer — the operator's call,
+ * and every sealed product their store already sells is a single-variant
+ * "Default Title". `NA` follows by its own definition: "not applicable" is what
+ * a binder, a playmat or a Funko Pop has, and offering it as a choice is the
+ * same silliness one step further on.
+ *
+ * Note what this is *not* saying: that such products have no variants. Their
+ * store has 69 multi-variant products whose axis is `Promo`, `Deck`, `Colour`,
+ * `Scene` or `Type` — none of which the hub models or could invent. Those are
+ * mapped by hand through `/match`, which is a different path entirely.
  */
-export const SEALED_CONDITION = 'SEALED';
+export const UNVARIED_CONDITIONS: readonly string[] = ['SEALED', 'NA'];
 
 export interface CreateListingsRequest {
   channelInstanceId: string;
@@ -320,25 +329,24 @@ export class ListingCreationService {
       };
     }
 
-    // Sealed product is one product with one variant, and gets no option at
-    // all: every sealed item the operator already sells is a single-variant
-    // "Default Title", and a `Condition: Unopened` option on a booster box is
-    // a choice with one answer put in front of a customer.
+    // Sealed product, and anything whose condition is "not applicable", is one
+    // product with one variant and no option at all — see
+    // {@link UNVARIED_CONDITIONS}.
     //
-    // It follows that a sealed item is never a *variant* of something either,
-    // so no sibling is looked for. Two sealed SKUs of one catalogue product —
-    // an English box and a Japanese one — become two products, which is what a
-    // store with both actually wants; the alternative is a second variant on a
+    // It follows that such an item is never a *variant* of something either, so
+    // no sibling is looked for. Two sealed SKUs of one catalogue product — an
+    // English box and a Japanese one — become two products, which is what a
+    // store carrying both wants; the alternative is a second variant on a
     // product that has no option to tell them apart.
-    const sealed = item.sku.condition === SEALED_CONDITION;
+    const unvaried = UNVARIED_CONDITIONS.includes(item.sku.condition);
 
-    const siblingListingId = sealed
+    const siblingListingId = unvaried
       ? undefined
       : await this.findSibling(channelInstanceId, catalogItem.id, item.id);
 
     const req: CreateListingRequest = { sku, title: titleFor(catalogItem) };
 
-    if (!sealed) {
+    if (!unvaried) {
       req.optionName = content.optionName;
       req.optionValue = optionValueFor(item.sku);
     }
@@ -496,28 +504,26 @@ function skuCodeFor(item: SelectedItem): string {
 }
 
 /**
- * What the product is called.
+ * What the product is called: the catalogue's name, and nothing else.
  *
- * The one field composed rather than copied, and only from two stored ones. A
- * card's name alone is not a product title: Charizard ex exists in several
- * sets, so creating each of them as "Charizard ex" produces products neither
- * the operator nor a customer can tell apart, and renaming them afterwards is
- * hand work this feature exists to avoid.
+ * **Nothing is composed here, on the operator's instruction.** An earlier
+ * version appended ` - <set>` where the name did not already contain it, on the
+ * reasoning that "Charizard ex" exists in several sets and identically-titled
+ * products cannot be told apart. On real data that produced "Phantasmal Flames
+ * Pokemon Center Elite Trainer Box (Exclusive) - ME02: Phantasmal Flames" —
+ * redundant, because a sealed product's name already carries its set while the
+ * catalogue spells the set with a code the name lacks. Asked to choose, the
+ * operator took the plain name.
  *
- * The separator is safe against the matcher: `splitChannelTitle` only splits on
- * " - " when the tail parses as a *condition*, so "Charizard ex - SV04: Paradox
- * Rift" keeps its whole name.
+ * **The consequence is real and is theirs:** two singles of the same card from
+ * different sets will be created as two products with the same title. They
+ * remain distinct products with distinct SKU codes, so nothing is lost or
+ * merged — but telling them apart in the admin means opening them. If that
+ * becomes a nuisance, appending the set for singles only is a two-line change
+ * here.
  */
-export function titleFor(item: { name: string; setName: string | null }): string {
-  const name = item.name.trim();
-  const setName = item.setName?.trim();
-
-  if (!setName) return name;
-  // A card literally named after its set — tcgcsv carries "Winterspell" in
-  // Winterspell — must not become "Winterspell - Winterspell".
-  if (name.toLowerCase().includes(setName.toLowerCase())) return name;
-
-  return `${name} - ${setName}`;
+export function titleFor(item: { name: string }): string {
+  return item.name.trim();
 }
 
 /**

@@ -163,7 +163,7 @@ describeDb('ListingCreationService', () => {
     expect(createListing).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        title: 'Pikachu ex - 30th Celebration',
+        title: 'Pikachu ex',
         imageUrl: 'https://example.test/pikachu.jpg',
         optionName: 'Condition',
         optionValue: 'Near Mint',
@@ -263,6 +263,33 @@ describeDb('ListingCreationService', () => {
 
     expect(createListing.mock.calls[1]?.[1].siblingListingId).toBeUndefined();
     expect(result.listings[0]?.outcome).toBe('created-product');
+  });
+
+  /**
+   * "Not applicable" is what a binder, a playmat or a Funko Pop has for a
+   * condition, and offering it as a choice is the sealed silliness one step
+   * further on. Non-TCG goods are already in the ledger — the operator's
+   * TCGPlayer export carries sleeves, deck boxes and playmats — so this is a
+   * live path, not a hypothetical.
+   */
+  it('gives an item with no applicable condition no option either', async () => {
+    const card = await seedCard();
+    const na = await prisma.sku.create({
+      data: {
+        catalogItemId: card.catalogItemId,
+        condition: 'NA',
+        printing: 'NORMAL',
+        language: 'EN',
+      },
+    });
+    const item = await prisma.inventoryItem.create({ data: { skuId: na.id, quantityOnHand: 1 } });
+
+    await create([item.id]);
+
+    const sent = createListing.mock.calls[0]?.[1];
+    expect(sent.optionName).toBeUndefined();
+    // And it would otherwise have read "Condition: NA" on a storefront.
+    expect(sent.optionValue).toBeUndefined();
   });
 
   it('still gives singles their condition option', async () => {
@@ -422,19 +449,21 @@ describeDb('ListingCreationService', () => {
 });
 
 describe('titleFor', () => {
-  it('names the set, because one card exists in several', () => {
-    expect(titleFor({ name: 'Charizard ex', setName: 'SV04: Paradox Rift' })).toBe(
-      'Charizard ex - SV04: Paradox Rift',
-    );
+  /**
+   * The catalogue's name and nothing else, on the operator's instruction. An
+   * earlier version appended the set and produced "Phantasmal Flames Pokemon
+   * Center Elite Trainer Box (Exclusive) - ME02: Phantasmal Flames", which is
+   * redundant because a sealed product's name already carries its set.
+   */
+  it('is the catalogue name, with nothing composed onto it', () => {
+    expect(
+      titleFor({ name: 'Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive)' }),
+    ).toBe('Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive)');
+    expect(titleFor({ name: 'Charizard ex' })).toBe('Charizard ex');
   });
 
-  it('does not repeat a set the name already carries', () => {
-    // tcgcsv really does carry a card named "Winterspell" in Winterspell.
-    expect(titleFor({ name: 'Winterspell', setName: 'Winterspell' })).toBe('Winterspell');
-  });
-
-  it('falls back to the name alone for an item with no set', () => {
-    expect(titleFor({ name: 'Playmat', setName: null })).toBe('Playmat');
+  it('trims, because a stray space becomes a storefront title', () => {
+    expect(titleFor({ name: '  Pikachu ex  ' })).toBe('Pikachu ex');
   });
 });
 

@@ -142,6 +142,15 @@ export interface CreateListingRequest {
   /** Cents. Omitted leaves the platform's default, which is usually zero. */
   price?: number;
   /**
+   * Custom fields to set, chosen by the operator from {@link
+   * ListingMetafieldDefinition}. Applied verbatim, like tags.
+   *
+   * Product-owned fields are set only when a **product** is created: adding a
+   * variant to a product the operator already curated must not rewrite that
+   * product's description of itself.
+   */
+  metafields?: readonly ListingMetafield[];
+  /**
    * A variant this hub already drives belonging to the same product.
    *
    * Present means "add a variant to whatever product this belongs to"; absent

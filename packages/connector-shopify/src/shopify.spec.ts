@@ -170,6 +170,97 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         return (pages[tagPage++] ?? pages[pages.length - 1]) as T;
       }
 
+      if (query.includes('HubMetafieldDefinitions')) {
+        const byOwner = (overrides.metafieldDefinitions ?? {
+          PRODUCT: [
+            {
+              name: 'Game',
+              namespace: 'custom',
+              key: 'game',
+              type: { name: 'metaobject_reference' },
+            },
+            {
+              name: 'Rarity',
+              namespace: 'shopify',
+              key: 'rarity',
+              type: { name: 'list.metaobject_reference' },
+            },
+            {
+              name: 'Card number',
+              namespace: 'custom',
+              key: 'number',
+              type: { name: 'single_line_text_field' },
+            },
+            {
+              name: 'Never used',
+              namespace: 'custom',
+              key: 'unused',
+              type: { name: 'metaobject_reference' },
+            },
+          ],
+          PRODUCTVARIANT: [],
+        }) as Record<string, unknown[]>;
+
+        return {
+          metafieldDefinitions: { nodes: byOwner[variables?.ownerType as string] ?? [] },
+        } as T;
+      }
+
+      if (query.includes('HubMetafieldOwners')) {
+        // One aliased `products(first: 1, query: "metafields.ns.key:*")` per
+        // reference field. The mock answers by reading the filters back out of
+        // the document, which is also how it proves each field was asked for by
+        // name rather than sampled.
+        const owners = (overrides.metafieldOwners ?? {
+          'custom.game': { type: 'game', list: false },
+          'shopify.rarity': { type: 'shopify--rarity', list: true },
+        }) as Record<string, { type: string; list: boolean }>;
+
+        const answer: Record<string, unknown> = {};
+        for (const [, alias, wanted] of query.matchAll(
+          /(f\d+): products\(first: 1, query: "metafields\.([^:]+):\*"\)/g,
+        )) {
+          const known = owners[wanted!];
+          answer[alias!] = known
+            ? {
+                nodes: [
+                  {
+                    metafields: {
+                      nodes: [
+                        {
+                          namespace: wanted!.split('.')[0],
+                          key: wanted!.split('.').slice(1).join('.'),
+                          reference: known.list ? null : { type: known.type },
+                          references: known.list ? { nodes: [{ type: known.type }] } : null,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }
+            : // No product carries it — the real answer for an unused field.
+              { nodes: [] };
+        }
+        return answer as T;
+      }
+
+      if (query.includes('HubMetafieldSample')) {
+        // The second pass. Empty by default so the targeted lookup above is
+        // what the other tests exercise.
+        return (overrides.metafieldSample ?? { products: { nodes: [] } }) as T;
+      }
+
+      if (query.includes('HubMetaobjectEntries')) {
+        const byType = (overrides.metaobjects ?? {
+          game: { nodes: [{ id: 'gid://shopify/Metaobject/1', displayName: 'Pokémon' }] },
+          'shopify--rarity': {
+            nodes: [{ id: 'gid://shopify/Metaobject/9', displayName: 'Rare' }],
+          },
+        }) as Record<string, unknown>;
+
+        return { metaobjects: byType[variables?.type as string] ?? null } as T;
+      }
+
       throw new Error(`Unexpected query: ${query.slice(0, 40)}`);
     },
   };
@@ -1136,6 +1227,259 @@ describe('reading the store’s tag vocabulary', () => {
     // throw away.
     expect(calls).toHaveLength(1);
     expect(calls[0]!.variables).toMatchObject({ first: 1 });
+  });
+});
+
+describe('reading the custom fields a shop models', () => {
+  it('offers a single-valued reference field with the ids it accepts', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const fields = await connector.listMetafields!(ctx(), {});
+    const game = fields.find((f) => f.key === 'game');
+
+    expect(game).toMatchObject({ owner: 'product', namespace: 'custom', name: 'Game' });
+    // Bare id: a single-valued field takes the gid as-is.
+    expect(game?.choices).toEqual([{ value: 'gid://shopify/Metaobject/1', label: 'Pokémon' }]);
+    expect(game?.unavailable).toBeUndefined();
+  });
+
+  /**
+   * A `list.` field takes a JSON array. Serialised here, by the side that knows
+   * the type, so the core can hand the value straight back without becoming a
+   * second place that decides what a list looks like.
+   */
+  it('serialises a list-typed field as an array', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const fields = await connector.listMetafields!(ctx(), {});
+
+    expect(fields.find((f) => f.key === 'rarity')?.choices).toEqual([
+      { value: '["gid://shopify/Metaobject/9"]', label: 'Rare' },
+    ]);
+  });
+
+  it('leaves a free-text field without choices rather than inventing any', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const number = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'number');
+
+    expect(number?.type).toBe('single_line_text_field');
+    expect(number?.choices).toBeUndefined();
+    expect(number?.unavailable).toBeUndefined();
+  });
+
+  /**
+   * The type of a reference field is learned from a product that uses it, so a
+   * field nothing uses cannot be resolved — and saying so is the point. Reported
+   * rather than silently offered with no values, which reads as "this store has
+   * none".
+   */
+  it('reports a field no product uses as unresolved, not as empty', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const unused = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'unused');
+
+    expect(unused?.choices).toBeUndefined();
+    expect(unused?.unavailable).toMatch(/No product uses this field/);
+  });
+
+  /**
+   * The first version read the fifty most recently updated products and took
+   * whatever they happened to carry. That resolved `custom.game` — on 434 of
+   * the live shop's 875 products — and missed `shopify.rarity`, on 18, which is
+   * a field in real use reported as one nobody uses. Every field is now asked
+   * for by name, so the answer does not depend on which products were edited
+   * last.
+   */
+  it('asks for each reference field by name rather than sampling recent products', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const fields = await connector.listMetafields!(ctx(), {});
+
+    const lookup = calls.find((c) => c.query.includes('HubMetafieldOwners'))!;
+    expect(lookup.query).toContain('metafields.custom.game:*');
+    expect(lookup.query).toContain('metafields.shopify.rarity:*');
+    // Aliased into one request, not one per field.
+    expect(calls.filter((c) => c.query.includes('HubMetafieldOwners'))).toHaveLength(1);
+
+    // And the rarely-used field resolves, which is the whole point.
+    expect(fields.find((f) => f.key === 'rarity')?.choices).toHaveLength(1);
+  });
+
+  /**
+   * Measured on the live shop: `metafields.shopify.color-pattern:*` returns
+   * nothing where thirty products carry that field, while reading recent
+   * products finds it at once. The filter is precise but not exhaustive, so a
+   * sweep runs behind it — and a field only the sweep can see must still
+   * resolve.
+   */
+  it('falls back to recent products for a field the filter does not match', async () => {
+    const { client, calls } = mockClient({
+      // Nothing answers the targeted lookup...
+      metafieldOwners: {},
+      // ...but a recently updated product plainly carries it.
+      metafieldSample: {
+        products: {
+          nodes: [
+            {
+              metafields: {
+                nodes: [{ namespace: 'custom', key: 'game', reference: { type: 'game' } }],
+              },
+            },
+          ],
+        },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const game = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'game');
+
+    expect(game?.choices).toEqual([{ value: 'gid://shopify/Metaobject/1', label: 'Pokémon' }]);
+    expect(calls.some((c) => c.query.includes('HubMetafieldSample'))).toBe(true);
+  });
+
+  it('skips the sweep when the targeted lookup answered everything', async () => {
+    const { client, calls } = mockClient({
+      metafieldOwners: {
+        'custom.game': { type: 'game', list: false },
+        'shopify.rarity': { type: 'shopify--rarity', list: true },
+        'custom.unused': { type: 'game', list: false },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    await connector.listMetafields!(ctx(), {});
+
+    // A request that cannot change the answer is a request not worth making.
+    expect(calls.some((c) => c.query.includes('HubMetafieldSample'))).toBe(false);
+  });
+
+  it('does not go looking for owners of a free-text field', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.listMetafields!(ctx(), {});
+
+    // `custom.number` is a text field: it has no vocabulary to find, so asking
+    // who uses it would be a request that could never change the answer.
+    expect(calls.find((c) => c.query.includes('HubMetafieldOwners'))!.query).not.toContain(
+      'metafields.custom.number',
+    );
+  });
+
+  /**
+   * Without `read_metaobjects` Shopify answers null and **no error**, which is
+   * indistinguishable from a shop with no entries. A caller shown an empty list
+   * concludes the store has nothing; this one is told to check the scope.
+   */
+  it('names the missing scope when the vocabulary comes back null', async () => {
+    const { client } = mockClient({ metaobjects: {} });
+    const connector = createShopifyConnector({ client });
+
+    const game = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'game');
+
+    expect(game?.choices).toBeUndefined();
+    expect(game?.unavailable).toMatch(/read_metaobjects/);
+  });
+
+  it('treats a genuinely empty vocabulary as an answer, not a failure', async () => {
+    const { client } = mockClient({ metaobjects: { game: { nodes: [] } } });
+    const connector = createShopifyConnector({ client });
+
+    const game = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'game');
+
+    expect(game?.choices).toEqual([]);
+    expect(game?.unavailable).toBeUndefined();
+  });
+});
+
+describe('setting custom fields on a created listing', () => {
+  const gameField = {
+    owner: 'product' as const,
+    namespace: 'custom',
+    key: 'game',
+    type: 'metaobject_reference',
+    value: 'gid://shopify/Metaobject/1',
+  };
+
+  it('puts product-owned fields on the product it creates', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), {
+      sku: CODE,
+      title: 'Pikachu ex',
+      metafields: [gameField],
+    } satisfies CreateListingRequest);
+
+    const create = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    expect((create?.variables?.product as Record<string, unknown>).metafields).toEqual([
+      { namespace: 'custom', key: 'game', type: 'metaobject_reference', value: gameField.value },
+    ]);
+  });
+
+  /**
+   * Adding a variant must not rewrite the product's description of itself. The
+   * operator curated that product; a second condition arriving is not a reason
+   * to restate its game, and a wrong value there would be invisible until a
+   * collection stopped listing it.
+   */
+  it('does not touch product fields when adding a variant to an existing product', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), {
+      sku: CODE,
+      title: 'Pikachu ex',
+      siblingListingId: VARIANT,
+      metafields: [gameField],
+    } satisfies CreateListingRequest);
+
+    expect(calls.some((c) => c.query.includes('CreateDraftProduct'))).toBe(false);
+    const variant = (
+      calls.find((c) => c.query.includes('CreateProductVariant'))?.variables?.variants as Array<
+        Record<string, unknown>
+      >
+    )[0];
+    expect(variant?.metafields).toBeUndefined();
+  });
+
+  it('puts variant-owned fields on the variant', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), {
+      sku: CODE,
+      title: 'Pikachu ex',
+      siblingListingId: VARIANT,
+      metafields: [{ ...gameField, owner: 'variant', key: 'grade' }],
+    } satisfies CreateListingRequest);
+
+    const variant = (
+      calls.find((c) => c.query.includes('CreateProductVariant'))?.variables?.variants as Array<
+        Record<string, unknown>
+      >
+    )[0];
+    expect(variant?.metafields).toEqual([
+      { namespace: 'custom', key: 'grade', type: 'metaobject_reference', value: gameField.value },
+    ]);
+  });
+
+  it('sends nothing at all when no fields were chosen', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), { sku: CODE, title: 'Pikachu ex' });
+
+    // Absent rather than `[]`: an empty array is a statement about the field,
+    // and this is meant to be silence.
+    const create = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    expect((create?.variables?.product as Record<string, unknown>).metafields).toBeUndefined();
   });
 });
 

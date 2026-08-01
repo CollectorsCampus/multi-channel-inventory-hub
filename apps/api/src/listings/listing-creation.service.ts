@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { hasCapability, type CreateListingRequest } from '@hub/connector-sdk';
+import {
+  hasCapability,
+  type CreateListingRequest,
+  type ListingMetafield,
+  type ListingMetafieldDefinition,
+} from '@hub/connector-sdk';
 import { formatCondition } from '@hub/connector-tcgplayer';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChannelContextFactory, type ResolvedChannel } from '../connectors/channel-context.service';
@@ -78,6 +83,17 @@ export interface CreateListingsRequest {
    * should do.
    */
   tags?: readonly string[];
+  /**
+   * Custom fields the operator picked, applied verbatim to created products.
+   *
+   * Per run rather than per card, and that is honest rather than lazy: the
+   * values are opaque ids in the channel's own vocabulary, so the core cannot
+   * derive one per card even in principle — `custom.set` on this store is a
+   * metaobject named `ME02 Phantasmal Flames`, while the catalogue calls the
+   * same set `ME02: Phantasmal Flames`. A run is therefore one set's worth of
+   * cards, the same scope a proposal run has.
+   */
+  metafields?: readonly ListingMetafield[];
   vendor?: string;
   optionName?: string;
   actorUserId?: string;
@@ -158,6 +174,29 @@ export class ListingCreationService {
     return connector.listTags!(ctx, limit === undefined ? {} : { limit });
   }
 
+  /**
+   * The custom fields this channel models, and what each accepts.
+   *
+   * Read-only, and its only purpose is the same as {@link listTags}: the
+   * operator picks a value the channel already knows, and the hub never derives
+   * one. Here it could not derive one even if it wanted to — the values are
+   * opaque ids that mean something only inside that shop.
+   */
+  async listMetafields(
+    channelInstanceId: string,
+    limit?: number,
+  ): Promise<ListingMetafieldDefinition[]> {
+    const { connector, ctx, displayName } = await this.channels.resolve(channelInstanceId);
+
+    if (!hasCapability(connector.capabilities, 'listing.metafields')) {
+      throw new BadRequestException(
+        `${connector.displayName} does not report the custom fields "${displayName}" models.`,
+      );
+    }
+
+    return connector.listMetafields!(ctx, limit === undefined ? {} : { limit });
+  }
+
   async create(request: CreateListingsRequest): Promise<CreateListingsResult> {
     const ids = [...new Set(request.inventoryItemIds)];
 
@@ -187,6 +226,10 @@ export class ListingCreationService {
     const optionName = request.optionName?.trim() || DEFAULT_OPTION_NAME;
     const tags = (request.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag !== '');
     const vendor = request.vendor?.trim();
+    // Carried through untouched. The core does not know what a value means —
+    // on Shopify it is a metaobject id — so validating or normalising it here
+    // would be the core inventing an opinion it cannot hold.
+    const metafields = request.metafields ?? [];
 
     const result: CreateListingsResult = { listings: [], problems: [] };
 
@@ -214,6 +257,7 @@ export class ListingCreationService {
           await this.createOne(request.channelInstanceId, { connector, ctx }, item, {
             optionName,
             tags,
+            metafields,
             ...(vendor ? { vendor } : {}),
           }),
         );
@@ -244,7 +288,12 @@ export class ListingCreationService {
     channelInstanceId: string,
     channel: Pick<ResolvedChannel, 'connector' | 'ctx'>,
     item: SelectedItem,
-    content: { optionName: string; tags: readonly string[]; vendor?: string },
+    content: {
+      optionName: string;
+      tags: readonly string[];
+      metafields: readonly ListingMetafield[];
+      vendor?: string;
+    },
   ): Promise<CreatedListing> {
     const { catalogItem } = item.sku;
     const existing = item.allocations[0];
@@ -275,6 +324,7 @@ export class ListingCreationService {
     if (catalogItem.imageUrl) req.imageUrl = catalogItem.imageUrl;
     if (content.vendor) req.vendor = content.vendor;
     if (content.tags.length > 0) req.tags = content.tags;
+    if (content.metafields.length > 0) req.metafields = content.metafields;
     if (siblingListingId) req.siblingListingId = siblingListingId;
     // Only a price the allocation already carries. Creation does not price
     // anything, the same way it does not set a quantity — but sending a price

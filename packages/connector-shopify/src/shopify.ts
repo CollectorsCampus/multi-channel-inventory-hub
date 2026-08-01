@@ -8,7 +8,10 @@ import type {
   Ctx,
   DelistRequest,
   EnumerateListingsRequest,
+  ListMetafieldsRequest,
   ListTagsRequest,
+  ListingMetafieldChoice,
+  ListingMetafieldDefinition,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -131,6 +134,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'reconcile',
       'listing.enumerate',
       'listing.tags',
+      'listing.metafields',
       'listing.sku',
     ],
 
@@ -510,6 +514,100 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
       return tags;
     },
+
+    /**
+     * The custom fields this shop models, and what each will accept.
+     *
+     * ## Three queries, because the obvious one is out of reach
+     *
+     * A metafield definition names its vocabulary as a
+     * `metaobject_definition_id` validation, and turning that into the `type`
+     * string `metaobjects()` wants needs `read_metaobject_definitions`. That is
+     * a second scope for one string, so it is not used. The type is discovered
+     * instead from **a product that already carries the field** — which needs
+     * only `read_metaobjects`, and has the side benefit that a field no product
+     * uses is reported as unresolved rather than guessed at.
+     *
+     * ## The silence this exists to break
+     *
+     * Without `read_metaobjects` Shopify answers `null` and **no error** —
+     * indistinguishable from a shop that has defined no entries. Every failure
+     * below therefore becomes an `unavailable` reason naming the scope, never
+     * an empty `choices`.
+     */
+    async listMetafields(
+      ctx: Ctx,
+      req: ListMetafieldsRequest,
+    ): Promise<ListingMetafieldDefinition[]> {
+      const perVocabulary = Math.min(Math.max(req.limit ?? 250, 1), 250);
+
+      const owners = [
+        { owner: 'product' as const, ownerType: 'PRODUCT' },
+        { owner: 'variant' as const, ownerType: 'PRODUCTVARIANT' },
+      ];
+
+      const definitions: ListingMetafieldDefinition[] = [];
+      for (const { owner, ownerType } of owners) {
+        const data = await client.request<{
+          metafieldDefinitions?: { nodes?: MetafieldDefinitionNode[] };
+        }>(ctx, METAFIELD_DEFINITIONS_QUERY, { ownerType });
+
+        for (const node of data.metafieldDefinitions?.nodes ?? []) {
+          if (!node?.namespace || !node.key || !node.type?.name) continue;
+          definitions.push({
+            owner,
+            namespace: node.namespace,
+            key: node.key,
+            type: node.type.name,
+            name: node.name ?? `${node.namespace}.${node.key}`,
+          });
+        }
+      }
+
+      const referenceTypes = await discoverMetaobjectTypes(
+        ctx,
+        definitions.filter((d) => d.type.includes('metaobject_reference')),
+      );
+      const vocabularies = new Map<string, ListingMetafieldChoice[] | undefined>();
+
+      for (const definition of definitions) {
+        if (!definition.type.includes('metaobject_reference')) continue;
+
+        const metaobjectType = referenceTypes.get(`${definition.namespace}.${definition.key}`);
+        if (!metaobjectType) {
+          definition.unavailable =
+            'No product uses this field yet, so its vocabulary could not be found. Set it by ' +
+            'hand on one product first.';
+          continue;
+        }
+
+        if (!vocabularies.has(metaobjectType)) {
+          vocabularies.set(
+            metaobjectType,
+            await readVocabulary(ctx, metaobjectType, perVocabulary),
+          );
+        }
+
+        const entries = vocabularies.get(metaobjectType);
+        if (!entries) {
+          definition.unavailable =
+            `This shop did not return the "${metaobjectType}" entries this field references. ` +
+            'The app usually needs the read_metaobjects scope.';
+          continue;
+        }
+
+        // A list-typed field takes a JSON array, a single-valued one takes the
+        // id bare. Serialised here so the core can hand the value straight back
+        // without knowing which it is.
+        const isList = definition.type.startsWith('list.');
+        definition.choices = entries.map((entry) => ({
+          label: entry.label,
+          value: isList ? JSON.stringify([entry.value]) : entry.value,
+        }));
+      }
+
+      return definitions;
+    },
   };
 
   // -------------------------------------------------------------------------
@@ -678,6 +776,11 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     // so a tag this hub invented would put the product in no collection at all
     // — present in the admin, invisible in the shop.
     if (req.tags && req.tags.length > 0) product.tags = [...req.tags];
+    // Product-owned fields only, and only here — `addVariant` deliberately does
+    // not set them, because a product the operator already curated must not
+    // have its description of itself rewritten by adding a variant to it.
+    const productMetafields = metafieldsFor(req, 'product');
+    if (productMetafields) product.metafields = productMetafields;
     if (req.optionName && req.optionValue) {
       product.productOptions = [{ name: req.optionName, values: [{ name: req.optionValue }] }];
     }
@@ -721,6 +824,9 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     }
     if (req.imageUrl) variant.mediaSrc = [req.imageUrl];
 
+    const variantMetafields = metafieldsFor(req, 'variant');
+    if (variantMetafields) variant.metafields = variantMetafields;
+
     const data = await client.request<{
       productVariantsBulkCreate: {
         productVariants?: Array<{ id?: string }>;
@@ -757,12 +863,127 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     };
     if (req.price !== undefined) variant.price = centsToPrice(req.price);
 
+    const variantMetafields = metafieldsFor(req, 'variant');
+    if (variantMetafields) variant.metafields = variantMetafields;
+
     const data = await client.request<{
       productVariantsBulkUpdate: { userErrors: Array<{ field?: string[]; message: string }> };
     }>(ctx, SET_SKU_MUTATION, { productId, variants: [variant] });
 
     throwOnUserErrors(data.productVariantsBulkUpdate?.userErrors, 'Setting SKU on new variant');
     return variantId;
+  }
+
+  /**
+   * Which metaobject type each reference field points at, learned from use.
+   *
+   * **One product that carries the field, per field, asked for by name.** The
+   * first version sampled the fifty most recently updated products and read
+   * whatever they happened to have, which resolved `custom.game` (on 434 of
+   * this shop's 875 products) and silently missed `shopify.rarity` (on 18) —
+   * reporting a field in real use as one nobody uses. Sampling makes the answer
+   * depend on luck; `metafields.<namespace>.<key>:*` asks the question directly.
+   *
+   * Batched through GraphQL aliases so a shop with twenty reference fields
+   * costs one round trip rather than twenty. {@link OWNER_LOOKUP_BATCH} keeps a
+   * single request inside Shopify's calculated-cost budget.
+   */
+  async function discoverMetaobjectTypes(
+    ctx: Ctx,
+    fields: ReadonlyArray<{ namespace: string; key: string }>,
+  ): Promise<Map<string, string>> {
+    const found = new Map<string, string>();
+
+    for (let i = 0; i < fields.length; i += OWNER_LOOKUP_BATCH) {
+      const batch = fields.slice(i, i + OWNER_LOOKUP_BATCH);
+
+      // Aliases are generated here, never taken from the shop. The *filter* is
+      // shop data and goes through the same escaping as the SKU search — a
+      // connector must not assume its inputs are tame just because they came
+      // back from the platform a moment ago.
+      const query =
+        'query HubMetafieldOwners {\n' +
+        batch
+          .map(
+            (field, index) =>
+              `  f${index}: products(first: 1, query: "${escapeSearchValue(
+                `metafields.${field.namespace}.${field.key}:*`,
+              )}") { nodes { metafields(first: 30) { nodes { namespace key ` +
+              'reference { ... on Metaobject { type } } ' +
+              'references(first: 1) { nodes { ... on Metaobject { type } } } } } } }',
+          )
+          .join('\n') +
+        '\n}';
+
+      const data = await client.request<
+        Record<
+          string,
+          { nodes?: Array<{ metafields?: { nodes?: SampledMetafieldNode[] } } | null> }
+        >
+      >(ctx, query, {});
+
+      for (const [index, field] of batch.entries()) {
+        const wanted = `${field.namespace}.${field.key}`;
+        for (const product of data[`f${index}`]?.nodes ?? []) {
+          for (const held of product?.metafields?.nodes ?? []) {
+            if (`${held?.namespace}.${held?.key}` !== wanted) continue;
+
+            // `reference` is null on a list-typed field and `references` is
+            // null on a single one, so both are asked for and either answers.
+            const type = held?.reference?.type ?? held?.references?.nodes?.[0]?.type;
+            if (type) found.set(wanted, type);
+          }
+        }
+      }
+    }
+
+    // Then a sweep of recent products, for anything the filter did not match.
+    //
+    // Measured, not defensive: `metafields.shopify.color-pattern:*` returns
+    // nothing on a shop where thirty products carry that field, while a plain
+    // read of recent products finds it immediately. The filter is precise but
+    // not exhaustive, and the sweep is exhaustive but lucky — so both run, and
+    // one request covers every field the first pass missed.
+    if (found.size < fields.length) {
+      const data = await client.request<{
+        products?: { nodes?: Array<{ metafields?: { nodes?: SampledMetafieldNode[] } } | null> };
+      }>(ctx, METAFIELD_SAMPLE_QUERY, { first: METAFIELD_SAMPLE_SIZE });
+
+      for (const product of data.products?.nodes ?? []) {
+        for (const held of product?.metafields?.nodes ?? []) {
+          if (!held?.namespace || !held.key) continue;
+
+          const name = `${held.namespace}.${held.key}`;
+          if (found.has(name)) continue;
+
+          const type = held.reference?.type ?? held.references?.nodes?.[0]?.type;
+          if (type) found.set(name, type);
+        }
+      }
+    }
+
+    return found;
+  }
+
+  /** Every entry of one metaobject type, or undefined when they cannot be read. */
+  async function readVocabulary(
+    ctx: Ctx,
+    type: string,
+    limit: number,
+  ): Promise<ListingMetafieldChoice[] | undefined> {
+    const data = await client.request<{
+      metaobjects?: { nodes?: Array<{ id?: string; displayName?: string } | null> } | null;
+    }>(ctx, METAOBJECT_ENTRIES_QUERY, { type, first: limit });
+
+    // Null, not empty: the scope is missing. An empty list is a real answer and
+    // must not be reported as a failure.
+    if (!data.metaobjects) return undefined;
+
+    const choices: ListingMetafieldChoice[] = [];
+    for (const node of data.metaobjects.nodes ?? []) {
+      if (node?.id) choices.push({ value: node.id, label: node.displayName ?? node.id });
+    }
+    return choices;
   }
 
   async function resolveProductId(ctx: Ctx, variantGid: string): Promise<string> {
@@ -776,6 +997,28 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     }
     return id;
   }
+}
+
+/**
+ * The metafields for one owner, in Shopify's input shape, or undefined.
+ *
+ * Undefined rather than an empty array on purpose: sending `metafields: []`
+ * is a statement about the field, and this is meant to be silence.
+ *
+ * Values are passed through exactly as the core supplied them — they came from
+ * `listMetafields`, already serialised for their own type, and a connector that
+ * re-encoded them here would be the second place that decides what a list looks
+ * like.
+ */
+function metafieldsFor(
+  req: CreateListingRequest,
+  owner: 'product' | 'variant',
+): Array<{ namespace: string; key: string; type: string; value: string }> | undefined {
+  const fields = (req.metafields ?? [])
+    .filter((field) => field.owner === owner)
+    .map(({ namespace, key, type, value }) => ({ namespace, key, type, value }));
+
+  return fields.length > 0 ? fields : undefined;
 }
 
 /**
@@ -949,6 +1192,85 @@ const PRODUCT_TAGS_QUERY = /* GraphQL */ `
       }
       edges {
         node
+      }
+    }
+  }
+`;
+
+/**
+ * How many "who uses this field" lookups to alias into one request.
+ *
+ * Each is a `products(first: 1)` with its metafields, so the calculated cost of
+ * a batch this size stays well inside Shopify's bucket while a shop with twenty
+ * reference fields still resolves in a single round trip.
+ */
+const OWNER_LOOKUP_BATCH = 20;
+
+/** Recent products read in the second pass, for fields the filter does not match. */
+const METAFIELD_SAMPLE_SIZE = 50;
+
+interface MetafieldDefinitionNode {
+  name?: string;
+  namespace?: string;
+  key?: string;
+  type?: { name?: string };
+}
+
+interface SampledMetafieldNode {
+  namespace?: string;
+  key?: string;
+  reference?: { type?: string } | null;
+  references?: { nodes?: Array<{ type?: string } | null> } | null;
+}
+
+const METAFIELD_DEFINITIONS_QUERY = /* GraphQL */ `
+  query HubMetafieldDefinitions($ownerType: MetafieldOwnerType!) {
+    metafieldDefinitions(ownerType: $ownerType, first: 250) {
+      nodes {
+        name
+        namespace
+        key
+        type {
+          name
+        }
+      }
+    }
+  }
+`;
+
+const METAFIELD_SAMPLE_QUERY = /* GraphQL */ `
+  query HubMetafieldSample($first: Int!) {
+    products(first: $first, sortKey: UPDATED_AT, reverse: true) {
+      nodes {
+        metafields(first: 30) {
+          nodes {
+            namespace
+            key
+            reference {
+              ... on Metaobject {
+                type
+              }
+            }
+            references(first: 1) {
+              nodes {
+                ... on Metaobject {
+                  type
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const METAOBJECT_ENTRIES_QUERY = /* GraphQL */ `
+  query HubMetaobjectEntries($type: String!, $first: Int!) {
+    metaobjects(type: $type, first: $first) {
+      nodes {
+        id
+        displayName
       }
     }
   }

@@ -26,7 +26,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not.
 
 `main` is green: **853 tests** (api 508, tcgplayer 102, shopify 104, sdk 61, tcgcsv 45,
-scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
+scryfall 26, db 7), lint/typecheck/format/build clean — **867 on `listing-metafields`**,
+which adds 14 to the Shopify suite. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
@@ -892,7 +893,7 @@ channel back at 139 links. **The hub cannot delete a product**, deliberately, so
 after a smoke test is a manual step — the same shape as the test order that had to be
 cancelled by hand.
 
-#### Metafields on created cards — measured, started, blocked on a scope (2026-07-31)
+#### Metafields on created cards — `custom.game`, `custom.set` and the rest (2026-07-31)
 
 The operator asked for game, set and similar fields on created cards. **The store already
 models them**, which changes the job from "design some fields" into "write into what is
@@ -920,22 +921,57 @@ there". Measured live, and none of it is guessable:
 - **`ProductCreateInput` and `ProductVariantsBulkInput` both accept `metafields`**, verified
   against the live `2026-07` schema, so creation needs no extra round trip.
 
-**The blocker, and the trap inside it.** Reading the vocabulary needs `read_metaobjects`
-(and `read_metaobject_definitions`, unless the type is discovered from a product instead —
-see below). The app grants `write_inventory, read_locations, read_orders, write_products`
-and nothing else, and **Shopify answers `null` with no error** — indistinguishable from a
-store that has defined no entries. That silence is why `ListingMetafieldDefinition` carries
-an explicit `unavailable` reason rather than an empty list.
+**Built as `listing.metafields` → `listMetafields`, plus `CreateListingRequest.metafields`
+and a picker on `/list`.** Values are opaque to the core and applied verbatim, exactly like
+tags — it could not derive one even if it wanted to.
 
-**Changing scopes is subject to the same "releasing is not installing" rule** recorded
-above for the first install: two releases were cut and a freshly minted token still
-reported the old four scopes. As of writing, the re-install is blocked — the Dev Dashboard
-does not offer the store — so the feature is parked.
+**One scope, and only one: `read_metaobjects`.** `read_metaobject_definitions` looked
+necessary because a metafield definition names its vocabulary as a
+`metaobject_definition_id` rather than a type string, and turning that into the `type` that
+`metaobjects()` wants needs the definitions scope. It is not needed: the type can be read
+off **a product that already carries the field** (`metafield { reference { type } }`), which
+`read_metaobjects` covers. Live, `custom.game` resolves to type `game` and `custom.set` to
+`set`.
 
-**A zero-scope fallback exists and may be the better answer anyway.** The GIDs can be read
-off products, which needs only `read_products`: offer each value as "used on 312 products —
-e.g. …" and let the operator pick by recognition. No invented labels, and no scope change.
-Its one real limit is that a set no product uses yet cannot be offered.
+**Discovery is two passes, because neither is complete on its own — both measured, not
+guessed:**
+
+1. **Ask for each field by name**, `products(first: 1, query: "metafields.<ns>.<key>:*")`,
+   all of them aliased into one request. Precise, and it finds `shopify.rarity` — on 18 of
+   875 products.
+2. **Then sweep recent products** for anything the filter did not match. Necessary because
+   `metafields.shopify.color-pattern:*` returns **nothing** on a shop where 30 products
+   carry that field. The filter is precise but not exhaustive; the sweep is exhaustive but
+   lucky.
+
+The first version was the sweep alone, and it silently reported `shopify.rarity` — a field
+in real use — as one nobody uses. The sweep only runs when something is still unresolved.
+
+**The trap this design exists for:** without the scope Shopify answers **`null` with no
+error**, indistinguishable from a store that has defined no entries. So
+`ListingMetafieldDefinition` carries an explicit `unavailable` reason, never an empty
+`choices`, and a caller shown "unavailable" can name the scope while one shown an empty
+list would conclude the store has nothing.
+
+**Getting the scope granted took three attempts and cost real time**, all of it the same
+"releasing is not installing" rule recorded above: two releases were cut and freshly minted
+tokens still reported the old four scopes. The Dev Dashboard would not offer the store for
+re-install either. It took an uninstall and a fresh install to land.
+
+**Live, through the hub, in 2 seconds:** 40 definitions, of which the 6 in real use all
+resolve — `custom.game` 18 entries, `custom.set` 35, `shopify.rarity` 4,
+`shopify.card-attributes` 2, `shopify.trading-card-packaging` 4, `shopify.color-pattern` 30. The other 34 are defined and unused, and are reported as unresolved rather than empty.
+
+**Picked per run, not per card**, and that is a property of the data rather than a
+shortcut: the values are ids in the store's vocabulary, so nothing could derive one per
+card. A run is one set's worth of cards, the same scope a proposal run has. `custom.set`'s
+entries are spelled `ME02 Phantasmal Flames` — the **tag** spelling, not tcgcsv's
+`ME02: Phantasmal Flames` — which is the third independent confirmation that catalogue
+names are not this store's vocabulary.
+
+**Product-owned fields are set only when a product is created.** Adding a variant to a
+product the operator already curated must not rewrite that product's description of
+itself.
 
 Two things the first live creations exposed, both waiting on the operator's worked example
 (two drafts were created for them to fill in — a sealed ETB and a single):
@@ -973,13 +1009,11 @@ invisible rather than loud.
 
 ### Unmerged work
 
-**`listing-metafields`** — the SDK half of writing `custom.game` / `custom.set` on created
-cards: the capability, `ListingMetafield`, `ListingMetafieldDefinition` and
-`ListMetafieldsRequest`. No connector implements it and no core calls it, which is why it
-is a draft rather than a PR. **It is parked on an install, not on a decision** — the
-measurements and the two settled choices are in the metafields section above, and the
-Shopify `listMetafields` / `createListing` change is the next thing to write. Two draft
-products are sitting on the live store for the operator to fill in as the worked example.
+**`listing-metafields`** — the whole of `listing.metafields`: SDK, Shopify connector, core
+endpoint and the `/list` picker, described above. Green and driven against the live store;
+awaiting review. Two draft products are on the store for the operator to fill in as a
+worked example, which is what should settle whether sealed product wants a variant option
+at all.
 
 #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
 during review. `shopify-client-credentials` was merged on 2026-07-29 once webhook

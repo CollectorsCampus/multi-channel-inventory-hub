@@ -163,7 +163,7 @@ describeDb('ListingCreationService', () => {
     expect(createListing).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        title: 'Pikachu ex',
+        title: 'Pikachu ex - 30th Celebration',
         imageUrl: 'https://example.test/pikachu.jpg',
         optionName: 'Condition',
         optionValue: 'Near Mint',
@@ -235,6 +235,9 @@ describeDb('ListingCreationService', () => {
     const sent = createListing.mock.calls[0]?.[1];
     expect(sent.optionName).toBeUndefined();
     expect(sent.optionValue).toBeUndefined();
+    // The same split governs the title: sealed names no set, because its own
+    // name already carries one.
+    expect(sent.title).toBe('Pikachu ex');
   });
 
   /**
@@ -450,20 +453,36 @@ describeDb('ListingCreationService', () => {
 
 describe('titleFor', () => {
   /**
-   * The catalogue's name and nothing else, on the operator's instruction. An
-   * earlier version appended the set and produced "Phantasmal Flames Pokemon
-   * Center Elite Trainer Box (Exclusive) - ME02: Phantasmal Flames", which is
-   * redundant because a sealed product's name already carries its set.
+   * A single's name does not carry its set, and "Charizard ex" exists in
+   * several — so without this each becomes a product that can only be told
+   * apart by opening it.
    */
-  it('is the catalogue name, with nothing composed onto it', () => {
-    expect(
-      titleFor({ name: 'Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive)' }),
-    ).toBe('Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive)');
-    expect(titleFor({ name: 'Charizard ex' })).toBe('Charizard ex');
+  it('names the set on a single', () => {
+    expect(titleFor({ name: 'Charizard ex', setName: 'SV04: Paradox Rift' }, true)).toBe(
+      'Charizard ex - SV04: Paradox Rift',
+    );
+  });
+
+  /**
+   * Sealed product already says its set in its own name, and the catalogue
+   * spells the set with a code the name lacks, so appending said it twice.
+   */
+  it('leaves a sealed product alone', () => {
+    const name = 'Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive)';
+    expect(titleFor({ name, setName: 'ME02: Phantasmal Flames' }, false)).toBe(name);
+  });
+
+  it('does not repeat a set the name already carries', () => {
+    // tcgcsv really does carry a card named "Winterspell" in Winterspell.
+    expect(titleFor({ name: 'Winterspell', setName: 'Winterspell' }, true)).toBe('Winterspell');
+  });
+
+  it('falls back to the name alone when there is no set to name', () => {
+    expect(titleFor({ name: 'Playmat', setName: null }, true)).toBe('Playmat');
   });
 
   it('trims, because a stray space becomes a storefront title', () => {
-    expect(titleFor({ name: '  Pikachu ex  ' })).toBe('Pikachu ex');
+    expect(titleFor({ name: '  Pikachu ex  ', setName: null }, true)).toBe('Pikachu ex');
   });
 });
 

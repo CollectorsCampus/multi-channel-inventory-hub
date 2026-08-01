@@ -988,14 +988,16 @@ Two things the first live creations exposed, both now settled by the operator:
   a second variant on a product with no option to tell them apart. Mutation-checked: both
   halves fail their tests when the rule is disabled.
 
-- **The title is the catalogue name and nothing else** — their call, after seeing the
-  alternative. Appending the set produced "Phantasmal Flames Pokemon Center Elite Trainer
-  Box (Exclusive) - ME02: Phantasmal Flames": the containment check does not fire because
-  the name holds `Phantasmal Flames` while the catalogue spells the set `ME02: Phantasmal
-Flames`. **The known consequence, accepted:** two singles of one card from different sets
-  become two products with the same title. They stay distinct products with distinct SKU
-  codes so nothing merges, but telling them apart in the admin means opening them.
-  Appending the set for singles only is a two-line change in `titleFor` if it ever bites.
+- **The set is appended for singles and not for sealed** — the same split as the option,
+  and settled in two steps rather than one. Appending it everywhere produced "Phantasmal
+  Flames Pokemon Center Elite Trainer Box (Exclusive) - ME02: Phantasmal Flames": the
+  containment check does not fire, because the name holds `Phantasmal Flames` while the
+  catalogue spells the set `ME02: Phantasmal Flames`. Dropping it everywhere then left
+  every printing of "Charizard ex" as an identically titled product. The split is right
+  because the two cases differ in fact — **a sealed product's name already carries its set
+  and a single's does not.** `titleFor` takes the flag from the caller rather than
+  re-deriving it, so the title and the variant option can never disagree about what an item
+  is.
 
 #### Multi-variant products are mapped, never created (measured 2026-08-01)
 

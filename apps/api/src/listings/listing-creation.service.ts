@@ -344,7 +344,8 @@ export class ListingCreationService {
       ? undefined
       : await this.findSibling(channelInstanceId, catalogItem.id, item.id);
 
-    const req: CreateListingRequest = { sku, title: titleFor(catalogItem) };
+    // The same split decides the title: a single names its set, sealed does not.
+    const req: CreateListingRequest = { sku, title: titleFor(catalogItem, !unvaried) };
 
     if (!unvaried) {
       req.optionName = content.optionName;
@@ -504,26 +505,40 @@ function skuCodeFor(item: SelectedItem): string {
 }
 
 /**
- * What the product is called: the catalogue's name, and nothing else.
+ * What the product is called.
  *
- * **Nothing is composed here, on the operator's instruction.** An earlier
- * version appended ` - <set>` where the name did not already contain it, on the
- * reasoning that "Charizard ex" exists in several sets and identically-titled
- * products cannot be told apart. On real data that produced "Phantasmal Flames
- * Pokemon Center Elite Trainer Box (Exclusive) - ME02: Phantasmal Flames" —
- * redundant, because a sealed product's name already carries its set while the
- * catalogue spells the set with a code the name lacks. Asked to choose, the
- * operator took the plain name.
+ * **The set is appended for singles and not for sealed**, which is the
+ * operator's rule and follows the same split as the variant option. The two
+ * cases genuinely differ:
  *
- * **The consequence is real and is theirs:** two singles of the same card from
- * different sets will be created as two products with the same title. They
- * remain distinct products with distinct SKU codes, so nothing is lost or
- * merged — but telling them apart in the admin means opening them. If that
- * becomes a nuisance, appending the set for singles only is a two-line change
- * here.
+ * - A sealed product's name already carries its set — "Phantasmal Flames
+ *   Pokemon Center Elite Trainer Box (Exclusive)" — and the catalogue spells
+ *   the set with a code the name lacks (`ME02: Phantasmal Flames`), so
+ *   appending produced a title that said it twice.
+ * - A single's name does not. "Charizard ex" exists in several sets, and
+ *   creating each as "Charizard ex" leaves products that can only be told apart
+ *   by opening them.
+ *
+ * The separator is safe against the matcher: `splitChannelTitle` splits on
+ * " - " only when the tail parses as a *condition*, so "Charizard ex - SV04:
+ * Paradox Rift" keeps its whole name while the variant's own " - Near Mint"
+ * comes off as intended.
  */
-export function titleFor(item: { name: string }): string {
-  return item.name.trim();
+export function titleFor(
+  item: { name: string; setName: string | null },
+  includeSet: boolean,
+): string {
+  const name = item.name.trim();
+  if (!includeSet) return name;
+
+  const setName = item.setName?.trim();
+  if (!setName) return name;
+
+  // A card literally named after its set — tcgcsv carries "Winterspell" in
+  // Winterspell — must not become "Winterspell - Winterspell".
+  if (name.toLowerCase().includes(setName.toLowerCase())) return name;
+
+  return `${name} - ${setName}`;
 }
 
 /**

@@ -648,10 +648,10 @@ Verified in the real container too: the image boots healthy, the workers start (
 `true`), the query console reports disabled (a real `false`), and a short
 `CREDENTIAL_MASTER_KEY` is still refused at boot.
 
-**Dependabot: 0 security alerts, four non-security PRs left** — #6 TypeScript 5→6, #8
-ESLint 9→10, #9 `@vitejs/plugin-react` 4→6, #11 a minor-and-patch group. All majors, none
-urgent. The lesson from #7 generalises: check what actually consumes the package before
-trusting green CI on a bump.
+**Dependabot: 0 security alerts, three non-security PRs left** (checked 2026-08-01) — #6
+TypeScript 5→6, #8 ESLint 9→10, #9 `@vitejs/plugin-react` 4→6. All majors, none urgent;
+#11's minor-and-patch group has since gone. The lesson from #7 generalises: check what
+actually consumes the package before trusting green CI on a bump.
 
 #### The hub's SKU is a composite code, not a bare product id (#32)
 
@@ -1773,17 +1773,19 @@ a defect to fix, and none blocks anything else.
    extensions, and cannot make an Admin API call. The 24-hour client-credentials token
    machinery in `connector-shopify/src/tokens.ts` stays exactly as it is.
 
-5. **Creating Shopify products for cards the store does not carry yet — two of three
-   layers built.** Requested by the operator 2026-07-30. Their Shopify holds sealed product
-   and a few promos; the ledger will hold singles, and there was no way to get one onto the
-   storefront except creating the product by hand first.
+5. **Creating Shopify products for cards the store does not carry yet — built, and open on
+   one thing only.** Requested by the operator 2026-07-30. Their Shopify holds sealed
+   product and a few promos; the ledger will hold singles, and there was no way to get one
+   onto the storefront except creating the product by hand first.
 
-   **Built and proven live.** The SKU code (#32), `listing.create` (#33) and the core
-   service, endpoint and screen (#34) are on `main`, and one draft product has been created
-   on the real store and deleted again (above). This entry stays open only because the
-   add-a-variant path has never met Shopify and no real single has ever been listed. The
-   decisions the three layers settled, kept here because they are the constraints any
-   change must preserve:
+   **All of it is on `main`** — the SKU code (#32), `listing.create` (#33), the core
+   service, endpoint and screen (#34), and metafields (#37) — and one draft product has
+   been created on the real store, verified and deleted (above). **This entry stays open
+   for exactly one reason: the add-a-variant path has never met Shopify**, because that
+   fires only for a second condition of a card already listed and the ledger holds no
+   singles at all. Everything else in the shape has run against the real store. The
+   decisions those layers settled, kept because they are the constraints any change must
+   preserve:
 
    - **Selected SKUs only, never automatic.** The operator's constraint, verbatim: it
      "probably shouldn't be automatic to create everything that's in say your tcgplayer
@@ -1799,8 +1801,10 @@ a defect to fix, and none blocks anything else.
      it.
    - **Record the allocation and link it, then let the normal push path set quantity.**
      Creation deliberately sets none.
-   - **Tags come from the operator's pick, never derived** — see the collections section
-     above, which is the reason.
+   - **Tags and metafields come from the operator's pick, never derived** — see the
+     collections and metafields sections above, which are the reason.
+   - **Sealed and `NA` get no variant option, and no set in the title.** Condition is a
+     variant axis only where it is a real choice.
 
 6. **`auth_failure` is a declared alert kind that nothing raises.** Bad credentials surface
    as a generic `sync_failure` warning, so an operator cannot tell "your secret is wrong,
@@ -1873,11 +1877,16 @@ Worth stating plainly, because the README is optimistic by nature:
   after the re-stamp (above). Everything below `certain` is still what a live run of an
   _unlinked_ set returns: `possible · name-partial`, because store titles are prefixed
   and tcgcsv's are not. Nothing has changed about that half.
-- **Creation is proven live, once, on a test row** — one draft product created, verified
-  field by field, its quantity pushed by the normal worker, then deleted (above). What
-  remains untried is the shape that matters for singles: **a second condition of a card
-  already listed**, i.e. the add-a-variant path with a real `siblingListingId`. It is
-  covered by tests and has never met Shopify.
+- **Creation is proven live, on test rows** — three draft products created across two
+  runs, verified field by field, quantity pushed by the normal worker, then deleted
+  (above). What remains untried is the shape that matters for singles: **a second
+  condition of a card already listed**, i.e. the add-a-variant path with a real
+  `siblingListingId`. It is covered by tests, mutation-checked, and has never met Shopify.
+- **No metafield has been written to a real product.** `listMetafields` is proven live —
+  40 definitions, 6 vocabularies, read through the hub — but every product created so far
+  predates the writer, so `custom.game` and `custom.set` have never actually been set by
+  it. The read half is the half that could surprise; the write is one field on a mutation
+  that already works. Still: unproven is unproven.
 - **There are no real singles in the ledger at all.** Everything in it is sealed product
   the store already carries, so nothing has exercised creation for stock somebody means
   to sell.

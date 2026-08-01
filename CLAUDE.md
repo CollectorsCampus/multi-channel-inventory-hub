@@ -25,9 +25,8 @@ Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fi
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
 because it explains _why_ each landed, which the CHANGELOG does not.
 
-`main` is green: **853 tests** (api 508, tcgplayer 102, shopify 104, sdk 61, tcgcsv 45,
-scryfall 26, db 7), lint/typecheck/format/build clean — **870 on `listing-metafields`**,
-which adds 14 to the Shopify suite and 3 to the API's. **Five jobs run on a push** —
+`main` is green: **873 tests** (api 514, shopify 118, tcgplayer 102, sdk 61, tcgcsv 45,
+scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
@@ -503,7 +502,7 @@ genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins 
 "Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
 lines are untouched.
 
-### After v0.2.0 — PRs #21–#33 (2026-07-30/31), on `main`, in no released image
+### After v0.2.0 — PRs #21–#37 (2026-07-30 to 08-01), on `main`, in no released image
 
 #21 and #22 are research only — webhook delivery over a cloud bus, and the connector
 candidates — and their findings live under "Open decisions" below, where they gate real
@@ -1072,11 +1071,10 @@ invisible rather than loud.
 
 ### Unmerged work
 
-**`listing-metafields`** — the whole of `listing.metafields`: SDK, Shopify connector, core
-endpoint and the `/list` picker, described above. Green and driven against the live store;
-awaiting review. Two draft products are on the store for the operator to fill in as a
-worked example, which is what should settle whether sealed product wants a variant option
-at all.
+None. `listing.metafields` merged as **#37** on 2026-08-01, carrying the three decisions
+the operator made while it was open — sealed gets no variant option, `NA` with it, and the
+set is appended to a single's title only. The two draft products it was demonstrated on
+were deleted afterwards and their ledger rows zeroed.
 
 #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
 during review. `shopify-client-credentials` was merged on 2026-07-29 once webhook

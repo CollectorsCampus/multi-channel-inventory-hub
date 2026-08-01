@@ -4,13 +4,48 @@ import {
   ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { MAX_ITEMS } from './listing-creation.service';
+
+/**
+ * One custom field to set, as the channel described it.
+ *
+ * Deliberately not validated beyond shape and length. The core has no way to
+ * know what a valid value looks like — on Shopify it is a metaobject id — and a
+ * guess here would reject the correct answer.
+ */
+export class ListingMetafieldDto {
+  @ApiProperty({ enum: ['product', 'variant'] })
+  @IsIn(['product', 'variant'])
+  owner!: 'product' | 'variant';
+
+  @ApiProperty({ example: 'custom' })
+  @IsString()
+  @MaxLength(100)
+  namespace!: string;
+
+  @ApiProperty({ example: 'game' })
+  @IsString()
+  @MaxLength(100)
+  key!: string;
+
+  @ApiProperty({ example: 'metaobject_reference' })
+  @IsString()
+  @MaxLength(100)
+  type!: string;
+
+  @ApiProperty({ example: 'gid://shopify/Metaobject/141624803381' })
+  @IsString()
+  @MaxLength(2000)
+  value!: string;
+}
 
 export class CreateListingsDto {
   @ApiProperty({
@@ -41,6 +76,19 @@ export class CreateListingsDto {
   @IsString({ each: true })
   @MaxLength(255, { each: true })
   tags?: string[];
+
+  @ApiPropertyOptional({
+    type: [ListingMetafieldDto],
+    description:
+      'Custom fields to set on products this run creates, chosen from GET .../listings/metafields. ' +
+      'Applied verbatim: the value is the channel’s own identifier and means nothing here.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(25)
+  @ValidateNested({ each: true })
+  @Type(() => ListingMetafieldDto)
+  metafields?: ListingMetafieldDto[];
 
   @ApiPropertyOptional({ description: 'Publisher or brand. Applied verbatim.' })
   @IsOptional()

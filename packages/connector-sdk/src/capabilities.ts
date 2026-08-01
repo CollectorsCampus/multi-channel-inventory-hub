@@ -112,6 +112,23 @@ export const CAPABILITIES = [
    */
   'listing.tags',
 
+  /**
+   * Read back the custom fields a channel models, and their vocabularies.
+   *
+   * The same argument as `listing.tags`, one level more structured. A store
+   * that already describes its products — `custom.game` on 434 of them,
+   * `custom.set` on 142 — has a vocabulary the hub must write *into* rather
+   * than beside: a second, hub-owned "game" field would be a second answer to
+   * a question the store already answers, invisible to the theme that reads
+   * the first one.
+   *
+   * Values are opaque to the core. On Shopify these fields reference
+   * metaobjects, so the value is a GID that means nothing without the store —
+   * which is exactly why the operator picks it from what the connector reports
+   * and the hub never derives it.
+   */
+  'listing.metafields',
+
   // --- file transport (ADR 0002) --------------------------------------------
   /** Render desired listings to a file for the operator to upload. */
   'listing.export',
@@ -142,6 +159,7 @@ export const CAPABILITY_METHODS = {
   reconcile: 'fetchLiveState',
   'listing.enumerate': 'enumerateListings',
   'listing.tags': 'listTags',
+  'listing.metafields': 'listMetafields',
   'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',
   'orders.import': 'importOrders',

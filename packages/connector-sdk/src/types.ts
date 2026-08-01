@@ -142,6 +142,15 @@ export interface CreateListingRequest {
   /** Cents. Omitted leaves the platform's default, which is usually zero. */
   price?: number;
   /**
+   * Custom fields to set, chosen by the operator from {@link
+   * ListingMetafieldDefinition}. Applied verbatim, like tags.
+   *
+   * Product-owned fields are set only when a **product** is created: adding a
+   * variant to a product the operator already curated must not rewrite that
+   * product's description of itself.
+   */
+  metafields?: readonly ListingMetafield[];
+  /**
    * A variant this hub already drives belonging to the same product.
    *
    * Present means "add a variant to whatever product this belongs to"; absent
@@ -304,6 +313,65 @@ export interface EnumerateListingsRequest {
    * a review screen being read.
    */
   search?: string;
+}
+
+/**
+ * One custom field to set on a listing, written verbatim.
+ *
+ * **The core does not understand the value and must not try.** On Shopify a
+ * `custom.game` field holds a metaobject GID — a number that means "Pokémon"
+ * only inside one shop. The operator picks it from {@link
+ * ListingMetafieldDefinition.choices}; the hub carries it and nothing more,
+ * for the same reason it never derives a tag.
+ */
+export interface ListingMetafield {
+  /** Which record the field belongs to. A product's fields describe the card. */
+  owner: 'product' | 'variant';
+  namespace: string;
+  key: string;
+  /** The platform's own type token, applied verbatim. */
+  type: string;
+  /** Already serialised for `type`, by the connector that offered it. */
+  value: string;
+}
+
+export interface ListingMetafieldChoice {
+  /** Wire value, ready to send back as {@link ListingMetafield.value}. */
+  value: string;
+  /** What a human calls it — "Pokémon", "SV08: Surging Sparks". */
+  label: string;
+}
+
+/** A custom field a channel models, and what it will accept. */
+export interface ListingMetafieldDefinition {
+  owner: 'product' | 'variant';
+  namespace: string;
+  key: string;
+  type: string;
+  name: string;
+  /**
+   * The values this field accepts, when it references a fixed vocabulary.
+   *
+   * Absent on a free-text field. Present and empty means the vocabulary is
+   * genuinely empty — distinct from {@link unavailable}, which means nobody
+   * knows.
+   */
+  choices?: ListingMetafieldChoice[];
+  /**
+   * Why the vocabulary could not be read — a missing scope, usually.
+   *
+   * Modelled rather than swallowed because the failure is **silent** on
+   * Shopify: an app without `read_metaobjects` gets `null` and no error, which
+   * is indistinguishable from a store that has defined no entries. A caller
+   * told "unavailable" can say so; a caller shown an empty list will conclude
+   * the store has nothing.
+   */
+  unavailable?: string;
+}
+
+export interface ListMetafieldsRequest {
+  /** Most vocabulary entries to read per field. */
+  limit?: number;
 }
 
 export interface ListTagsRequest {

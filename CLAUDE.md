@@ -26,7 +26,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not.
 
 `main` is green: **853 tests** (api 508, tcgplayer 102, shopify 104, sdk 61, tcgcsv 45,
-scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
+scryfall 26, db 7), lint/typecheck/format/build clean — **870 on `listing-metafields`**,
+which adds 14 to the Shopify suite and 3 to the API's. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
@@ -892,6 +893,162 @@ channel back at 139 links. **The hub cannot delete a product**, deliberately, so
 after a smoke test is a manual step — the same shape as the test order that had to be
 cancelled by hand.
 
+#### Metafields on created cards — `custom.game`, `custom.set` and the rest (2026-07-31)
+
+The operator asked for game, set and similar fields on created cards. **The store already
+models them**, which changes the job from "design some fields" into "write into what is
+there". Measured live, and none of it is guessable:
+
+| Field                            | Type                        | On  |
+| -------------------------------- | --------------------------- | --- |
+| `custom.game`                    | `metaobject_reference`      | 434 |
+| `custom.set`                     | `metaobject_reference`      | 142 |
+| `shopify.rarity`                 | `list.metaobject_reference` | 18  |
+| `shopify.card-attributes`        | `list.metaobject_reference` | 31  |
+| `shopify.trading-card-packaging` | `list.metaobject_reference` | 58  |
+| `shopify.condition`              | `list.metaobject_reference` | 2   |
+
+- **They are metaobject _references_, not text.** The value is a GID —
+  `custom.game` is `gid://shopify/Metaobject/141624803381` on every Pokémon product — which
+  means nothing outside this one shop. So the same rule as tags applies, harder: the hub
+  can carry a value the operator picked and must never derive one.
+- **Variant level has nothing** but eleven `mm-google-shopping` fields. There is no
+  existing home for condition/printing/language on a variant, and the `Condition` option
+  plus the SKU code already carry those, so nothing is proposed there.
+- **A definition's vocabulary is found through `validations`**, which give a
+  `metaobject_definition_id` — not a type string, so `metaobjects(type:)` cannot be reached
+  from a definition without a second lookup.
+- **`ProductCreateInput` and `ProductVariantsBulkInput` both accept `metafields`**, verified
+  against the live `2026-07` schema, so creation needs no extra round trip.
+
+**Built as `listing.metafields` → `listMetafields`, plus `CreateListingRequest.metafields`
+and a picker on `/list`.** Values are opaque to the core and applied verbatim, exactly like
+tags — it could not derive one even if it wanted to.
+
+**One scope, and only one: `read_metaobjects`.** `read_metaobject_definitions` looked
+necessary because a metafield definition names its vocabulary as a
+`metaobject_definition_id` rather than a type string, and turning that into the `type` that
+`metaobjects()` wants needs the definitions scope. It is not needed: the type can be read
+off **a product that already carries the field** (`metafield { reference { type } }`), which
+`read_metaobjects` covers. Live, `custom.game` resolves to type `game` and `custom.set` to
+`set`.
+
+**Discovery is two passes, because neither is complete on its own — both measured, not
+guessed:**
+
+1. **Ask for each field by name**, `products(first: 1, query: "metafields.<ns>.<key>:*")`,
+   all of them aliased into one request. Precise, and it finds `shopify.rarity` — on 18 of
+   875 products.
+2. **Then sweep recent products** for anything the filter did not match. Necessary because
+   `metafields.shopify.color-pattern:*` returns **nothing** on a shop where 30 products
+   carry that field. The filter is precise but not exhaustive; the sweep is exhaustive but
+   lucky.
+
+The first version was the sweep alone, and it silently reported `shopify.rarity` — a field
+in real use — as one nobody uses. The sweep only runs when something is still unresolved.
+
+**The trap this design exists for:** without the scope Shopify answers **`null` with no
+error**, indistinguishable from a store that has defined no entries. So
+`ListingMetafieldDefinition` carries an explicit `unavailable` reason, never an empty
+`choices`, and a caller shown "unavailable" can name the scope while one shown an empty
+list would conclude the store has nothing.
+
+**Getting the scope granted took three attempts and cost real time**, all of it the same
+"releasing is not installing" rule recorded above: two releases were cut and freshly minted
+tokens still reported the old four scopes. The Dev Dashboard would not offer the store for
+re-install either. It took an uninstall and a fresh install to land.
+
+**Live, through the hub, in 2 seconds:** 40 definitions, of which the 6 in real use all
+resolve — `custom.game` 18 entries, `custom.set` 35, `shopify.rarity` 4,
+`shopify.card-attributes` 2, `shopify.trading-card-packaging` 4, `shopify.color-pattern` 30. The other 34 are defined and unused, and are reported as unresolved rather than empty.
+
+**Picked per run, not per card**, and that is a property of the data rather than a
+shortcut: the values are ids in the store's vocabulary, so nothing could derive one per
+card. A run is one set's worth of cards, the same scope a proposal run has. `custom.set`'s
+entries are spelled `ME02 Phantasmal Flames` — the **tag** spelling, not tcgcsv's
+`ME02: Phantasmal Flames` — which is the third independent confirmation that catalogue
+names are not this store's vocabulary.
+
+**Product-owned fields are set only when a product is created.** Adding a variant to a
+product the operator already curated must not rewrite that product's description of
+itself.
+
+Two things the first live creations exposed, both now settled by the operator:
+
+- **Sealed product gets no variant option at all** — their call. Creation had given it
+  `Condition: Unopened`, while every sealed product the store sells is a single-variant
+  `Default Title`; an option with one answer is a choice put in front of a customer for no
+  reason. **`NA` is treated the same way**, by its own definition — "not applicable" is
+  what a binder, a playmat or a Funko Pop has, and `Condition: NA` on a storefront is the
+  same silliness one step on. `UNVARIED_CONDITIONS` is the list.
+
+  **It follows that such an item is never a _variant_ of anything either**, so no sibling
+  is looked for. Two sealed SKUs of one catalogue product — an English box and a Japanese
+  one — become two products, which is what a store carrying both wants; the alternative is
+  a second variant on a product with no option to tell them apart. Mutation-checked: both
+  halves fail their tests when the rule is disabled.
+
+- **The set is appended for singles and not for sealed** — the same split as the option,
+  and settled in two steps rather than one. Appending it everywhere produced "Phantasmal
+  Flames Pokemon Center Elite Trainer Box (Exclusive) - ME02: Phantasmal Flames": the
+  containment check does not fire, because the name holds `Phantasmal Flames` while the
+  catalogue spells the set `ME02: Phantasmal Flames`. Dropping it everywhere then left
+  every printing of "Charizard ex" as an identically titled product. The split is right
+  because the two cases differ in fact — **a sealed product's name already carries its set
+  and a single's does not.** `titleFor` takes the flag from the caller rather than
+  re-deriving it, so the title and the variant option can never disagree about what an item
+  is.
+
+#### Multi-variant products are mapped, never created (measured 2026-08-01)
+
+**69 of the store's 696 products carry more than one variant**, and not one of them uses
+condition as the axis: it is `Promo` (blisters with different promo cards), `Deck`,
+`Scene`, `Colour`, `Type`, `Eeveelution`. The hub models none of those and could not invent
+them, so **creation will never reproduce that shape** — a card's conditions are the only
+variant axis it knows.
+
+That is not a gap, because the other path already covers it. **7 of the 139 live links
+already point at variants of multi-variant products** — two promos of "Perfect Order
+Premium Checklane Blister" and all five of "MTG Final Fantasy Scene Box" — each carrying
+its own hub SKU code. `enumerateListings` walks _variants_, so every variant of a
+multi-variant product appears as its own listing and links to its own inventory item.
+Matching and creation are separate paths and the sealed rule touches only the second.
+
+Worth knowing about the shape of that data: **tcgcsv models each promo as its own product**
+(`tcgcsv:672409` Clawitzer, `tcgcsv:672407` Cinderace), while the store models them as two
+variants of one. Both are right; the hub's grouping is by `CatalogItem`, so it would have
+created them as two products even before the sealed rule. The store's arrangement is the
+operator's, and mapping is how the two meet.
+
+Also confirmed here: the 1-Pack blisters are **separate single-variant products**, and
+`[Drifloon]` and `[Drifblim]` still share seller SKU `10-10053-110` — the old non-unique
+scheme, exactly as recorded. Where the hub has re-stamped, the ambiguity is gone: the
+Psyduck and Golduck 3-packs now hold `tcgcsv:644357` and `tcgcsv:644356`.
+
+#### Non-TCG goods need no "other" mode — the ledger already holds them
+
+Asked 2026-08-01, and the answer is that nothing needs building. Three things were already
+true and are worth stating so nobody adds a parallel path for them:
+
+- **`CatalogItem.game` is nullable**, and the schema comment has said "null for non-TCG
+  goods" since Phase 0.
+- **`SKU_CONDITIONS` includes `NA`**, meaning "not applicable" — the condition a playmat or
+  a Funko Pop has. It now also means "no variant option", above.
+- **`POST /inventory` creates a ledger item from a name alone** — game and set optional, no
+  catalogue lookup — and the `/intake` screen exposes it. That is the "other" option.
+
+Creation works for them too, because a ledger item with no `CatalogExternalRef` still gets
+a valid identifier: `hub:<skuId>:NA:NORMAL:EN`. And this is not hypothetical — the
+operator's own TCGPlayer export already round-trips sleeves, deck boxes and playmats across
+21 product lines.
+
+**A future Funko connector needs no core change either.** Nothing in the model is
+TCG-specific: a catalogue that knows Funko Pops is a `CatalogSource`, a marketplace that
+sells them is a `Connector`, and `Sku`'s natural key degrades gracefully to
+`NA / NORMAL / EN`. The one TCG-shaped seam is `optionValueFor`, which borrows TCGPlayer's
+condition vocabulary — and it already falls back to raw tokens for anything that vocabulary
+cannot spell.
+
 #### How the store's collections actually work (measured 2026-07-31)
 
 Not code, but it decides what a created product must carry, and getting it wrong is
@@ -915,7 +1072,13 @@ invisible rather than loud.
 
 ### Unmerged work
 
-None. #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
+**`listing-metafields`** — the whole of `listing.metafields`: SDK, Shopify connector, core
+endpoint and the `/list` picker, described above. Green and driven against the live store;
+awaiting review. Two draft products are on the store for the operator to fill in as a
+worked example, which is what should settle whether sealed product wants a variant option
+at all.
+
+#26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
 during review. `shopify-client-credentials` was merged on 2026-07-29 once webhook
 delivery was proven against the live store (below), which was the one thing holding it
 back.

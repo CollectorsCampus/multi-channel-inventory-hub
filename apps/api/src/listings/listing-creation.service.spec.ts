@@ -211,6 +211,101 @@ describeDb('ListingCreationService', () => {
     );
   });
 
+  /**
+   * Every sealed product the operator already sells is a single-variant
+   * "Default Title". A `Condition: Unopened` option on a booster box is a
+   * choice with one answer put in front of a customer.
+   */
+  it('gives sealed product no condition option', async () => {
+    const card = await seedCard();
+    const sealed = await prisma.sku.create({
+      data: {
+        catalogItemId: card.catalogItemId,
+        condition: 'SEALED',
+        printing: 'NORMAL',
+        language: 'EN',
+      },
+    });
+    const item = await prisma.inventoryItem.create({
+      data: { skuId: sealed.id, quantityOnHand: 1 },
+    });
+
+    await create([item.id]);
+
+    const sent = createListing.mock.calls[0]?.[1];
+    expect(sent.optionName).toBeUndefined();
+    expect(sent.optionValue).toBeUndefined();
+    // The same split governs the title: sealed names no set, because its own
+    // name already carries one.
+    expect(sent.title).toBe('Pikachu ex');
+  });
+
+  /**
+   * And it follows: something with no option cannot be a variant of anything.
+   * Adding one to a product that has only "Default Title" would be a second
+   * variant with nothing to tell it apart.
+   */
+  it('never makes sealed product a variant of a sibling', async () => {
+    const card = await seedCard();
+    // The Near Mint single is listed first, so a sibling genuinely exists.
+    await create([card.nm.inventoryItemId]);
+
+    const sealed = await prisma.sku.create({
+      data: {
+        catalogItemId: card.catalogItemId,
+        condition: 'SEALED',
+        printing: 'NORMAL',
+        language: 'EN',
+      },
+    });
+    const item = await prisma.inventoryItem.create({
+      data: { skuId: sealed.id, quantityOnHand: 1 },
+    });
+
+    const result = await create([item.id]);
+
+    expect(createListing.mock.calls[1]?.[1].siblingListingId).toBeUndefined();
+    expect(result.listings[0]?.outcome).toBe('created-product');
+  });
+
+  /**
+   * "Not applicable" is what a binder, a playmat or a Funko Pop has for a
+   * condition, and offering it as a choice is the sealed silliness one step
+   * further on. Non-TCG goods are already in the ledger — the operator's
+   * TCGPlayer export carries sleeves, deck boxes and playmats — so this is a
+   * live path, not a hypothetical.
+   */
+  it('gives an item with no applicable condition no option either', async () => {
+    const card = await seedCard();
+    const na = await prisma.sku.create({
+      data: {
+        catalogItemId: card.catalogItemId,
+        condition: 'NA',
+        printing: 'NORMAL',
+        language: 'EN',
+      },
+    });
+    const item = await prisma.inventoryItem.create({ data: { skuId: na.id, quantityOnHand: 1 } });
+
+    await create([item.id]);
+
+    const sent = createListing.mock.calls[0]?.[1];
+    expect(sent.optionName).toBeUndefined();
+    // And it would otherwise have read "Condition: NA" on a storefront.
+    expect(sent.optionValue).toBeUndefined();
+  });
+
+  it('still gives singles their condition option', async () => {
+    const card = await seedCard();
+
+    await create([card.nm.inventoryItemId]);
+
+    expect(createListing.mock.calls[0]?.[1]).toMatchObject({
+      optionName: 'Condition',
+      optionValue: 'Near Mint',
+    });
+  });
+
   it('does not call the channel for an item it already drives a listing for', async () => {
     const card = await seedCard();
     await prisma.channelAllocation.create({
@@ -357,19 +452,37 @@ describeDb('ListingCreationService', () => {
 });
 
 describe('titleFor', () => {
-  it('names the set, because one card exists in several', () => {
-    expect(titleFor({ name: 'Charizard ex', setName: 'SV04: Paradox Rift' })).toBe(
+  /**
+   * A single's name does not carry its set, and "Charizard ex" exists in
+   * several — so without this each becomes a product that can only be told
+   * apart by opening it.
+   */
+  it('names the set on a single', () => {
+    expect(titleFor({ name: 'Charizard ex', setName: 'SV04: Paradox Rift' }, true)).toBe(
       'Charizard ex - SV04: Paradox Rift',
     );
   });
 
-  it('does not repeat a set the name already carries', () => {
-    // tcgcsv really does carry a card named "Winterspell" in Winterspell.
-    expect(titleFor({ name: 'Winterspell', setName: 'Winterspell' })).toBe('Winterspell');
+  /**
+   * Sealed product already says its set in its own name, and the catalogue
+   * spells the set with a code the name lacks, so appending said it twice.
+   */
+  it('leaves a sealed product alone', () => {
+    const name = 'Phantasmal Flames Pokemon Center Elite Trainer Box (Exclusive)';
+    expect(titleFor({ name, setName: 'ME02: Phantasmal Flames' }, false)).toBe(name);
   });
 
-  it('falls back to the name alone for an item with no set', () => {
-    expect(titleFor({ name: 'Playmat', setName: null })).toBe('Playmat');
+  it('does not repeat a set the name already carries', () => {
+    // tcgcsv really does carry a card named "Winterspell" in Winterspell.
+    expect(titleFor({ name: 'Winterspell', setName: 'Winterspell' }, true)).toBe('Winterspell');
+  });
+
+  it('falls back to the name alone when there is no set to name', () => {
+    expect(titleFor({ name: 'Playmat', setName: null }, true)).toBe('Playmat');
+  });
+
+  it('trims, because a stray space becomes a storefront title', () => {
+    expect(titleFor({ name: '  Pikachu ex  ', setName: null }, true)).toBe('Pikachu ex');
   });
 });
 

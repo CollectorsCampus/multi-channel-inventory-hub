@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { hasCapability, type CreateListingRequest } from '@hub/connector-sdk';
+import {
+  hasCapability,
+  type CreateListingRequest,
+  type ListingMetafield,
+  type ListingMetafieldDefinition,
+} from '@hub/connector-sdk';
 import { formatCondition } from '@hub/connector-tcgplayer';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChannelContextFactory, type ResolvedChannel } from '../connectors/channel-context.service';
@@ -65,6 +70,23 @@ export const MAX_ITEMS = 50;
 /** What distinguishes variants of a product, when the caller names nothing. */
 export const DEFAULT_OPTION_NAME = 'Condition';
 
+/**
+ * Conditions that are not a variant axis, so get no option and no sibling.
+ *
+ * A `Condition` option is worth showing a customer only where condition is a
+ * real choice, which is singles. `SEALED` has one answer — the operator's call,
+ * and every sealed product their store already sells is a single-variant
+ * "Default Title". `NA` follows by its own definition: "not applicable" is what
+ * a binder, a playmat or a Funko Pop has, and offering it as a choice is the
+ * same silliness one step further on.
+ *
+ * Note what this is *not* saying: that such products have no variants. Their
+ * store has 69 multi-variant products whose axis is `Promo`, `Deck`, `Colour`,
+ * `Scene` or `Type` — none of which the hub models or could invent. Those are
+ * mapped by hand through `/match`, which is a different path entirely.
+ */
+export const UNVARIED_CONDITIONS: readonly string[] = ['SEALED', 'NA'];
+
 export interface CreateListingsRequest {
   channelInstanceId: string;
   /** Ledger items the operator selected. Never derived from a filter. */
@@ -78,6 +100,17 @@ export interface CreateListingsRequest {
    * should do.
    */
   tags?: readonly string[];
+  /**
+   * Custom fields the operator picked, applied verbatim to created products.
+   *
+   * Per run rather than per card, and that is honest rather than lazy: the
+   * values are opaque ids in the channel's own vocabulary, so the core cannot
+   * derive one per card even in principle — `custom.set` on this store is a
+   * metaobject named `ME02 Phantasmal Flames`, while the catalogue calls the
+   * same set `ME02: Phantasmal Flames`. A run is therefore one set's worth of
+   * cards, the same scope a proposal run has.
+   */
+  metafields?: readonly ListingMetafield[];
   vendor?: string;
   optionName?: string;
   actorUserId?: string;
@@ -158,6 +191,29 @@ export class ListingCreationService {
     return connector.listTags!(ctx, limit === undefined ? {} : { limit });
   }
 
+  /**
+   * The custom fields this channel models, and what each accepts.
+   *
+   * Read-only, and its only purpose is the same as {@link listTags}: the
+   * operator picks a value the channel already knows, and the hub never derives
+   * one. Here it could not derive one even if it wanted to — the values are
+   * opaque ids that mean something only inside that shop.
+   */
+  async listMetafields(
+    channelInstanceId: string,
+    limit?: number,
+  ): Promise<ListingMetafieldDefinition[]> {
+    const { connector, ctx, displayName } = await this.channels.resolve(channelInstanceId);
+
+    if (!hasCapability(connector.capabilities, 'listing.metafields')) {
+      throw new BadRequestException(
+        `${connector.displayName} does not report the custom fields "${displayName}" models.`,
+      );
+    }
+
+    return connector.listMetafields!(ctx, limit === undefined ? {} : { limit });
+  }
+
   async create(request: CreateListingsRequest): Promise<CreateListingsResult> {
     const ids = [...new Set(request.inventoryItemIds)];
 
@@ -187,6 +243,10 @@ export class ListingCreationService {
     const optionName = request.optionName?.trim() || DEFAULT_OPTION_NAME;
     const tags = (request.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag !== '');
     const vendor = request.vendor?.trim();
+    // Carried through untouched. The core does not know what a value means —
+    // on Shopify it is a metaobject id — so validating or normalising it here
+    // would be the core inventing an opinion it cannot hold.
+    const metafields = request.metafields ?? [];
 
     const result: CreateListingsResult = { listings: [], problems: [] };
 
@@ -214,6 +274,7 @@ export class ListingCreationService {
           await this.createOne(request.channelInstanceId, { connector, ctx }, item, {
             optionName,
             tags,
+            metafields,
             ...(vendor ? { vendor } : {}),
           }),
         );
@@ -244,7 +305,12 @@ export class ListingCreationService {
     channelInstanceId: string,
     channel: Pick<ResolvedChannel, 'connector' | 'ctx'>,
     item: SelectedItem,
-    content: { optionName: string; tags: readonly string[]; vendor?: string },
+    content: {
+      optionName: string;
+      tags: readonly string[];
+      metafields: readonly ListingMetafield[];
+      vendor?: string;
+    },
   ): Promise<CreatedListing> {
     const { catalogItem } = item.sku;
     const existing = item.allocations[0];
@@ -263,18 +329,33 @@ export class ListingCreationService {
       };
     }
 
-    const siblingListingId = await this.findSibling(channelInstanceId, catalogItem.id, item.id);
+    // Sealed product, and anything whose condition is "not applicable", is one
+    // product with one variant and no option at all — see
+    // {@link UNVARIED_CONDITIONS}.
+    //
+    // It follows that such an item is never a *variant* of something either, so
+    // no sibling is looked for. Two sealed SKUs of one catalogue product — an
+    // English box and a Japanese one — become two products, which is what a
+    // store carrying both wants; the alternative is a second variant on a
+    // product that has no option to tell them apart.
+    const unvaried = UNVARIED_CONDITIONS.includes(item.sku.condition);
 
-    const req: CreateListingRequest = {
-      sku,
-      title: titleFor(catalogItem),
-      optionName: content.optionName,
-      optionValue: optionValueFor(item.sku),
-    };
+    const siblingListingId = unvaried
+      ? undefined
+      : await this.findSibling(channelInstanceId, catalogItem.id, item.id);
+
+    // The same split decides the title: a single names its set, sealed does not.
+    const req: CreateListingRequest = { sku, title: titleFor(catalogItem, !unvaried) };
+
+    if (!unvaried) {
+      req.optionName = content.optionName;
+      req.optionValue = optionValueFor(item.sku);
+    }
 
     if (catalogItem.imageUrl) req.imageUrl = catalogItem.imageUrl;
     if (content.vendor) req.vendor = content.vendor;
     if (content.tags.length > 0) req.tags = content.tags;
+    if (content.metafields.length > 0) req.metafields = content.metafields;
     if (siblingListingId) req.siblingListingId = siblingListingId;
     // Only a price the allocation already carries. Creation does not price
     // anything, the same way it does not set a quantity — but sending a price
@@ -426,21 +507,33 @@ function skuCodeFor(item: SelectedItem): string {
 /**
  * What the product is called.
  *
- * The one field composed rather than copied, and only from two stored ones. A
- * card's name alone is not a product title: Charizard ex exists in several
- * sets, so creating each of them as "Charizard ex" produces products neither
- * the operator nor a customer can tell apart, and renaming them afterwards is
- * hand work this feature exists to avoid.
+ * **The set is appended for singles and not for sealed**, which is the
+ * operator's rule and follows the same split as the variant option. The two
+ * cases genuinely differ:
  *
- * The separator is safe against the matcher: `splitChannelTitle` only splits on
- * " - " when the tail parses as a *condition*, so "Charizard ex - SV04: Paradox
- * Rift" keeps its whole name.
+ * - A sealed product's name already carries its set — "Phantasmal Flames
+ *   Pokemon Center Elite Trainer Box (Exclusive)" — and the catalogue spells
+ *   the set with a code the name lacks (`ME02: Phantasmal Flames`), so
+ *   appending produced a title that said it twice.
+ * - A single's name does not. "Charizard ex" exists in several sets, and
+ *   creating each as "Charizard ex" leaves products that can only be told apart
+ *   by opening them.
+ *
+ * The separator is safe against the matcher: `splitChannelTitle` splits on
+ * " - " only when the tail parses as a *condition*, so "Charizard ex - SV04:
+ * Paradox Rift" keeps its whole name while the variant's own " - Near Mint"
+ * comes off as intended.
  */
-export function titleFor(item: { name: string; setName: string | null }): string {
+export function titleFor(
+  item: { name: string; setName: string | null },
+  includeSet: boolean,
+): string {
   const name = item.name.trim();
-  const setName = item.setName?.trim();
+  if (!includeSet) return name;
 
+  const setName = item.setName?.trim();
   if (!setName) return name;
+
   // A card literally named after its set — tcgcsv carries "Winterspell" in
   // Winterspell — must not become "Winterspell - Winterspell".
   if (name.toLowerCase().includes(setName.toLowerCase())) return name;

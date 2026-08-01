@@ -16,7 +16,9 @@ import type {
   ExportedFile,
   ImportResult,
   ImportedFile,
+  ListMetafieldsRequest,
   ListTagsRequest,
+  ListingMetafieldDefinition,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -158,6 +160,21 @@ export interface Connector {
    * is wired to a collection.
    */
   listTags?(ctx: Ctx, req: ListTagsRequest): Promise<string[]>;
+
+  /**
+   * The custom fields this channel models, and the values each will accept.
+   *
+   * A vocabulary read, not a value read: it answers "what could be set on a
+   * listing here", never "what is set on this one". The core hands the chosen
+   * values straight back through {@link CreateListingRequest.metafields}
+   * without interpreting them.
+   *
+   * A field whose vocabulary cannot be read must be returned with
+   * {@link ListingMetafieldDefinition.unavailable} rather than omitted or left
+   * with an empty `choices`, so a caller can tell "nobody knows" from "there
+   * are none".
+   */
+  listMetafields?(ctx: Ctx, req: ListMetafieldsRequest): Promise<ListingMetafieldDefinition[]>;
 
   // --- file transport (ADR 0002) -------------------------------------------
   exportListings?(ctx: Ctx, req: ExportListingsRequest): Promise<ExportedFile>;

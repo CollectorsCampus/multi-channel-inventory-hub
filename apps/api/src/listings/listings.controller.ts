@@ -29,6 +29,19 @@ export class ListingsController {
     return this.creation.listTags(channelInstanceId, query.limit);
   }
 
+  @Get('metafields')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'The custom fields this channel models, and what each accepts.',
+    description:
+      'For choosing values rather than typing identifiers. A field whose vocabulary could not ' +
+      'be read carries an "unavailable" reason instead of empty choices, because on Shopify ' +
+      'the failure is a silent null that looks exactly like a store with no entries.',
+  })
+  metafields(@Param('id') channelInstanceId: string, @Query() query: ListTagsQueryDto) {
+    return this.creation.listMetafields(channelInstanceId, query.limit);
+  }
+
   @Post()
   @RequireRole('editor')
   @ApiOperation({
@@ -49,6 +62,7 @@ export class ListingsController {
       channelInstanceId,
       inventoryItemIds: body.inventoryItemIds,
       ...(body.tags !== undefined ? { tags: body.tags } : {}),
+      ...(body.metafields !== undefined ? { metafields: body.metafields } : {}),
       ...(body.vendor !== undefined ? { vendor: body.vendor } : {}),
       ...(body.optionName !== undefined ? { optionName: body.optionName } : {}),
       actorUserId: user.userId,

@@ -4,10 +4,13 @@ import { useChannels } from '../api/channels';
 import { useInventoryList, type InventoryRow } from '../api/inventory';
 import {
   describeOutcome,
+  useChannelMetafields,
   useChannelTags,
   useCreateListings,
   MAX_ITEMS,
   type CreateListingsResult,
+  type ListingMetafield,
+  type ListingMetafieldDefinition,
 } from '../api/listings';
 import { SKU_CONDITIONS } from '../constants';
 
@@ -45,6 +48,7 @@ export function ListOnChannelPage() {
   // name.
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [tags, setTags] = useState<string[]>([]);
+  const [metafields, setMetafields] = useState<ListingMetafield[]>([]);
   const [vendor, setVendor] = useState('');
 
   // Only channels that can bring a listing into existence. Offering a
@@ -113,6 +117,8 @@ export function ListOnChannelPage() {
         </div>
 
         <TagPicker channelId={channelId} tags={tags} onChange={setTags} />
+
+        <MetafieldPicker channelId={channelId} chosen={metafields} onChange={setMetafields} />
 
         <div className="inline-form">
           <label htmlFor="create-vendor">Vendor</label>
@@ -257,6 +263,7 @@ export function ListOnChannelPage() {
               create.mutate({
                 inventoryItemIds: selectedIds,
                 ...(tags.length > 0 ? { tags } : {}),
+                ...(metafields.length > 0 ? { metafields } : {}),
                 ...(vendor.trim() ? { vendor: vendor.trim() } : {}),
               })
             }
@@ -283,7 +290,8 @@ export function ListOnChannelPage() {
           <p className="field-hint">
             {Object.values(selected).slice(0, 6).join(', ')}
             {selectedIds.length > 6 && ` and ${selectedIds.length - 6} more`}. Two conditions of one
-            card become one product with a variant each.
+            card become one product with a variant each; sealed product gets a product of its own,
+            with no condition option.
           </p>
         )}
 
@@ -378,6 +386,112 @@ function TagPicker({
         <p className="error">
           {unknown.join(', ')} {unknown.length === 1 ? 'is' : 'are'} not a tag this store already
           uses. That is allowed — but if it is a typo, the product lands in no collection.
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * Game, set and the rest — chosen from what the channel already models.
+ *
+ * Per run, not per card, and that is a property of the data rather than a
+ * shortcut: the values are opaque ids in the store's own vocabulary, so nothing
+ * here could derive one per card even in principle. List one set at a time and
+ * these are right for every card in the run.
+ *
+ * A field with no choice picked is simply not sent. Leaving it blank is the
+ * expected answer for a set the store has never carried, and the summary says
+ * so rather than letting it pass unnoticed.
+ */
+function MetafieldPicker({
+  channelId,
+  chosen,
+  onChange,
+}: {
+  channelId: string;
+  chosen: ListingMetafield[];
+  onChange: (fields: ListingMetafield[]) => void;
+}) {
+  const fields = useChannelMetafields(channelId, channelId !== '');
+  const definitions = fields.data ?? [];
+
+  const idOf = (d: { owner: string; namespace: string; key: string }) =>
+    `${d.owner}:${d.namespace}:${d.key}`;
+
+  const set = (definition: ListingMetafieldDefinition, value: string) => {
+    const id = idOf(definition);
+    const without = chosen.filter((f) => idOf(f) !== id);
+    onChange(
+      value === ''
+        ? without
+        : [
+            ...without,
+            {
+              owner: definition.owner,
+              namespace: definition.namespace,
+              key: definition.key,
+              type: definition.type,
+              value,
+            },
+          ],
+    );
+  };
+
+  // Only fields something can be picked for. A field with a vocabulary nobody
+  // could read is shown as a warning below rather than as an empty select,
+  // which would read as "this store has no games".
+  const offerable = definitions.filter((d) => d.choices !== undefined && !d.unavailable);
+  const unreadable = definitions.filter((d) => d.unavailable);
+
+  if (fields.isError) {
+    return (
+      <p className="field-hint">
+        This channel could not report its custom fields, so none are offered. Products will be
+        created without them.
+      </p>
+    );
+  }
+
+  if (definitions.length === 0) return null;
+
+  return (
+    <>
+      <div className="filters">
+        {offerable.map((definition) => {
+          const id = idOf(definition);
+          const current = chosen.find((f) => idOf(f) === id)?.value ?? '';
+
+          return (
+            <label key={id} className="inline-check">
+              {definition.name}
+              <select
+                value={current}
+                aria-label={definition.name}
+                onChange={(e) => set(definition, e.target.value)}
+              >
+                <option value="">— not set —</option>
+                {definition.choices?.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </div>
+
+      <p className="field-hint">
+        Set on products this run creates, so list one set at a time. Anything left &ldquo;not
+        set&rdquo; is simply not written — fill it in on the product afterwards if the store has no
+        entry for it yet.
+      </p>
+
+      {unreadable.length > 0 && (
+        <p className="field-hint">
+          Not offered: {unreadable.map((d) => `${d.namespace}.${d.key}`).join(', ')}.{' '}
+          {unreadable[0]?.unavailable}
         </p>
       )}
     </>

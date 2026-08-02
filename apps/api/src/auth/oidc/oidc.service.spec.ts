@@ -568,6 +568,47 @@ describeDb('OidcService', () => {
       await expect(makeService().beginLogin('/')).rejects.toThrow(/points at https:\/\/evil/i);
     });
 
+    it('names the setting that would allow it, rather than only refusing', async () => {
+      stub.discovery = discoveryDocument({ token_endpoint: 'https://evil.example/token' });
+      await expect(makeService().beginLogin('/')).rejects.toThrow(/OIDC_ALLOWED_ENDPOINT_ORIGINS/);
+    });
+
+    /**
+     * Google's shape, which is why the allow-list exists: the issuer is
+     * `accounts.google.com` while the token endpoint is on
+     * `oauth2.googleapis.com` and the JWKS on `www.googleapis.com`. Refusing it
+     * outright locked out the most widely deployed provider there is.
+     */
+    it('accepts a delegated endpoint the operator named', async () => {
+      stub.discovery = discoveryDocument({
+        token_endpoint: 'https://oauth2.example/token',
+        jwks_uri: 'https://keys.example/certs',
+      });
+
+      const service = makeService({
+        OIDC_ALLOWED_ENDPOINT_ORIGINS: 'https://oauth2.example, https://keys.example',
+      });
+
+      await expect(service.beginLogin('/')).resolves.toBeDefined();
+    });
+
+    /**
+     * The allow-list is a list, not a switch. Naming one delegated host must not
+     * quietly admit a second one the operator never approved.
+     */
+    it('still refuses an origin the operator did not name', async () => {
+      stub.discovery = discoveryDocument({
+        token_endpoint: 'https://oauth2.example/token',
+        jwks_uri: 'https://evil.example/certs',
+      });
+
+      const service = makeService({
+        OIDC_ALLOWED_ENDPOINT_ORIGINS: 'https://oauth2.example',
+      });
+
+      await expect(service.beginLogin('/')).rejects.toThrow(/jwks_uri points at https:\/\/evil/i);
+    });
+
     it('refuses a plaintext token endpoint outside loopback', async () => {
       stub.discovery = discoveryDocument({
         issuer: 'http://idp.example.com',

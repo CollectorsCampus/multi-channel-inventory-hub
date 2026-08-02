@@ -15,7 +15,7 @@ import {
 } from 'jose';
 import type { UserRole } from '@hub/db';
 import { PrismaService } from '../../prisma/prisma.service';
-import { parseRoleMap } from '../../config/env';
+import { parseAllowedOrigins, parseRoleMap } from '../../config/env';
 import { fetchDiscovery, type FetchLike, type OidcDiscovery } from './discovery';
 import { createPkcePair, randomToken, safeEqual } from './pkce';
 import type { AuthenticatedPrincipal } from '../auth-provider.interface';
@@ -77,6 +77,8 @@ export interface OidcSettings {
   roleMap: Record<string, UserRole>;
   defaultRole: UserRole;
   allowLocalLogin: boolean;
+  /** Extra origins this issuer's endpoints may live on. Usually empty. */
+  allowedEndpointOrigins: string[];
 }
 
 @Injectable()
@@ -116,6 +118,9 @@ export class OidcService {
       roleMap: parseRoleMap(this.config.get<string>('OIDC_ROLE_MAP')),
       defaultRole: this.config.get<UserRole>('OIDC_DEFAULT_ROLE', 'viewer'),
       allowLocalLogin: this.config.get<boolean>('OIDC_ALLOW_LOCAL_LOGIN') !== false,
+      allowedEndpointOrigins: parseAllowedOrigins(
+        this.config.get<string>('OIDC_ALLOWED_ENDPOINT_ORIGINS'),
+      ),
     };
   }
 
@@ -430,7 +435,12 @@ export class OidcService {
     const fresh = this.discovery && Date.now() - this.discovery.fetchedAt < DISCOVERY_TTL_MS;
     if (this.discovery && fresh) return this.discovery.value;
 
-    const value = await fetchDiscovery(this.settings().issuer, this.doFetch);
+    const value = await fetchDiscovery(
+      this.settings().issuer,
+      this.doFetch,
+      undefined,
+      this.settings().allowedEndpointOrigins,
+    );
     this.discovery = { value, fetchedAt: Date.now() };
     return value;
   }

@@ -67,4 +67,43 @@ describe('validateEnv', () => {
       }),
     ).not.toThrow();
   });
+
+  /**
+   * This list names hosts allowed to receive the client secret, so a typo that
+   * widened it to plain HTTP is the one mistake it could make catastrophic. It
+   * stops the container rather than the first login.
+   */
+  describe('OIDC_ALLOWED_ENDPOINT_ORIGINS', () => {
+    it('accepts https origins, comma separated and whitespace tolerant', () => {
+      expect(() =>
+        validateEnv({
+          ...validEnv,
+          OIDC_ALLOWED_ENDPOINT_ORIGINS:
+            'https://oauth2.googleapis.com, https://www.googleapis.com',
+        }),
+      ).not.toThrow();
+    });
+
+    it('refuses a plaintext origin', () => {
+      expect(() =>
+        validateEnv({ ...validEnv, OIDC_ALLOWED_ENDPOINT_ORIGINS: 'http://oauth2.example' }),
+      ).toThrow(/not HTTPS/i);
+    });
+
+    it('refuses something that is not a URL', () => {
+      expect(() =>
+        validateEnv({ ...validEnv, OIDC_ALLOWED_ENDPOINT_ORIGINS: 'oauth2.googleapis.com' }),
+      ).toThrow(/not a URL/i);
+    });
+
+    it('allows loopback without a certificate, as discovery already does', () => {
+      expect(() =>
+        validateEnv({ ...validEnv, OIDC_ALLOWED_ENDPOINT_ORIGINS: 'http://localhost:8080' }),
+      ).not.toThrow();
+    });
+
+    it('is absent by default, so the old pinning is exactly what an operator gets', () => {
+      expect(validateEnv({ ...validEnv }).OIDC_ALLOWED_ENDPOINT_ORIGINS).toBeUndefined();
+    });
+  });
 });

@@ -52,6 +52,8 @@ export async function fetchDiscovery(
   issuer: string,
   doFetch: FetchLike = (url, init) => fetch(url, init),
   signal?: AbortSignal,
+  /** Extra origins the operator accepts endpoints on. See {@link assertSameOrigin}. */
+  allowedOrigins: readonly string[] = [],
 ): Promise<OidcDiscovery> {
   const url = discoveryUrl(issuer);
 
@@ -109,22 +111,38 @@ export async function fetchDiscovery(
       : {}),
   };
 
-  assertSameOrigin(discovery, issuerClaim);
+  assertSameOrigin(discovery, issuerClaim, allowedOrigins);
   return discovery;
 }
 
 /**
- * Every endpoint must live on the issuer's own origin.
+ * Every endpoint must live on the issuer's own origin, or on one the operator
+ * named.
  *
- * Stricter than the specification, which permits an issuer to delegate to
- * another host. That flexibility buys a self-hoster nothing and costs a great
- * deal: the token endpoint receives our client secret, so a compromised or
- * hostile discovery document could otherwise harvest it by naming a host of its
- * choosing. An operator with a genuinely split deployment will get a clear
- * error rather than a silent credential leak.
+ * Stricter than the specification, which lets an issuer delegate to another
+ * host. The reason is the token endpoint: it receives our client secret, so a
+ * compromised or hostile discovery document could otherwise harvest it by
+ * naming a host of its choosing.
+ *
+ * **Google made the absolute form of that rule untenable.** Its issuer is
+ * `accounts.google.com` while its token endpoint is on `oauth2.googleapis.com`
+ * and its JWKS on `www.googleapis.com` — the single most widely deployed
+ * provider there is, refused outright. Entra, Auth0, Keycloak and Okta all keep
+ * their endpoints on the issuer's origin, so the rule was right about the
+ * common case and wrong about the important exception.
+ *
+ * `allowedOrigins` is the operator saying "I accept that this issuer delegates
+ * to these hosts". That keeps the property the rule was protecting — **the
+ * operator decides where the client secret may go, not the document** — while
+ * letting a real deployment exist. An empty list is the old behaviour exactly.
  */
-function assertSameOrigin(discovery: OidcDiscovery, issuer: string): void {
+function assertSameOrigin(
+  discovery: OidcDiscovery,
+  issuer: string,
+  allowedOrigins: readonly string[],
+): void {
   const expected = new URL(issuer).origin;
+  const permitted = new Set([expected, ...allowedOrigins]);
 
   const endpoints: Array<[string, string]> = [
     ['authorization_endpoint', discovery.authorizationEndpoint],
@@ -140,10 +158,12 @@ function assertSameOrigin(discovery: OidcDiscovery, issuer: string): void {
       throw new Error(`The discovery document's ${name} ("${value}") is not a valid URL.`);
     }
 
-    if (origin !== expected) {
+    if (!permitted.has(origin)) {
       throw new Error(
         `The discovery document's ${name} points at ${origin}, but the issuer is ${expected}. ` +
-          `Cross-origin endpoints are refused: the token endpoint receives this client's secret.`,
+          `Cross-origin endpoints are refused: the token endpoint receives this client's secret. ` +
+          `If this issuer genuinely delegates there, add ${origin} to ` +
+          `OIDC_ALLOWED_ENDPOINT_ORIGINS.`,
       );
     }
   }

@@ -47,6 +47,19 @@ export const envSchema = z.object({
   OIDC_SCOPES: z.string().default('openid profile email'),
 
   /**
+   * Extra origins this issuer's endpoints may live on, comma separated.
+   *
+   * Endpoints are pinned to the issuer's own origin by default, because the
+   * token endpoint receives the client secret. Google needs this — its issuer
+   * is `accounts.google.com` while its token endpoint is on
+   * `oauth2.googleapis.com` and its JWKS on `www.googleapis.com` — and most
+   * other providers do not. Naming them here is the operator saying they accept
+   * that delegation, which keeps the decision theirs rather than the discovery
+   * document's.
+   */
+  OIDC_ALLOWED_ENDPOINT_ORIGINS: z.string().optional(),
+
+  /**
    * Claim carrying the user's groups or roles. When set, the identity provider
    * becomes authoritative and the mapped role is reapplied on every login, so
    * revoking a group there takes effect here immediately. Leave unset to manage
@@ -117,8 +130,54 @@ export function validateEnv(raw: Record<string, unknown>): Env {
   // Parsed at boot rather than at first login for the same reason: a typo in
   // the mapping should stop the container, not silently give everyone `viewer`.
   parseRoleMap(parsed.data.OIDC_ROLE_MAP);
+  parseAllowedOrigins(parsed.data.OIDC_ALLOWED_ENDPOINT_ORIGINS);
 
   return parsed.data;
+}
+
+/**
+ * Origins from `OIDC_ALLOWED_ENDPOINT_ORIGINS`, validated at boot.
+ *
+ * Each must be a bare origin and each must be HTTPS, because the whole point of
+ * the list is to nominate somewhere a **client secret** may be sent. A typo
+ * that widened it to plain HTTP would be the one mistake this setting could
+ * make catastrophic, so it stops the container instead.
+ *
+ * Loopback is exempt, the same exemption discovery already makes, so a
+ * developer can point at an IdP running without a certificate.
+ */
+export function parseAllowedOrigins(raw: string | undefined): string[] {
+  if (!raw || raw.trim() === '') return [];
+
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+    .map((entry) => {
+      let url: URL;
+      try {
+        url = new URL(entry);
+      } catch {
+        throw new Error(
+          `OIDC_ALLOWED_ENDPOINT_ORIGINS contains "${entry}", which is not a URL. Use bare ` +
+            `origins, e.g. https://oauth2.googleapis.com.`,
+        );
+      }
+
+      const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname);
+      if (url.protocol !== 'https:' && !loopback) {
+        throw new Error(
+          `OIDC_ALLOWED_ENDPOINT_ORIGINS contains "${entry}", which is not HTTPS. This list ` +
+            `names hosts allowed to receive this client's secret.`,
+        );
+      }
+
+      if (url.origin === 'null') {
+        throw new Error(`OIDC_ALLOWED_ENDPOINT_ORIGINS contains "${entry}", which has no origin.`);
+      }
+
+      return url.origin;
+    });
 }
 
 /**

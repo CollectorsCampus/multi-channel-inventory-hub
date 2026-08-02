@@ -25,7 +25,7 @@ Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fi
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
 because it explains _why_ each landed, which the CHANGELOG does not.
 
-`main` is green: **882 tests** (api 516, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
+`main` is green: **890 tests** (api 524, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
 scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
@@ -504,7 +504,7 @@ genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins 
 "Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
 lines are untouched.
 
-### After v0.2.0 — PRs #21–#37 (2026-07-30 to 08-01), on `main`, in no released image
+### After v0.2.0 — PRs #21–#44 (2026-07-30 to 08-02), on `main`, in no released image
 
 #21 and #22 are research only — webhook delivery over a cloud bus, and the connector
 candidates — and their findings live under "Open decisions" below, where they gate real
@@ -1135,12 +1135,66 @@ invisible rather than loud.
   (`Booster Pack`, `Pokémon`, `SV04 Paradox Rift`). **No singles tag exists yet** — singles
   are new ground for this store.
 
+#### The UI got its first real use, and it was full of holes (#44)
+
+The operator drove the app for the first time instead of reading about it, and
+almost everything they hit was a defect rather than a preference. **Screenshot a
+layout complaint** — every one of these had been invisible because the pages had
+only ever been read through an accessibility tree, which reports the structure
+the markup implies rather than the layout the CSS produces.
+
+- **A bare `form { flex-direction: column }` was overriding `.filters`**, which
+  sets display, gap and wrap but never direction. So `<form class="filters">`
+  stretched every control full width, one per line, while identical markup in a
+  `<div>` laid out as a row — two screens looking unrelated for no visible
+  reason. `.filters` now states its direction.
+- **`.cell-title` / `.cell-sub` only stacked by accident**, via `.cell-link`
+  happening to be a flex column. In a plain `<td>` — match, catalog and listing
+  screens — they ran together as "151 Booster BundleSV: Scarlet & Violet 151",
+  which reads as bad data rather than a missing style.
+- **The intake screen's Game field never rendered.** It was a `<select>` shown
+  only when the registered sources between them declared more than one game, and
+  they do not: Scryfall declares Magic, tcgcsv declares none. So the field
+  vanished — and tcgcsv, which _refuses to search without a game_, could not be
+  given one. That is why every intake search reported it unavailable. Free text
+  with suggestions now, the same shape as the match screen's game field.
+- **A drifted CSRF cookie was unrecoverable.** It is set once at login, so a
+  browser holding a token from an earlier session fails every mutation with 403
+  while every read succeeds — which reads as a broken feature. `/auth/me` now
+  re-issues it from the session that just authenticated, so a refresh repairs
+  it. Safe: the value is already in a cookie that browser holds, and a
+  cross-origin caller can read neither the response nor the cookie it sets.
+- **The item detail page never said what the item was**, because
+  `GET /inventory/:id` returned `getLedger` — allocations and quantities and
+  nothing else. `getItemDetail` adds the identity and the external ids. The
+  trap worth remembering: the detail cache is written from mutation responses,
+  and a mutation answers with the _ledger_, so writing it straight in blanked
+  the name and image the moment anyone adjusted a quantity. It merges now.
+
+Three things the operator asked for, all of which the API already supported and
+the browser simply never offered: **rows per page** (a fixed set, since the
+value reaches a `take`), **a channel filter** (including "on no channel", which
+is the question behind "what have I not listed yet" and needed
+`allocations: { none: {} }`), and **a game filter** with counts from
+`GET /inventory/games` — derived from what is held rather than what sources
+declare, because a filter offering an option that returns nothing is worse than
+one with fewer options. A null game is a real bucket and appears when anything
+is in it: that is the generic answer for non-TCG goods, rather than renaming the
+column.
+
+Optional card art is remembered in `localStorage` rather than the URL — it is a
+preference about how someone reads the table, not part of what the table shows,
+so it must not travel when a filtered view is shared.
+
 ### Unmerged work
 
-None. `listing.metafields` merged as **#37** on 2026-08-01, carrying the three decisions
-the operator made while it was open — sealed gets no variant option, `NA` with it, and the
-set is appended to a single's title only. The two draft products it was demonstrated on
-were deleted afterwards and their ledger rows zeroed.
+None. Everything through **#44** is on `main` as of 2026-08-02: the category fix (#41),
+the OIDC allow-list and the Google login (#43), and the UI work above (#44).
+
+`listing.metafields` merged as **#37**, carrying the three decisions the operator made
+while it was open — sealed gets no variant option, `NA` with it, and the set is appended
+to a single's title only. The two draft products it was demonstrated on were deleted
+afterwards and their ledger rows zeroed.
 
 #26 was reviewed and merged on 2026-07-30 with the cross-source guard above added
 during review. `shopify-client-credentials` was merged on 2026-07-29 once webhook

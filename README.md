@@ -14,19 +14,21 @@ channel, so the same card is not sold twice.
 > Shopify is the only continuous-sync channel in v1. See
 > [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md).
 
-> **Status: v0.2.0.** All five phases are built and the sync loop runs end to end: a sale on
+> **Status: v0.3.0.** All five phases are built and the sync loop runs end to end: a sale on
 > Shopify decrements the ledger and pushes recomputed quantities back out, with oversells and
 > failures in an alert inbox, and a nightly reconciliation catching what the loop missed. The
-> Shopify path — authentication, reads, both write mutations and signed webhook delivery — is
-> verified against a real store, and the TCGPlayer file path against a real seller account.
+> Shopify path — authentication, reads, both write mutations, signed webhook delivery and a
+> real order — is verified against a live store, and the TCGPlayer file path against a real
+> seller account.
 >
-> 0.2.0 adds what an operator with an **existing** storefront needs: a `/match` screen that
-> reads what a channel already sells and proposes links to the catalogue, a catalogue source
-> covering far more than Magic, and a fix for a container defect that stopped every earlier
-> published image from starting without reaching npmjs.org.
+> 0.2.0 added what an operator with an **existing** storefront needs: a `/match` screen that
+> reads what a channel already sells and proposes links to the catalogue. 0.3.0 covers the
+> other direction — putting a card the store does **not** carry onto the storefront, with its
+> conditions as variants, the store's own tags and custom fields, and an identifier that lets
+> a rebuilt hub re-derive every link from the platform.
 >
-> It is a `0.x` for honest reasons: MySQL and SQLite are not supported yet, no real identity
-> provider has completed an OIDC login, and it has one store's worth of production evidence.
+> It is a `0.x` for honest reasons: MySQL and SQLite are not supported yet, only one identity
+> provider has ever completed a login, and it has one store's worth of production evidence.
 > See [What is proven](#what-is-proven) before trusting it with stock you cannot recount.
 
 ## Why
@@ -46,7 +48,14 @@ _your_ database. No middleman sits between you and your money.
   re-pushes quantities. The ledger is never rewritten from a channel.
 - **An alert inbox.** Oversells, failed pushes and drift, ordered by urgency. Conditions
   that persist stay one alert rather than one per occurrence, so the inbox is worth reading.
-- **A card catalogue.** Scryfall-backed intake so items are entered by searching, not typed.
+- **Match an existing storefront.** Read what a channel already sells and get proposed links
+  to the catalogue, set at a time, each with its evidence ranked. Nothing is ever applied on
+  its own, and a tie is reported as ambiguous rather than resolved by picking one.
+- **Create listings a channel does not have.** Put selected ledger items onto the storefront
+  as drafts, conditions as variants, carrying the store's own tags and custom fields — never
+  values the hub invented.
+- **A card catalogue.** Scryfall and TCGPlayer-derived sources, searchable at intake, and
+  ingestible in bulk into a local catalogue that works with the network down.
 - **Read-only SQL console.** Off by default, admin-only, and behind both a `SELECT`-only
   database role and a `READ ONLY` transaction.
 - **Local accounts or SSO.** Username/password out of the box, or any OpenID Connect
@@ -85,15 +94,15 @@ default credentials ship with the image.
 To skip the build, pull the released image rather than compiling from source:
 
 ```bash
-docker pull ghcr.io/collectorscampus/multi-channel-inventory-hub:0.1.0
+docker pull ghcr.io/collectorscampus/multi-channel-inventory-hub:0.3.0
 ```
 
-Multi-arch (`linux/amd64`, `linux/arm64`), also tagged `0.1` and `latest`. Point
+Multi-arch (`linux/amd64`, `linux/arm64`), also tagged `0.3` and `latest`. Point
 `docker-compose.yml`'s `app` service at it — replace the `build:` block with
-`image: ghcr.io/collectorscampus/multi-channel-inventory-hub:0.1.0`.
+`image: ghcr.io/collectorscampus/multi-channel-inventory-hub:0.3.0`.
 
 Pin the exact version rather than `latest` for anything you rely on. While this is `0.x`, a
-minor bump may carry breaking changes; `0.1` tracks patches within the current minor.
+minor bump may carry breaking changes; `0.3` tracks patches within the current minor.
 
 ## Connecting Shopify
 
@@ -108,10 +117,16 @@ and refreshes its own 24-hour tokens.
 1. Create an app, and give it these scopes — no more:
 
    ```
-   read_products,write_products,read_inventory,write_inventory,read_locations,read_orders
+   read_products,write_products,read_inventory,write_inventory,read_locations,read_orders,read_metaobjects
    ```
 
    Not `write_orders`: the hub never cancels or modifies an order.
+
+   `read_metaobjects` is needed only to read back the custom fields your store already
+   models, when creating products. **Add it now if you might want that**: without it
+   Shopify answers `null` with no error, so a store that has defined nothing and an app
+   that may not look are indistinguishable — and adding a scope later needs the app
+   uninstalled and reinstalled, not merely released again.
 
 2. Release a version, then — on the app's **Home** page — scroll down and use
    **Install app**. Releasing is not installing, and skipping this is the single most
@@ -255,22 +270,32 @@ specific about which parts have met reality.
 - **Shopify** — the client-credentials exchange, the `2026-07` Admin API, reading live
   inventory with location scoping, and both write mutations (quantity and price) written
   and read back. Webhook delivery is confirmed with real signed deliveries from a store,
-  down to recomputing Shopify's own HMAC over the received body.
+  down to recomputing Shopify's own HMAC over the received body — including a real
+  `orders/create`, which decremented the ledger and raised an oversell alert.
 - **TCGPlayer** — a real Level 4 seller's exports import with zero problems (1333 pricing
   rows, 219 pull-sheet rows → 236 sale events), and a file the hub generated was accepted
   through `Import To Staged` on the live account.
+- **Matching and creation, on a live storefront.** 139 listings matched and linked, then
+  re-stamped with the hub's own SKU codes and read back with zero mismatches. Products have
+  been created on the real store — single- and multi-variant, with tags, custom fields and
+  the product category those fields require — and their stock arrived by the ordinary push
+  path rather than a special one.
+- **Reconciliation against a real disagreement.** A live sweep checked 139 listings and
+  caught 23 genuine quantity drifts.
+- **One identity provider.** Google has completed an OIDC login, provisioning a user keyed on
+  its `sub`.
 
 **Not yet:**
 
 - **MySQL and SQLite.** The schema is proven dialect-neutral and CI validates it against all
   three, but only Postgres has a migration history. Treat them as unsupported.
-- **A real identity provider.** OIDC is exercised end to end against a fake issuer with real
-  RSA keys, including every forged-token case, but no Keycloak, Entra or Auth0 has completed
-  a login.
-- **`orders/create` parsing against a live order.** Webhook _verification_ is proven with
-  real deliveries; the order payload parser is covered by tests against recorded shapes.
-- **Reconciliation against a real disagreement.** The diff is tested exhaustively, but no
-  live store has yet drifted and been caught.
+- **Role mapping from a provider.** Google issues no group or role claims, so `OIDC_ROLE_CLAIM`
+  and `OIDC_ROLE_MAP` have only ever been exercised against a fake issuer. Keycloak or Entra
+  would close this.
+- **Reconciliation auto-correction.** Drift has been caught live, but the opt-in re-push has
+  never run against a real store.
+- **Catalogue-scale ingest.** 27 sets have been ingested; no full game has (Magic alone is 453
+  set files).
 - **Scale.** This has run against one store's catalogue, not a hundred thousand listings.
 
 ## How this was built

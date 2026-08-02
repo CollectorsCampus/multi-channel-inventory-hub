@@ -554,15 +554,33 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
         for (const node of data.metafieldDefinitions?.nodes ?? []) {
           if (!node?.namespace || !node.key || !node.type?.name) continue;
-          definitions.push({
+
+          const definition: ListingMetafieldDefinition = {
             owner,
             namespace: node.namespace,
             key: node.key,
             type: node.type.name,
             name: node.name ?? `${node.namespace}.${node.key}`,
-          });
+          };
+
+          // A conditional definition applies only to certain product
+          // categories, and a product carrying none satisfies no constraint at
+          // all — which is why writing `custom.game` to a freshly created
+          // product is rejected until a category is set.
+          if (node.constraints?.key === 'category') {
+            const ids = (node.constraints.values?.nodes ?? [])
+              .map((entry) => entry?.value)
+              .filter((value): value is string => Boolean(value))
+              .map(toTaxonomyGid);
+
+            if (ids.length > 0) definition.requiresCategory = ids.map((id) => ({ id, label: id }));
+          }
+
+          definitions.push(definition);
         }
       }
+
+      await labelCategories(ctx, definitions);
 
       const referenceTypes = await discoverMetaobjectTypes(
         ctx,
@@ -769,6 +787,11 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
   ): Promise<{ productId: string; variantId?: string }> {
     const product: Record<string, unknown> = { title, status: 'DRAFT' };
 
+    // Set before the metafields below, because most of them depend on it: a
+    // conditional definition applies only to certain categories, and a product
+    // with none satisfies no constraint.
+    if (req.category) product.category = req.category;
+
     if (req.description) product.descriptionHtml = req.description;
     if (req.vendor) product.vendor = req.vendor;
     // Verbatim, and only when given. The core never derives these: the
@@ -796,7 +819,22 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       };
     }>(ctx, CREATE_PRODUCT_MUTATION, variables);
 
-    throwOnUserErrors(data.productCreate?.userErrors, 'Creating product');
+    try {
+      throwOnUserErrors(data.productCreate?.userErrors, 'Creating product');
+    } catch (error) {
+      // Shopify's own words for a failed conditional metafield are "Owner
+      // subtype does not match the metafield definition's constraints", which
+      // names neither the field nor the category and reads like a bug in the
+      // caller. Seen live, on the first real attempt to set `custom.game`.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!req.category && productMetafields && message.includes('Owner subtype')) {
+        throw new Error(
+          `${message} — this product has no category, and a metafield definition may be ` +
+            `restricted to one. See requiresCategory on the field from listMetafields.`,
+        );
+      }
+      throw error;
+    }
 
     const productId = data.productCreate?.product?.id;
     if (!productId) {
@@ -963,6 +1001,62 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     }
 
     return found;
+  }
+
+  /**
+   * Replace category ids with the names a human would recognise, in place.
+   *
+   * A constraint gives `ae-2-2-3-2` and nothing else, which tells an operator
+   * nothing; the taxonomy knows it as "Gaming Cards". Every distinct id across
+   * every definition is resolved in one aliased request, and anything that does
+   * not resolve keeps its id as its label — an unhelpful name is still better
+   * than dropping a category the field genuinely requires.
+   */
+  async function labelCategories(
+    ctx: Ctx,
+    definitions: readonly ListingMetafieldDefinition[],
+  ): Promise<void> {
+    const ids = [
+      ...new Set(definitions.flatMap((d) => (d.requiresCategory ?? []).map((c) => c.id))),
+    ].slice(0, MAX_CATEGORY_LABELS);
+    if (ids.length === 0) return;
+
+    const labels = new Map<string, string>();
+
+    for (let i = 0; i < ids.length; i += CATEGORY_LABEL_BATCH) {
+      const batch = ids.slice(i, i + CATEGORY_LABEL_BATCH);
+
+      // Aliases are generated here; the ids came from the shop a moment ago and
+      // are still escaped, for the reason `escapeSearchValue` exists.
+      const query =
+        'query HubTaxonomyNames {\n' +
+        batch
+          .map(
+            (id, index) =>
+              `  c${index}: node(id: "${escapeSearchValue(id)}") { ... on TaxonomyCategory { id name } }`,
+          )
+          .join('\n') +
+        '\n}';
+
+      const data = await client.request<Record<string, { id?: string; name?: string } | null>>(
+        ctx,
+        query,
+        {},
+      );
+
+      for (const index of batch.keys()) {
+        const node = data[`c${index}`];
+        if (node?.id && node.name) labels.set(node.id, node.name);
+      }
+    }
+
+    for (const definition of definitions) {
+      if (!definition.requiresCategory) continue;
+      definition.requiresCategory = definition.requiresCategory.map((category) => ({
+        id: category.id,
+        label: labels.get(category.id) ?? category.label,
+      }));
+    }
   }
 
   /** Every entry of one metaobject type, or undefined when they cannot be read. */
@@ -1209,11 +1303,31 @@ const OWNER_LOOKUP_BATCH = 20;
 /** Recent products read in the second pass, for fields the filter does not match. */
 const METAFIELD_SAMPLE_SIZE = 50;
 
+/** Category names resolved per request, and in total across a `listMetafields`. */
+const CATEGORY_LABEL_BATCH = 50;
+const MAX_CATEGORY_LABELS = 200;
+
+/**
+ * A taxonomy constraint value as the id `productCreate` wants.
+ *
+ * `constraints.values` yields the bare handle (`ae-2-2-3-2`) while every other
+ * surface — the field on a product, `ProductCreateInput.category` — speaks
+ * GIDs. Normalised here so the core never has to know either spelling, and
+ * tolerant of a value that already arrives as a GID.
+ */
+function toTaxonomyGid(value: string): string {
+  return value.startsWith('gid://') ? value : `gid://shopify/TaxonomyCategory/${value}`;
+}
+
 interface MetafieldDefinitionNode {
   name?: string;
   namespace?: string;
   key?: string;
   type?: { name?: string };
+  constraints?: {
+    key?: string;
+    values?: { nodes?: Array<{ value?: string } | null> };
+  } | null;
 }
 
 interface SampledMetafieldNode {
@@ -1232,6 +1346,14 @@ const METAFIELD_DEFINITIONS_QUERY = /* GraphQL */ `
         key
         type {
           name
+        }
+        constraints {
+          key
+          values(first: 25) {
+            nodes {
+              value
+            }
+          }
         }
       }
     }

@@ -151,6 +151,14 @@ export interface CreateListingRequest {
    */
   metafields?: readonly ListingMetafield[];
   /**
+   * The platform's own product classification, applied verbatim.
+   *
+   * Opaque to the core, like a metafield value. Usually required *by* the
+   * metafields: see {@link ListingMetafieldDefinition.requiresCategory}, which
+   * is where the value comes from.
+   */
+  category?: string;
+  /**
    * A variant this hub already drives belonging to the same product.
    *
    * Present means "add a variant to whatever product this belongs to"; absent
@@ -335,6 +343,23 @@ export interface ListingMetafield {
   value: string;
 }
 
+/**
+ * A product classification a field is restricted to.
+ *
+ * Shopify calls these conditional metafield definitions, and they are the
+ * reason a perfectly valid-looking metafield write is rejected: `custom.game`
+ * on the store this was built for applies only to "Gaming Cards", so a product
+ * created with no category at all fails the constraint. The platform's own
+ * words for that are "Owner subtype does not match the metafield definition's
+ * constraints", which names neither the field nor the category.
+ */
+export interface ListingCategory {
+  /** Wire value, ready to send back as {@link CreateListingRequest.category}. */
+  id: string;
+  /** What a human calls it — "Gaming Cards". */
+  label: string;
+}
+
 export interface ListingMetafieldChoice {
   /** Wire value, ready to send back as {@link ListingMetafield.value}. */
   value: string;
@@ -367,6 +392,15 @@ export interface ListingMetafieldDefinition {
    * the store has nothing.
    */
   unavailable?: string;
+  /**
+   * Categories the platform restricts this field to, if any.
+   *
+   * A listing must carry one of these for the field to be accepted. Absent
+   * means unrestricted. The caller picks the category the same way it picks
+   * everything else here — and where a run's chosen fields share exactly one,
+   * there is nothing to pick: the constraints have already decided.
+   */
+  requiresCategory?: ListingCategory[];
 }
 
 export interface ListMetafieldsRequest {

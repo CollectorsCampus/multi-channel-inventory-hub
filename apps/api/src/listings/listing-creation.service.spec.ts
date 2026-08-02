@@ -358,6 +358,42 @@ describeDb('ListingCreationService', () => {
     expect(result.listings[0]?.sku).toBe('tcgcsv:222:NM:NORMAL:EN');
   });
 
+  /**
+   * Most of the store's metafield definitions are conditional on a category, so
+   * a product created without one has every metafield rejected. The core does
+   * not decide the category — the constraints do, and the screen reads them —
+   * but it must carry it.
+   */
+  it('passes the category through to the connector', async () => {
+    const card = await seedCard();
+
+    await create([card.nm.inventoryItemId], {
+      category: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+      metafields: [
+        {
+          owner: 'product',
+          namespace: 'custom',
+          key: 'game',
+          type: 'metaobject_reference',
+          value: 'gid://shopify/Metaobject/1',
+        },
+      ],
+    });
+
+    expect(createListing.mock.calls[0]?.[1]).toMatchObject({
+      category: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+      metafields: [expect.objectContaining({ key: 'game' })],
+    });
+  });
+
+  it('sends no category when none was chosen', async () => {
+    const card = await seedCard();
+
+    await create([card.nm.inventoryItemId]);
+
+    expect(createListing.mock.calls[0]?.[1].category).toBeUndefined();
+  });
+
   it('applies operator tags verbatim and sends none when there are none', async () => {
     const card = await seedCard();
 

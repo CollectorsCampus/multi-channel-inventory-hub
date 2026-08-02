@@ -63,6 +63,7 @@ export class ListingsController {
       inventoryItemIds: body.inventoryItemIds,
       ...(body.tags !== undefined ? { tags: body.tags } : {}),
       ...(body.metafields !== undefined ? { metafields: body.metafields } : {}),
+      ...(body.category !== undefined ? { category: body.category } : {}),
       ...(body.vendor !== undefined ? { vendor: body.vendor } : {}),
       ...(body.optionName !== undefined ? { optionName: body.optionName } : {}),
       actorUserId: user.userId,

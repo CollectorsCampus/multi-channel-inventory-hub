@@ -32,6 +32,11 @@ export interface ListingMetafield {
   value: string;
 }
 
+export interface ListingCategory {
+  id: string;
+  label: string;
+}
+
 export interface ListingMetafieldDefinition {
   owner: 'product' | 'variant';
   namespace: string;
@@ -42,12 +47,45 @@ export interface ListingMetafieldDefinition {
   choices?: Array<{ value: string; label: string }>;
   /** Present means the vocabulary could not be read — never treat as "none". */
   unavailable?: string;
+  /** Categories the field is restricted to. A listing needs one of them. */
+  requiresCategory?: ListingCategory[];
+}
+
+/**
+ * The categories every chosen field will accept — their intersection.
+ *
+ * Conditional metafield definitions are the reason this exists: `custom.game`
+ * applies only to "Gaming Cards", so a product with no category has the field
+ * rejected with a message naming neither. Where the chosen fields share exactly
+ * one category there is nothing to ask the operator, because the constraints
+ * have already decided.
+ *
+ * An **empty** result is worth telling them about: it means two chosen fields
+ * cannot both apply to one product, and the run will fail whatever is picked.
+ */
+export function requiredCategories(
+  definitions: readonly ListingMetafieldDefinition[],
+  chosen: readonly ListingMetafield[],
+): ListingCategory[] | undefined {
+  const constrained = definitions.filter(
+    (d) =>
+      (d.requiresCategory?.length ?? 0) > 0 &&
+      chosen.some((f) => f.owner === d.owner && f.namespace === d.namespace && f.key === d.key),
+  );
+  if (constrained.length === 0) return undefined;
+
+  return constrained.reduce<ListingCategory[]>(
+    (common, definition) =>
+      common.filter((c) => definition.requiresCategory!.some((other) => other.id === c.id)),
+    [...constrained[0]!.requiresCategory!],
+  );
 }
 
 export interface CreateListingsRequest {
   inventoryItemIds: string[];
   tags?: string[];
   metafields?: ListingMetafield[];
+  category?: string;
   vendor?: string;
   optionName?: string;
 }

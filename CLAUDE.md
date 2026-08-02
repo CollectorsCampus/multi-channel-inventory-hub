@@ -1449,6 +1449,47 @@ Node 22.12+ can `require()` an ESM module with no top-level await — which is w
 `engines.node` is `>=22.12.0` rather than the `>=22.11.0` it said before. The
 Dockerfile pins `node:24`.
 
+### Google signed a real user in (2026-08-02)
+
+The first login by a real identity provider, and it needed a code change to be possible at
+all.
+
+**Endpoint pinning refused Google outright.** Every discovery endpoint had to share the
+issuer's origin, on the reasoning that the flexibility the spec allows "buys a self-hoster
+nothing". Google's issuer is `accounts.google.com`, its token endpoint is on
+`oauth2.googleapis.com` and its JWKS on `www.googleapis.com` — two of three, refused. It
+had gone unnoticed because the fake issuer in the tests is same-origin by construction,
+which is exactly what "never tested" was warning about.
+
+Checked before touching the rule: **Entra, Auth0, Keycloak and Okta all keep their
+endpoints on the issuer's origin.** Google is the exception, not the norm — so the rule
+kept its teeth and gained `OIDC_ALLOWED_ENDPOINT_ORIGINS`, the operator naming the hosts
+they accept. The property that mattered survives: the operator decides where the client
+secret may go, not the discovery document.
+
+What the live run settled, none of it visible against a fake issuer:
+
+- **`http://localhost:3001/api/auth/oidc/callback` is an acceptable redirect URI to
+  Google.** Loopback is exempt from its HTTPS requirement, so a laptop test needs no
+  tunnel — unlike the Shopify webhook work, which did.
+- **The user is keyed on `sub`, and Google's is a 21-digit number**, not an email. The
+  provisioned row carries it in `external_id` with `provider: oidc`, and `username` falls
+  back to the email. It is a **separate user** from the local one, which is the point:
+  local `nseemann` and the SSO identity coexist, and `OIDC_ALLOW_LOCAL_LOGIN` kept the
+  password door open throughout.
+- **"First identity becomes admin" did not fire, correctly** — it only triggers at user
+  count zero and this instance already had one. The new user took `OIDC_DEFAULT_ROLE`,
+  which was set to `admin` for the test. On a real deployment the default is `viewer`, so
+  expect the first SSO user to arrive read-only and need promoting.
+- **`id_token_signing_alg_values_supported` is `["RS256"]` and there is no
+  `end_session_endpoint`** — Google publishes no OIDC logout, so `endSessionEndpoint`
+  being optional is load-bearing rather than defensive.
+- The consent screen shows an unverified-app interstitial for a Testing-mode client.
+  Normal; click through.
+
+**Not proven by this:** role mapping. Google issues no groups, so `OIDC_ROLE_CLAIM` and
+`OIDC_ROLE_MAP` remain exercised only against the fake issuer.
+
 ## TCGPlayer file formats (verified against a real Pro account, 2026-07-28)
 
 Derived from real exports. Redacted fixtures preserving every shape below live in
@@ -1931,10 +1972,10 @@ Worth stating plainly, because the README is optimistic by nature:
   would have demonstrated nothing that staging did not.
 - **MySQL and SQLite are not supported yet.** Only the schema is proven portable; there is
   no migration history for them (ADR 0001 §4).
-- **No real identity provider.** OIDC is exercised end to end against a fake issuer
-  with real RSA keys — every forged-token case is a test — but no Keycloak, Entra or
-  Auth0 has ever completed a login. What is unproven is the shape of real discovery
-  documents and claims, not the verification logic.
+- **A real identity provider has now completed a login** — Google, 2026-08-02, see
+  below. What is still unproven is a provider that issues **group or role claims**:
+  `OIDC_ROLE_CLAIM` and `OIDC_ROLE_MAP` have never been exercised against a real one,
+  because Google issues nothing of the kind. Keycloak or Entra would test that half.
 - **Reconciliation auto-correction has never run live.** The loop itself has now seen a
   real platform disagree and caught it (above), but `reconcileAutoCorrect` is off on the
   live channel, so no drift has ever been corrected by a re-queued push against a real

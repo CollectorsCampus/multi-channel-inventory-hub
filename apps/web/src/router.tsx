@@ -29,6 +29,8 @@ const rootRoute = createRootRoute({
 export interface InventorySearch {
   search?: string;
   condition?: string;
+  /** A game, or the sentinel below for items that have none. */
+  game?: string;
   /** A channel the item is allocated to, or the sentinel below for "none". */
   channel?: string;
   page?: number;
@@ -57,6 +59,13 @@ export const PAGE_SIZES = [25, 50, 100, 200] as const;
  */
 export const NO_CHANNEL = 'none';
 
+/**
+ * `game=none` means "has no game at all" — supplies, sealed accessories, a
+ * Funko Pop, anything hand-entered. Same sentinel shape as `channel=none`,
+ * and translated into the API's `noGame` flag at the call site.
+ */
+export const NO_GAME = 'none';
+
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
@@ -75,6 +84,7 @@ const indexRoute = createRoute({
     return {
       search: typeof raw.search === 'string' && raw.search ? raw.search : undefined,
       condition: typeof raw.condition === 'string' && raw.condition ? raw.condition : undefined,
+      game: typeof raw.game === 'string' && raw.game ? raw.game : undefined,
       channel: typeof raw.channel === 'string' && raw.channel ? raw.channel : undefined,
       page: Number.isInteger(page) && page > 0 ? page : undefined,
       // Only a size the picker offers. Anything else is dropped rather than

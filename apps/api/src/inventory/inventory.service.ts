@@ -129,6 +129,8 @@ export interface InventoryQuery {
   game?: string;
   condition?: string;
   channelInstanceId?: string;
+  /** Items whose catalog item has no game — non-TCG goods, hand-entered rows. */
+  noGame?: boolean;
   /** Items on no channel at all. Mutually sensible with `channelInstanceId`, not with it. */
   unlisted?: boolean;
   hasUnallocated?: boolean;
@@ -303,6 +305,10 @@ export class InventoryService {
         catalogItem: {
           ...(query.search ? { searchName: { contains: query.search.trim().toLowerCase() } } : {}),
           ...(query.game ? { game: query.game } : {}),
+          // A real bucket, not an absent filter: non-TCG goods and
+          // hand-entered items carry no game, and "show me those" is a
+          // question the browser must be able to ask.
+          ...(query.noGame ? { game: null } : {}),
         },
       },
       ...(query.channelInstanceId
@@ -352,6 +358,44 @@ export class InventoryService {
     }
 
     return { items, total, page, pageSize, pageCount: Math.ceil(total / pageSize) };
+  }
+
+  /**
+   * Games present in the ledger, with how many items each has.
+   *
+   * Derived from what is held rather than from what the catalog sources
+   * declare, which is the difference between a filter that always works and
+   * one that can offer a game returning nothing. Scryfall declares Magic and
+   * tcgcsv declares nothing at all, so the declared list is no guide to what
+   * an operator actually owns.
+   *
+   * A null game is reported rather than dropped: it is what non-TCG goods and
+   * hand-entered items have, and hiding the bucket would hide the stock.
+   */
+  async listGames(): Promise<Array<{ game: string | null; items: number }>> {
+    // Which games exist. `groupBy` here counts *catalog items*, which is not
+    // the number the filter will produce — one card with three conditions is
+    // one catalog item and three inventory rows — so it is used only for the
+    // distinct list.
+    const groups = await this.prisma.catalogItem.groupBy({
+      by: ['game'],
+      where: { skus: { some: { inventory: { isNot: null } } } },
+    });
+
+    const games = groups
+      .map((group) => group.game)
+      .sort((a, b) => (a ?? '').localeCompare(b ?? ''));
+
+    // Then the count each option will actually yield. A handful of queries on
+    // a rarely-hit endpoint, in exchange for a number that matches the list.
+    return Promise.all(
+      games.map(async (game) => ({
+        game,
+        items: await this.prisma.inventoryItem.count({
+          where: { sku: { catalogItem: { game } } },
+        }),
+      })),
+    );
   }
 
   /**

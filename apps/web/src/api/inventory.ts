@@ -69,6 +69,8 @@ export interface InventoryFilters {
   game?: string;
   condition?: string;
   channelInstanceId?: string;
+  /** Items whose catalog item has no game — non-TCG goods, hand-entered rows. */
+  noGame?: boolean;
   /** Items on no channel at all. */
   unlisted?: boolean;
   page?: number;
@@ -98,6 +100,21 @@ export function useInventoryList(filters: InventoryFilters) {
     // Keeps the previous page on screen while the next one loads, so paging and
     // sorting do not blank the table on every keystroke.
     placeholderData: (previous) => previous,
+  });
+}
+
+/**
+ * Games actually present in the ledger, for the browser's filter.
+ *
+ * From what is held rather than what the sources declare — a filter that can
+ * offer an option returning nothing is worse than one with fewer options.
+ * A `null` game is a real bucket: non-TCG goods and hand-entered rows.
+ */
+export function useInventoryGames() {
+  return useQuery({
+    queryKey: ['inventory', 'games'],
+    queryFn: () => apiFetch<Array<{ game: string | null; items: number }>>('/inventory/games'),
+    staleTime: 60_000,
   });
 }
 

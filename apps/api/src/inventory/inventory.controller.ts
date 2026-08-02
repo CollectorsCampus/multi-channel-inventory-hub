@@ -70,6 +70,23 @@ export class InventoryController {
     return this.intakeService.intake({ ...body, actorUserId: user.userId });
   }
 
+  /**
+   * Declared before `:id`, or Nest would match "games" as an item id and
+   * answer 404 for a route that exists.
+   */
+  @Get('games')
+  @RequireRole('viewer')
+  @ApiOperation({
+    summary: 'Games present in the ledger, with counts, for a filter.',
+    description:
+      'Derived from what is actually held rather than from what the catalog sources declare, ' +
+      'so the list can never offer a game that would return nothing. A null game is real and ' +
+      'is reported: it is what non-TCG goods and hand-entered items have.',
+  })
+  games() {
+    return this.inventory.listGames();
+  }
+
   @Get(':id')
   @RequireRole('viewer')
   @ApiOperation({ summary: 'One inventory item with its allocations and derived quantities.' })

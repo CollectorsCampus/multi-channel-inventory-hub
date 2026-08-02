@@ -4,12 +4,13 @@ import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tan
 import {
   formatPrice,
   useCreateInventoryItem,
+  useInventoryGames,
   useInventoryList,
   type InventoryRow,
 } from '../api/inventory';
 import { useChannels } from '../api/channels';
 import { SKU_CONDITIONS } from '../constants';
-import { NO_CHANNEL, PAGE_SIZES, type InventorySearch } from '../router';
+import { NO_CHANNEL, NO_GAME, PAGE_SIZES, type InventorySearch } from '../router';
 
 /**
  * The inventory browser (§7).
@@ -137,11 +138,15 @@ export function InventoryListPage() {
 
   const [showImages, setShowImages] = useShowImages();
   const channels = useChannels();
+  const games = useInventoryGames();
   const pageSize = search.pageSize ?? 25;
 
   const query = useInventoryList({
     search: search.search,
     condition: search.condition,
+    // Same shape as the channel filter below: a named game is an equality
+    // filter, "none" is the opposite question.
+    ...(search.game === NO_GAME ? { noGame: true } : search.game ? { game: search.game } : {}),
     // One dropdown, two different questions for the API: a named channel is a
     // `some` filter, "none" is the opposite.
     ...(search.channel === NO_CHANNEL
@@ -214,6 +219,27 @@ export function InventoryListPage() {
           {SKU_CONDITIONS.map((c) => (
             <option key={c} value={c}>
               {c}
+            </option>
+          ))}
+        </select>
+
+        {/* Games the ledger actually holds, so no option can return nothing.
+            The null bucket is offered only when something is in it — a store
+            with no supplies or accessories should not be shown a filter for
+            them. */}
+        <select
+          value={search.game ?? ''}
+          aria-label="Filter by game"
+          onChange={(e) =>
+            void navigate({
+              search: (prev) => ({ ...prev, game: e.target.value || undefined, page: 1 }),
+            })
+          }
+        >
+          <option value="">Any game</option>
+          {(games.data ?? []).map((g) => (
+            <option key={g.game ?? NO_GAME} value={g.game ?? NO_GAME}>
+              {g.game ?? 'No game'} ({g.items})
             </option>
           ))}
         </select>

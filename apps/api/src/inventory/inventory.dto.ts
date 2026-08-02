@@ -47,6 +47,14 @@ export class ListInventoryQueryDto {
   channelInstanceId?: string;
 
   @ApiPropertyOptional({
+    description: 'Only items whose catalog item has no game — non-TCG goods and hand-entered rows.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  noGame?: boolean;
+
+  @ApiPropertyOptional({
     description:
       'Only items on no channel at all — "what have I not listed yet". Ignored when ' +
       'channelInstanceId is also given, since the two ask opposite questions.',

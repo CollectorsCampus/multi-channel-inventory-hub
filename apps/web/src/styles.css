@@ -426,9 +426,90 @@ form {
 
 .filters {
   display: flex;
+  /* Explicit, and load-bearing: the bare `form` rule below sets
+     `flex-direction: column`, so a `<form class="filters">` inherited it and
+     stretched every control to the full panel width, one per line, while the
+     identical markup in a `<div>` laid out in a row. Two screens looked
+     unrelated for no reason anyone could see. */
+  flex-direction: row;
+  align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
   margin-bottom: 1rem;
+}
+
+/**
+ * Labelled controls that keep their label attached.
+ *
+ * `.filters` is for a row of bare inputs whose placeholders say enough. Once a
+ * control needs a visible label — and once there are six of them — a flex row
+ * puts labels and values in one run of text ("Rarity — not set — Set — not
+ * set —") that reads as a sentence rather than a form.
+ */
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0.75rem 0 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.field > select,
+.field > input {
+  width: 100%;
+}
+
+/** An input with a button welded to it, inside a `.field`. */
+.control-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.control-row > input {
+  flex: 1;
+  min-width: 0;
+}
+
+/**
+ * One labelled thing and its explanation, separated from the next.
+ *
+ * Panels here stack a control, a hint, sometimes a warning, then the next
+ * control — with nothing between them, so the hint for one reads as the label
+ * for the next.
+ */
+.field-block + .field-block,
+.field-grid + .field-block {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.panel-title {
+  margin: 0 0 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/** A disclosure for detail that is real but almost never wanted. */
+.quiet-details {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+}
+
+.quiet-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.quiet-details > summary:hover {
+  color: var(--text);
 }
 
 label {
@@ -592,11 +673,78 @@ button.sort {
   color: var(--text);
 }
 
+/**
+ * A two-line table cell: what it is, then what it belongs to.
+ *
+ * `display: block` rather than relying on the parent, because these are spans
+ * and only `.cell-link` happens to be a flex column. Dropped into a plain
+ * `<td>` on the match, catalog and listing screens they ran together —
+ * "151 Booster BundleSV: Scarlet & Violet 151" — which read as a typo in the
+ * data rather than a missing style.
+ */
+/** The identity header on an item's own page: art beside what it is. */
+.item-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.item-identity h1 {
+  margin: 0 0 0.15rem;
+}
+
+.item-identity .chips {
+  margin-top: 0.4rem;
+}
+
+.item-art {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--surface-2);
+}
+
+.cell-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+/**
+ * A fixed box the art sits inside, whatever shape it is.
+ *
+ * Sized here rather than on the image so a row is the same height before the
+ * picture arrives and after — a table that reflows as a hundred lazy images
+ * land is unreadable while it settles. Cards are portrait and sealed product is
+ * not, so `contain` rather than `cover`: a booster box cropped to a card's
+ * aspect ratio is unrecognisable.
+ */
+.thumb {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .cell-title {
+  display: block;
   font-weight: 600;
 }
 
 .cell-sub {
+  display: block;
   font-size: 0.8rem;
   color: var(--muted);
 }

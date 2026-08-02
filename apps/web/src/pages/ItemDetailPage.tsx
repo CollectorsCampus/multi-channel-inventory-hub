@@ -10,6 +10,7 @@ import {
   useUpsertAllocation,
   type Allocation,
   type AllocationMode,
+  type InventoryItemDetail,
   type Ledger,
 } from '../api/inventory';
 import { STOCK_MOVEMENT_REASONS } from '../constants';
@@ -38,7 +39,7 @@ export function ItemDetailPage() {
           <Link to="/" className="back">
             ← Inventory
           </Link>
-          <h1>Item detail</h1>
+          <ItemIdentity item={ledger} />
         </div>
       </header>
 
@@ -47,6 +48,50 @@ export function ItemDetailPage() {
       <AllocationEditor ledger={ledger} />
       <ItemSyncHistory ledger={ledger} />
     </section>
+  );
+}
+
+/**
+ * What this item actually is.
+ *
+ * The page was headed "Item detail" and showed quantities about a card it never
+ * named — you could tell an allocation had three units but not three units of
+ * what. Everything here is stored identity, nothing derived.
+ *
+ * The SKU's three dimensions are shown even at their defaults. On a screen
+ * whose whole job is to say which row this is, "NORMAL · EN" is the difference
+ * between the plain printing and the foil, and an absent line would read as
+ * "unknown" rather than "normal".
+ */
+function ItemIdentity({ item }: { item: InventoryItemDetail }) {
+  const externals = Object.entries(item.externalIds);
+
+  return (
+    <div className="item-identity">
+      {item.imageUrl && (
+        <img className="item-art" src={item.imageUrl} alt="" width={90} height={126} />
+      )}
+      <div>
+        <h1>{item.name}</h1>
+        <p className="muted">
+          {[item.setName, item.game].filter(Boolean).join(' · ') || 'No set or game recorded'}
+        </p>
+        <span className="chips">
+          <span className="chip">{item.condition}</span>
+          <span className="chip">{item.printing}</span>
+          <span className="chip">{item.language}</span>
+        </span>
+        {externals.length > 0 && (
+          <p className="field-hint">
+            {externals.map(([source, id]) => (
+              <span key={source}>
+                {source} <code>{id}</code>{' '}
+              </span>
+            ))}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

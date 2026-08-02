@@ -119,9 +119,37 @@ export class AuthController {
     reply.clearCookie(CSRF_COOKIE, { path: '/' });
   }
 
+  /**
+   * The current principal — and, on the way out, a CSRF cookie that matches
+   * this session.
+   *
+   * **Re-issued rather than only set at login**, because the two can drift: a
+   * browser that keeps a cookie from an earlier session sends a token the
+   * server will not accept, and the symptom is every mutation failing 403
+   * while every read succeeds — which reads as a broken feature, not a stale
+   * cookie. The SPA calls this on load, so a refresh now repairs it.
+   *
+   * It gives nothing away. The value is already in a cookie the same browser
+   * holds, and a cross-origin caller can neither read this response nor the
+   * cookie it sets.
+   */
   @Get('me')
   @ApiOperation({ summary: 'The currently authenticated principal.' })
-  me(@CurrentUser() user: AuthenticatedPrincipal): CurrentUserDto {
+  me(
+    @CurrentUser() user: AuthenticatedPrincipal,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): CurrentUserDto {
+    // Absent for a Bearer API key, which carries no cookie at all.
+    if (request.sessionCsrfToken) {
+      reply.setCookie(CSRF_COOKIE, request.sessionCsrfToken, {
+        httpOnly: false,
+        sameSite: 'lax',
+        secure: this.config.get<string>('APP_URL', '').startsWith('https://'),
+        path: '/',
+      });
+    }
+
     return user;
   }
 

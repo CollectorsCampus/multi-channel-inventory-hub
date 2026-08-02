@@ -33,6 +33,8 @@ export type InventoryRow = Ledger & {
   name: string;
   game: string | null;
   setName: string | null;
+  /** Catalogue art, where the source had any. Null for a hand-entered item. */
+  imageUrl: string | null;
   condition: string;
   printing: string;
   language: string;
@@ -67,6 +69,10 @@ export interface InventoryFilters {
   game?: string;
   condition?: string;
   channelInstanceId?: string;
+  /** Items whose catalog item has no game — non-TCG goods, hand-entered rows. */
+  noGame?: boolean;
+  /** Items on no channel at all. */
+  unlisted?: boolean;
   page?: number;
   pageSize?: number;
   sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';
@@ -97,10 +103,30 @@ export function useInventoryList(filters: InventoryFilters) {
   });
 }
 
+/**
+ * Games actually present in the ledger, for the browser's filter.
+ *
+ * From what is held rather than what the sources declare — a filter that can
+ * offer an option returning nothing is worse than one with fewer options.
+ * A `null` game is a real bucket: non-TCG goods and hand-entered rows.
+ */
+export function useInventoryGames() {
+  return useQuery({
+    queryKey: ['inventory', 'games'],
+    queryFn: () => apiFetch<Array<{ game: string | null; items: number }>>('/inventory/games'),
+    staleTime: 60_000,
+  });
+}
+
+/** One item's ledger plus the identity needed to say what it is. */
+export type InventoryItemDetail = InventoryRow & {
+  externalIds: Record<string, string>;
+};
+
 export function useInventoryItem(id: string) {
   return useQuery({
     queryKey: inventoryKeys.detail(id),
-    queryFn: () => apiFetch<Ledger>(`/inventory/${id}`),
+    queryFn: () => apiFetch<InventoryItemDetail>(`/inventory/${id}`),
   });
 }
 
@@ -141,7 +167,13 @@ function useLedgerMutation<TArgs>(id: string, request: (args: TArgs) => Promise<
   return useMutation({
     mutationFn: request,
     onSuccess: (outcome) => {
-      queryClient.setQueryData(inventoryKeys.detail(id), outcome.ledger);
+      // Merged, not replaced. A mutation answers with the *ledger* — quantities
+      // and allocations — while the detail cache also holds the item's
+      // identity, which no mutation returns. Writing the response straight in
+      // blanked the name, set and image the moment anyone adjusted a quantity.
+      queryClient.setQueryData<InventoryItemDetail>(inventoryKeys.detail(id), (previous) =>
+        previous ? { ...previous, ...outcome.ledger } : undefined,
+      );
       // The browse list shows derived quantities, so it is stale after any write.
       void queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] });
     },

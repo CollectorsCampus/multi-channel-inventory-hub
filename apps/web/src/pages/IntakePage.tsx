@@ -4,6 +4,7 @@ import {
   useCatalogSearch,
   useCatalogSources,
   useIntake,
+  useLocalSets,
   type CatalogCandidate,
 } from '../api/catalog';
 import { formatPrice } from '../api/inventory';
@@ -31,7 +32,34 @@ export function IntakePage() {
   }, [text]);
 
   const search = useCatalogSearch(debounced, game || undefined, setName || undefined);
-  const games = [...new Set((sources.data ?? []).flatMap((s) => s.games))];
+
+  /**
+   * Every set the local catalog holds — fetched unfiltered, then narrowed here.
+   *
+   * Deliberately not `useLocalSets(game)`: the game suggestions are derived
+   * from this list, so filtering it by the chosen game would collapse those
+   * suggestions to the one already chosen the moment anything was typed.
+   */
+  const localSets = useLocalSets();
+  const heldSets = localSets.data ?? [];
+
+  /**
+   * Games to suggest: what the sources declare, plus what has been ingested.
+   *
+   * Neither alone is enough. Scryfall declares Magic and tcgcsv declares
+   * nothing, so the declared list is nearly empty — while the local catalog
+   * knows Pokemon, Lorcana and One Piece because someone ingested them.
+   */
+  const gameSuggestions = [
+    ...new Set([
+      ...(sources.data ?? []).flatMap((s) => s.games),
+      ...heldSets.flatMap((s) => (s.game ? [s.game] : [])),
+    ]),
+  ].sort();
+
+  const setSuggestions = game
+    ? heldSets.filter((s) => s.game?.toLowerCase() === game.trim().toLowerCase())
+    : heldSets;
 
   return (
     <section>
@@ -55,28 +83,60 @@ export function IntakePage() {
             onChange={(e) => setText(e.target.value)}
             aria-label="Search the catalog"
           />
-          {games.length > 1 && (
-            <select value={game} onChange={(e) => setGame(e.target.value)} aria-label="Game">
-              <option value="">Any game</option>
-              {games.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
-          )}
+          {/* Free text with suggestions, and shown unconditionally.
+              Previously a `<select>` that appeared only when the registered
+              sources between them declared more than one game — and they do
+              not: Scryfall declares Magic, tcgcsv declares none because it
+              covers ninety product lines it cannot enumerate up front. So the
+              field vanished, and the one source that *needs* a game had no way
+              to be given one. The same reasoning, and the same solution, as the
+              game field on the match screen. */}
+          <input
+            type="text"
+            list="intake-games"
+            placeholder="Game — e.g. Pokemon"
+            value={game}
+            onChange={(e) => setGame(e.target.value)}
+            aria-label="Game"
+          />
+          <datalist id="intake-games">
+            {gameSuggestions.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
+
           {/* Some sources cannot answer without a set. tcgcsv is static files
               with no search endpoint, so an unscoped query would mean
               downloading a whole category; it says so rather than returning a
-              fraction of the matches. */}
+              fraction of the matches.
+
+              Suggestions come from the local catalog, which is the only place
+              that knows how a set is actually spelled — and spelling is the
+              whole difficulty: the same set is "ME02: Phantasmal Flames" to a
+              source and "Phantasmal Flames" on the box. Still free text,
+              because a set nobody has ingested must remain typeable. */}
           <input
             type="text"
-            placeholder="Set (needed by some sources)"
+            list="intake-sets"
+            placeholder="Set — needed by some sources"
             value={setName}
             onChange={(e) => setSetName(e.target.value)}
             aria-label="Set"
           />
+          <datalist id="intake-sets">
+            {setSuggestions.map((s) => (
+              <option key={`${s.game ?? ''}:${s.setName}`} value={s.setName}>
+                {s.game ? `${s.game} · ${s.items} items` : `${s.items} items`}
+              </option>
+            ))}
+          </datalist>
         </div>
+
+        <p className="field-hint">
+          A game narrows the search and some sources refuse without one. The set box suggests what
+          the local catalog holds, but anything can be typed — it is passed to the sources as you
+          spell it.
+        </p>
 
         {sources.data?.length === 0 && (
           <p className="muted">No catalog sources are registered on this instance.</p>
@@ -88,12 +148,26 @@ export function IntakePage() {
 
         {search.isError && <p className="error">{(search.error as Error).message}</p>}
 
-        {/* A source being down must not hide the results that did come back. */}
-        {search.data?.failures.map((failure) => (
-          <p key={failure.sourceKey} className="error">
-            {failure.sourceKey} is unavailable — results may be incomplete. ({failure.message})
-          </p>
-        ))}
+        {/* A source being down must not hide the results that did come back —
+            and must not look like the search failed either. One source of
+            several declining is a notice, not an error, and styling it red
+            beside a list of perfectly good results reads as "this is broken".
+            The source's own explanation is folded away: it is usually a
+            sentence about that source's internals, which matters only to
+            someone who wants results from it specifically. */}
+        {(search.data?.failures.length ?? 0) > 0 && (
+          <details className="quiet-details">
+            <summary>
+              {search.data!.failures.map((f) => f.sourceKey).join(', ')} did not answer — these
+              results are from the other sources
+            </summary>
+            {search.data!.failures.map((failure) => (
+              <p key={failure.sourceKey} className="field-hint">
+                <strong>{failure.sourceKey}:</strong> {failure.message}
+              </p>
+            ))}
+          </details>
+        )}
 
         {search.data && search.data.candidates.length === 0 && !search.isFetching && (
           <p className="muted">Nothing matched.</p>

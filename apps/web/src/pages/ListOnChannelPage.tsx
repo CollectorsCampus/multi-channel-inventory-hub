@@ -104,18 +104,33 @@ export function ListOnChannelPage() {
           </p>
         )}
 
-        <div className="filters">
-          <select
-            value={channelId}
-            onChange={(e) => setChannelId(e.target.value)}
-            aria-label="Channel"
-          >
-            {creatable.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.displayName}
-              </option>
-            ))}
-          </select>
+        <h2 className="panel-title">What every product in this run gets</h2>
+        <p className="field-hint">
+          Applied verbatim to products this run creates. A variant added to a product you already
+          have keeps that product&apos;s vendor, tags and fields.
+        </p>
+
+        <div className="field-grid">
+          <label className="field">
+            Channel
+            <select value={channelId} onChange={(e) => setChannelId(e.target.value)}>
+              {creatable.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field">
+            Vendor
+            <input
+              type="text"
+              placeholder="Publisher — optional"
+              value={vendor}
+              onChange={(e) => setVendor(e.target.value)}
+            />
+          </label>
         </div>
 
         <TagPicker channelId={channelId} tags={tags} onChange={setTags} />
@@ -127,21 +142,6 @@ export function ListOnChannelPage() {
           category={category}
           onCategoryChange={setCategory}
         />
-
-        <div className="inline-form">
-          <label htmlFor="create-vendor">Vendor</label>
-          <input
-            id="create-vendor"
-            type="text"
-            placeholder="Publisher — optional"
-            value={vendor}
-            onChange={(e) => setVendor(e.target.value)}
-          />
-        </div>
-        <p className="field-hint">
-          Applied verbatim to products this run creates. A variant added to a product you already
-          have keeps that product&apos;s vendor and tags.
-        </p>
       </div>
 
       <div className="panel">
@@ -342,32 +342,34 @@ function TagPicker({
   const unknown = tags.filter((tag) => known.length > 0 && !known.includes(tag));
 
   return (
-    <>
-      <div className="inline-form">
-        <label htmlFor="create-tag">Tags</label>
-        <input
-          id="create-tag"
-          type="text"
-          list="channel-tags"
-          placeholder={vocabulary.isSuccess ? 'Start typing — the store’s own tags' : 'Tag'}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return;
-            // Otherwise Enter submits the search form above it.
-            e.preventDefault();
-            add();
-          }}
-        />
-        <datalist id="channel-tags">
-          {known.map((tag) => (
-            <option key={tag} value={tag} />
-          ))}
-        </datalist>
-        <button type="button" className="ghost" onClick={add}>
-          Add tag
-        </button>
-      </div>
+    <div className="field-block">
+      <label className="field" htmlFor="create-tag">
+        Tags
+        <span className="control-row">
+          <input
+            id="create-tag"
+            type="text"
+            list="channel-tags"
+            placeholder={vocabulary.isSuccess ? 'Start typing — the store’s own tags' : 'Tag'}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              // Otherwise Enter submits the search form above it.
+              e.preventDefault();
+              add();
+            }}
+          />
+          <datalist id="channel-tags">
+            {known.map((tag) => (
+              <option key={tag} value={tag} />
+            ))}
+          </datalist>
+          <button type="button" className="ghost" onClick={add}>
+            Add
+          </button>
+        </span>
+      </label>
 
       {tags.length > 0 && (
         <span className="chips">
@@ -397,7 +399,7 @@ function TagPicker({
           uses. That is allowed — but if it is a typo, the product lands in no collection.
         </p>
       )}
-    </>
+    </div>
   );
 }
 
@@ -483,14 +485,14 @@ function MetafieldPicker({
   if (definitions.length === 0) return null;
 
   return (
-    <>
-      <div className="filters">
+    <div className="field-block">
+      <div className="field-grid">
         {offerable.map((definition) => {
           const id = idOf(definition);
           const current = chosen.find((f) => idOf(f) === id)?.value ?? '';
 
           return (
-            <label key={id} className="inline-check">
+            <label key={id} className="field">
               {definition.name}
               <select
                 value={current}
@@ -550,13 +552,21 @@ function MetafieldPicker({
         </p>
       )}
 
+      {/* Folded away rather than listed. Nineteen `namespace.key` pairs in a
+          paragraph is a wall of text saying one thing — these are not on offer
+          — and it buries the six fields that are. */}
       {unreadable.length > 0 && (
-        <p className="field-hint">
-          Not offered: {unreadable.map((d) => `${d.namespace}.${d.key}`).join(', ')}.{' '}
-          {unreadable[0]?.unavailable}
-        </p>
+        <details className="quiet-details">
+          <summary>
+            {unreadable.length} field{unreadable.length === 1 ? '' : 's'} not offered
+          </summary>
+          <p className="field-hint">{unreadable[0]?.unavailable}</p>
+          <p className="field-hint">
+            {unreadable.map((d) => `${d.namespace}.${d.key}`).join(', ')}
+          </p>
+        </details>
       )}
-    </>
+    </div>
   );
 }
 

@@ -129,6 +129,10 @@ export interface InventoryQuery {
   game?: string;
   condition?: string;
   channelInstanceId?: string;
+  /** Items whose catalog item has no game — non-TCG goods, hand-entered rows. */
+  noGame?: boolean;
+  /** Items on no channel at all. Mutually sensible with `channelInstanceId`, not with it. */
+  unlisted?: boolean;
   hasUnallocated?: boolean;
   page?: number;
   pageSize?: number;
@@ -140,9 +144,16 @@ export type InventoryRow = LedgerSnapshot & {
   name: string;
   game: string | null;
   setName: string | null;
+  imageUrl: string | null;
   condition: string;
   printing: string;
   language: string;
+};
+
+/** One item's ledger plus the identity a detail screen needs to name it. */
+export type InventoryItemDetail = InventoryRow & {
+  /** Platform ids recorded against the catalog item, keyed by source. */
+  externalIds: Record<string, string>;
 };
 
 export interface InventoryPage {
@@ -245,6 +256,45 @@ export class InventoryService {
   }
 
   /**
+   * One item, with enough of its identity to know what it is.
+   *
+   * Separate from {@link getLedger}, which returns quantities and nothing else
+   * — correct for the mutation results that echo it, and useless as the only
+   * thing a detail screen has to work with: it produced a page headed "Item
+   * detail" showing numbers about a card it never named.
+   *
+   * The external ids come too. On a detail screen they are the answer to "is
+   * this the printing I think it is", and they are the only durable handle
+   * between this row and the platforms it came from.
+   */
+  async getItemDetail(inventoryItemId: string): Promise<InventoryItemDetail> {
+    const item = await this.prisma.inventoryItem.findUnique({
+      where: { id: inventoryItemId },
+      include: {
+        allocations: true,
+        sku: { include: { catalogItem: { include: { externalRefs: true } } } },
+      },
+    });
+    if (!item) throw new NotFoundException(`Inventory item ${inventoryItemId} not found.`);
+
+    const { catalogItem } = item.sku;
+
+    return {
+      ...toSnapshot(item),
+      name: catalogItem.name,
+      game: catalogItem.game,
+      setName: catalogItem.setName,
+      imageUrl: catalogItem.imageUrl,
+      condition: item.sku.condition,
+      printing: item.sku.printing,
+      language: item.sku.language,
+      externalIds: Object.fromEntries(
+        catalogItem.externalRefs.map((ref) => [ref.source, ref.externalId]),
+      ),
+    };
+  }
+
+  /**
    * Validate a hypothetical ledger without writing anything.
    *
    * Backs the allocation editor's live validation (§7). The editor deliberately
@@ -300,11 +350,20 @@ export class InventoryService {
         catalogItem: {
           ...(query.search ? { searchName: { contains: query.search.trim().toLowerCase() } } : {}),
           ...(query.game ? { game: query.game } : {}),
+          // A real bucket, not an absent filter: non-TCG goods and
+          // hand-entered items carry no game, and "show me those" is a
+          // question the browser must be able to ask.
+          ...(query.noGame ? { game: null } : {}),
         },
       },
       ...(query.channelInstanceId
         ? { allocations: { some: { channelInstanceId: query.channelInstanceId } } }
         : {}),
+      // "On no channel at all" — the question behind "what have I not listed
+      // yet", which is the whole input to the creation screen. Unlike
+      // `hasUnallocated` below this one *is* expressible in SQL, so it narrows
+      // the result set rather than the current page.
+      ...(query.unlisted ? { allocations: { none: {} } } : {}),
     };
 
     const orderBy = buildOrderBy(query.sortBy ?? 'name', query.sortDir ?? 'asc');
@@ -325,6 +384,10 @@ export class InventoryService {
       name: row.sku.catalogItem.name,
       game: row.sku.catalogItem.game,
       setName: row.sku.catalogItem.setName,
+      // Already loaded with the catalog item, so carrying it costs nothing
+      // here. Whether a browser fetches a hundred thumbnails is the browser's
+      // decision, not this endpoint's.
+      imageUrl: row.sku.catalogItem.imageUrl,
       condition: row.sku.condition,
       printing: row.sku.printing,
       language: row.sku.language,
@@ -340,6 +403,44 @@ export class InventoryService {
     }
 
     return { items, total, page, pageSize, pageCount: Math.ceil(total / pageSize) };
+  }
+
+  /**
+   * Games present in the ledger, with how many items each has.
+   *
+   * Derived from what is held rather than from what the catalog sources
+   * declare, which is the difference between a filter that always works and
+   * one that can offer a game returning nothing. Scryfall declares Magic and
+   * tcgcsv declares nothing at all, so the declared list is no guide to what
+   * an operator actually owns.
+   *
+   * A null game is reported rather than dropped: it is what non-TCG goods and
+   * hand-entered items have, and hiding the bucket would hide the stock.
+   */
+  async listGames(): Promise<Array<{ game: string | null; items: number }>> {
+    // Which games exist. `groupBy` here counts *catalog items*, which is not
+    // the number the filter will produce — one card with three conditions is
+    // one catalog item and three inventory rows — so it is used only for the
+    // distinct list.
+    const groups = await this.prisma.catalogItem.groupBy({
+      by: ['game'],
+      where: { skus: { some: { inventory: { isNot: null } } } },
+    });
+
+    const games = groups
+      .map((group) => group.game)
+      .sort((a, b) => (a ?? '').localeCompare(b ?? ''));
+
+    // Then the count each option will actually yield. A handful of queries on
+    // a rarely-hit endpoint, in exchange for a number that matches the list.
+    return Promise.all(
+      games.map(async (game) => ({
+        game,
+        items: await this.prisma.inventoryItem.count({
+          where: { sku: { catalogItem: { game } } },
+        }),
+      })),
+    );
   }
 
   /**

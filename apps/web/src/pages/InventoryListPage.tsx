@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import {
   formatPrice,
   useCreateInventoryItem,
+  useInventoryGames,
   useInventoryList,
   type InventoryRow,
 } from '../api/inventory';
+import { useChannels } from '../api/channels';
 import { SKU_CONDITIONS } from '../constants';
-import type { InventorySearch } from '../router';
+import { NO_CHANNEL, NO_GAME, PAGE_SIZES, type InventorySearch } from '../router';
 
 /**
  * The inventory browser (§7).
@@ -19,48 +21,103 @@ import type { InventorySearch } from '../router';
  * `manual*` flags on, because the server owns the data shape.
  */
 
-const columns: ColumnDef<InventoryRow>[] = [
-  {
-    accessorKey: 'name',
-    header: 'Item',
-    cell: ({ row }) => (
-      <Link to="/items/$id" params={{ id: row.original.inventoryItemId }} className="cell-link">
-        <span className="cell-title">{row.original.name}</span>
-        {row.original.setName && <span className="cell-sub">{row.original.setName}</span>}
-      </Link>
-    ),
-  },
-  { accessorKey: 'condition', header: 'Cond.' },
-  { accessorKey: 'quantityOnHand', header: 'On hand' },
-  {
-    accessorKey: 'reserveQuantity',
-    header: 'Reserved',
-    cell: ({ getValue }) => (getValue<number>() === 0 ? '—' : getValue<number>()),
-  },
-  {
-    accessorKey: 'pool',
-    header: 'Unallocated',
-    cell: ({ getValue }) => <strong>{getValue<number>()}</strong>,
-  },
-  {
-    id: 'channels',
-    header: 'Channels',
-    cell: ({ row }) => {
-      const allocations = row.original.allocations;
-      if (allocations.length === 0) return <span className="muted">Not listed</span>;
-      return (
-        <div className="chips">
-          {allocations.map((a) => (
-            <span key={a.id} className={`chip chip-${a.mode}`}>
-              {a.mode === 'fixed' ? 'fixed' : 'pooled'} {a.desiredListedQuantity}
-              {a.price !== null && <em> · {formatPrice(a.price, a.currency)}</em>}
-            </span>
-          ))}
-        </div>
-      );
+/**
+ * Whether to show catalogue art, remembered across sessions.
+ *
+ * `localStorage` rather than the URL: it is a preference about how someone
+ * likes to read the table, not part of what the table is showing, so it should
+ * not travel when a filtered view is shared with a colleague.
+ *
+ * Off by default. A page of two hundred rows is two hundred remote images, and
+ * that should be something a person turned on.
+ */
+const SHOW_IMAGES_KEY = 'hub.inventory.showImages';
+
+function useShowImages(): [boolean, (next: boolean) => void] {
+  const [showImages, setShowImages] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_IMAGES_KEY) === 'true';
+    } catch {
+      // Storage can be unavailable — private mode, a locked-down browser. The
+      // preference is not worth failing a page render over.
+      return false;
+    }
+  });
+
+  return [
+    showImages,
+    (next: boolean) => {
+      setShowImages(next);
+      try {
+        localStorage.setItem(SHOW_IMAGES_KEY, String(next));
+      } catch {
+        /* Preference is lost at reload, which is survivable. */
+      }
     },
-  },
-];
+  ];
+}
+
+function buildColumns(showImages: boolean): ColumnDef<InventoryRow>[] {
+  return [
+    {
+      accessorKey: 'name',
+      header: 'Item',
+      cell: ({ row }) => (
+        <Link to="/items/$id" params={{ id: row.original.inventoryItemId }} className="cell-link">
+          <span className="cell-item">
+            {showImages && (
+              <span className="thumb">
+                {row.original.imageUrl && (
+                  <img
+                    src={row.original.imageUrl}
+                    alt=""
+                    // Decorative: the name is right next to it, so a screen
+                    // reader announcing the filename would only be noise.
+                    loading="lazy"
+                  />
+                )}
+              </span>
+            )}
+            <span>
+              <span className="cell-title">{row.original.name}</span>
+              {row.original.setName && <span className="cell-sub">{row.original.setName}</span>}
+            </span>
+          </span>
+        </Link>
+      ),
+    },
+    { accessorKey: 'condition', header: 'Cond.' },
+    { accessorKey: 'quantityOnHand', header: 'On hand' },
+    {
+      accessorKey: 'reserveQuantity',
+      header: 'Reserved',
+      cell: ({ getValue }) => (getValue<number>() === 0 ? '—' : getValue<number>()),
+    },
+    {
+      accessorKey: 'pool',
+      header: 'Unallocated',
+      cell: ({ getValue }) => <strong>{getValue<number>()}</strong>,
+    },
+    {
+      id: 'channels',
+      header: 'Channels',
+      cell: ({ row }) => {
+        const allocations = row.original.allocations;
+        if (allocations.length === 0) return <span className="muted">Not listed</span>;
+        return (
+          <div className="chips">
+            {allocations.map((a) => (
+              <span key={a.id} className={`chip chip-${a.mode}`}>
+                {a.mode === 'fixed' ? 'fixed' : 'pooled'} {a.desiredListedQuantity}
+                {a.price !== null && <em> · {formatPrice(a.price, a.currency)}</em>}
+              </span>
+            ))}
+          </div>
+        );
+      },
+    },
+  ];
+}
 
 export function InventoryListPage() {
   const search = useSearch({ from: '/' });
@@ -79,14 +136,31 @@ export function InventoryListPage() {
     return () => clearTimeout(handle);
   }, [searchDraft, search.search, navigate]);
 
+  const [showImages, setShowImages] = useShowImages();
+  const channels = useChannels();
+  const games = useInventoryGames();
+  const pageSize = search.pageSize ?? 25;
+
   const query = useInventoryList({
     search: search.search,
     condition: search.condition,
+    // Same shape as the channel filter below: a named game is an equality
+    // filter, "none" is the opposite question.
+    ...(search.game === NO_GAME ? { noGame: true } : search.game ? { game: search.game } : {}),
+    // One dropdown, two different questions for the API: a named channel is a
+    // `some` filter, "none" is the opposite.
+    ...(search.channel === NO_CHANNEL
+      ? { unlisted: true }
+      : search.channel
+        ? { channelInstanceId: search.channel }
+        : {}),
     page: search.page ?? 1,
-    pageSize: search.pageSize ?? 25,
+    pageSize,
     sortBy: search.sortBy ?? 'name',
     sortDir: search.sortDir ?? 'asc',
   });
+
+  const columns = useMemo(() => buildColumns(showImages), [showImages]);
 
   const table = useReactTable({
     data: query.data?.items ?? [],
@@ -148,6 +222,76 @@ export function InventoryListPage() {
             </option>
           ))}
         </select>
+
+        {/* Games the ledger actually holds, so no option can return nothing.
+            The null bucket is offered only when something is in it — a store
+            with no supplies or accessories should not be shown a filter for
+            them. */}
+        <select
+          value={search.game ?? ''}
+          aria-label="Filter by game"
+          onChange={(e) =>
+            void navigate({
+              search: (prev) => ({ ...prev, game: e.target.value || undefined, page: 1 }),
+            })
+          }
+        >
+          <option value="">Any game</option>
+          {(games.data ?? []).map((g) => (
+            <option key={g.game ?? NO_GAME} value={g.game ?? NO_GAME}>
+              {g.game ?? 'No game'} ({g.items})
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={search.channel ?? ''}
+          aria-label="Filter by channel"
+          onChange={(e) =>
+            void navigate({
+              search: (prev) => ({ ...prev, channel: e.target.value || undefined, page: 1 }),
+            })
+          }
+        >
+          <option value="">Any channel</option>
+          <option value={NO_CHANNEL}>On no channel</option>
+          {/* The connector is named too, because nothing stops two channels
+              sharing a display name — and this operator's Shopify and
+              TCGPlayer channels are both called "Collector's Campus", which
+              made the two options indistinguishable. */}
+          {(channels.data ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.displayName} · {c.connectorKey}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={pageSize}
+          aria-label="Rows per page"
+          onChange={(e) =>
+            void navigate({
+              // Back to page 1: page 7 of a 25-row view is off the end of a
+              // 200-row one, and an empty table would look like a broken filter.
+              search: (prev) => ({ ...prev, pageSize: Number(e.target.value), page: 1 }),
+            })
+          }
+        >
+          {PAGE_SIZES.map((size) => (
+            <option key={size} value={size}>
+              {size} per page
+            </option>
+          ))}
+        </select>
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={showImages}
+            onChange={(e) => setShowImages(e.target.checked)}
+          />
+          Show images
+        </label>
       </div>
 
       {query.isError && <p className="error">{(query.error as Error).message}</p>}
@@ -203,7 +347,7 @@ export function InventoryListPage() {
             {!query.isLoading && table.getRowModel().rows.length === 0 && (
               <tr>
                 <td colSpan={columns.length} className="empty">
-                  {search.search || search.condition
+                  {search.search || search.condition || search.channel
                     ? 'No items match those filters.'
                     : 'No inventory yet. Add your first item above.'}
                 </td>

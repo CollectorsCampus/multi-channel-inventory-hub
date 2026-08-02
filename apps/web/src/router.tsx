@@ -29,6 +29,10 @@ const rootRoute = createRootRoute({
 export interface InventorySearch {
   search?: string;
   condition?: string;
+  /** A game, or the sentinel below for items that have none. */
+  game?: string;
+  /** A channel the item is allocated to, or the sentinel below for "none". */
+  channel?: string;
   page?: number;
   pageSize?: number;
   sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';
@@ -36,6 +40,31 @@ export interface InventorySearch {
 }
 
 const SORT_FIELDS = ['name', 'quantityOnHand', 'updatedAt', 'condition'] as const;
+
+/**
+ * Page sizes the browser offers, and the only ones it will accept in a URL.
+ *
+ * A fixed set rather than any integer: this reaches a `take` in a database
+ * query, and the route's own rule is that unrecognised search params are
+ * dropped rather than trusted.
+ */
+export const PAGE_SIZES = [25, 50, 100, 200] as const;
+
+/**
+ * `channel=none` means "on no channel at all".
+ *
+ * A sentinel in the URL rather than a second parameter, because it is one
+ * choice in one dropdown and two params could contradict each other. It is
+ * translated into the API's own `unlisted` flag at the call site.
+ */
+export const NO_CHANNEL = 'none';
+
+/**
+ * `game=none` means "has no game at all" — supplies, sealed accessories, a
+ * Funko Pop, anything hand-entered. Same sentinel shape as `channel=none`,
+ * and translated into the API's `noGame` flag at the call site.
+ */
+export const NO_GAME = 'none';
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -55,8 +84,12 @@ const indexRoute = createRoute({
     return {
       search: typeof raw.search === 'string' && raw.search ? raw.search : undefined,
       condition: typeof raw.condition === 'string' && raw.condition ? raw.condition : undefined,
+      game: typeof raw.game === 'string' && raw.game ? raw.game : undefined,
+      channel: typeof raw.channel === 'string' && raw.channel ? raw.channel : undefined,
       page: Number.isInteger(page) && page > 0 ? page : undefined,
-      pageSize: Number.isInteger(pageSize) && pageSize > 0 ? pageSize : undefined,
+      // Only a size the picker offers. Anything else is dropped rather than
+      // passed through to a `take` in a database query.
+      pageSize: PAGE_SIZES.find((size) => size === pageSize),
       sortBy,
       sortDir: raw.sortDir === 'desc' ? 'desc' : raw.sortDir === 'asc' ? 'asc' : undefined,
     };

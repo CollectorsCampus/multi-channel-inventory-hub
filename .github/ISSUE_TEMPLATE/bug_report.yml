@@ -35,7 +35,7 @@ body:
     attributes:
       label: Version
       description: Image tag or commit. `/api/docs/openapi.json` reports the running version.
-      placeholder: '0.1.0'
+      placeholder: '0.3.0'
     validations:
       required: true
 

@@ -19,11 +19,12 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
 | 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.2.0 released 2026-07-30** |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.3.0 released 2026-08-02** |
 
 Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fix, the
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
-because it explains _why_ each landed, which the CHANGELOG does not.
+because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
+v0.2.0" shipped in **v0.3.0**, for the same reason.
 
 `main` is green: **890 tests** (api 524, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
 scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
@@ -231,8 +232,8 @@ normal for open source and was not treated as a defect.
 ### After v0.1.1 — PRs #13, #15–#18 (2026-07-29/30)
 
 Everything in this section is on `main` and shipped in **v0.2.0**. It is the work that
-turned a store the hub could not touch into one it can enumerate and link. (PRs #21–#30,
-below, landed _after_ the v0.2.0 tag and are in no released image.)
+turned a store the hub could not touch into one it can enumerate and link. (PRs #21–#44,
+below, landed _after_ the v0.2.0 tag and shipped in **v0.3.0**.)
 
 #### The published images cannot start offline (#13)
 
@@ -504,7 +505,7 @@ genuinely uncatalogued: binders, event tickets, Build & Battle boxes, mini tins 
 "Moonlit Tin", which tcgcsv does not carry at all. Magic, Lorcana, One Piece and the other
 lines are untouched.
 
-### After v0.2.0 — PRs #21–#44 (2026-07-30 to 08-02), on `main`, in no released image
+### After v0.2.0 — PRs #21–#44 (2026-07-30 to 08-02), all shipped in **v0.3.0**
 
 #21 and #22 are research only — webhook delivery over a cloud bus, and the connector
 candidates — and their findings live under "Open decisions" below, where they gate real
@@ -1186,10 +1187,51 @@ Optional card art is remembered in `localStorage` rather than the URL — it is 
 preference about how someone reads the table, not part of what the table shows,
 so it must not travel when a filtered view is shared.
 
+### v0.3.0 (2026-08-02)
+
+Tagged at `728f417` (PR #46). Multi-arch image at
+`ghcr.io/collectorscampus/multi-channel-inventory-hub`, tagged `0.3.0`, `0.3` and `latest` —
+all three at digest `sha256:0ccf660e…`, replacing v0.2.0's `sha256:60c34127…`. The build took
+**~4 minutes**, warm cache again. Everything from #21 to #45 is in it. No schema change: the
+four migrations are unchanged since 0.1.0.
+
+Verified the way v0.1.1 established — anonymous registry token first, then boot the published
+image and look inside it, never trust the report:
+
+- **Anonymously**, the tag list returns all eight tags and the `0.3.0` index resolves to real
+  `linux/amd64` and `linux/arm64` children (plus the two attestation manifests, which is why a
+  naive filter on `platform.architecture` finds nothing useful).
+- **The image reports its own version.** `/api/docs/openapi.json` says `info.version: 0.3.0`,
+  read from `apps/api/package.json` rather than repeated — which is the version unification
+  proven in the artifact rather than asserted in a manifest. 43 paths, including
+  `/api/channels/{id}/listings`, `/listings/tags`, `/listings/metafields` and
+  `/api/catalog/local/{sets,search}`.
+- **The bundle it serves is the one built here** — `/assets/index-B0BIx4bM.js`, 409,792 bytes,
+  the exact hash the local `vite build` produced, and `application/javascript; charset=utf-8`.
+  Still the only place `@fastify/static` 10's permanently unmet peer is actually proven.
+- **`--prod` still holds**: zero `vite`, `vitest` or `esbuild` in the runtime tree. The 0.1.1
+  pins survive — one `@fastify+static@10.1.2`, one `find-my-way@9.7.0`, `js-yaml@5.2.2` — and
+  `zod@4.4.3` confirms #30 shipped.
+
+Two things worth not re-deriving:
+
+- **`gh api --input` with a UTF-8 JSON file is the right way to create the Release**, and it
+  handles an em dash in the **title** — which `gh --title` from bash does not. Build the
+  payload with `ConvertTo-Json` and write it with `UTF8Encoding($false)`.
+- **In PowerShell, `Invoke-WebRequest`'s `.Content` is a byte array for some content types and
+  a string for others**, so a verification script that assumes either will fail confusingly on
+  the other. Registry manifests came back as bytes, the SPA index as a string.
+
+Expect the stale-job churn again if you boot it against the **test** Redis on 6380: a minute
+of `Allocation … no longer exists` warnings for jobs the test suites left behind. Harmless,
+documented under v0.1.1, and still alarming to read.
+
 ### Unmerged work
 
-None. Everything through **#44** is on `main` as of 2026-08-02: the category fix (#41),
-the OIDC allow-list and the Google login (#43), and the UI work above (#44).
+None. Everything through **#46** is on `main` as of 2026-08-02: the category fix (#41),
+the OIDC allow-list and the Google login (#43), the UI work above (#44), and the v0.3.0
+release preparation (#46) — which is also **published**, so `main` and the newest image
+now agree for the first time since 0.2.0.
 
 `listing.metafields` merged as **#37**, carrying the three decisions the operator made
 while it was open — sealed gets no variant option, `NA` with it, and the set is appended

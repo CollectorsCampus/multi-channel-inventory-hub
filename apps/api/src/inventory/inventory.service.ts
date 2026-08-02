@@ -150,6 +150,12 @@ export type InventoryRow = LedgerSnapshot & {
   language: string;
 };
 
+/** One item's ledger plus the identity a detail screen needs to name it. */
+export type InventoryItemDetail = InventoryRow & {
+  /** Platform ids recorded against the catalog item, keyed by source. */
+  externalIds: Record<string, string>;
+};
+
 export interface InventoryPage {
   items: InventoryRow[];
   total: number;
@@ -247,6 +253,45 @@ export class InventoryService {
     });
     if (!item) throw new NotFoundException(`Inventory item ${inventoryItemId} not found.`);
     return toSnapshot(item);
+  }
+
+  /**
+   * One item, with enough of its identity to know what it is.
+   *
+   * Separate from {@link getLedger}, which returns quantities and nothing else
+   * — correct for the mutation results that echo it, and useless as the only
+   * thing a detail screen has to work with: it produced a page headed "Item
+   * detail" showing numbers about a card it never named.
+   *
+   * The external ids come too. On a detail screen they are the answer to "is
+   * this the printing I think it is", and they are the only durable handle
+   * between this row and the platforms it came from.
+   */
+  async getItemDetail(inventoryItemId: string): Promise<InventoryItemDetail> {
+    const item = await this.prisma.inventoryItem.findUnique({
+      where: { id: inventoryItemId },
+      include: {
+        allocations: true,
+        sku: { include: { catalogItem: { include: { externalRefs: true } } } },
+      },
+    });
+    if (!item) throw new NotFoundException(`Inventory item ${inventoryItemId} not found.`);
+
+    const { catalogItem } = item.sku;
+
+    return {
+      ...toSnapshot(item),
+      name: catalogItem.name,
+      game: catalogItem.game,
+      setName: catalogItem.setName,
+      imageUrl: catalogItem.imageUrl,
+      condition: item.sku.condition,
+      printing: item.sku.printing,
+      language: item.sku.language,
+      externalIds: Object.fromEntries(
+        catalogItem.externalRefs.map((ref) => [ref.source, ref.externalId]),
+      ),
+    };
   }
 
   /**

@@ -89,9 +89,11 @@ export class InventoryController {
 
   @Get(':id')
   @RequireRole('viewer')
-  @ApiOperation({ summary: 'One inventory item with its allocations and derived quantities.' })
+  @ApiOperation({
+    summary: 'One inventory item: what it is, its allocations and derived quantities.',
+  })
   get(@Param('id') id: string) {
-    return this.inventory.getLedger(id);
+    return this.inventory.getItemDetail(id);
   }
 
   /**

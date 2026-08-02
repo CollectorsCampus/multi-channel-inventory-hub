@@ -682,6 +682,28 @@ button.sort {
  * "151 Booster BundleSV: Scarlet & Violet 151" — which read as a typo in the
  * data rather than a missing style.
  */
+/** The identity header on an item's own page: art beside what it is. */
+.item-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.item-identity h1 {
+  margin: 0 0 0.15rem;
+}
+
+.item-identity .chips {
+  margin-top: 0.4rem;
+}
+
+.item-art {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--surface-2);
+}
+
 .cell-item {
   display: flex;
   align-items: center;

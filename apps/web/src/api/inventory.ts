@@ -118,10 +118,15 @@ export function useInventoryGames() {
   });
 }
 
+/** One item's ledger plus the identity needed to say what it is. */
+export type InventoryItemDetail = InventoryRow & {
+  externalIds: Record<string, string>;
+};
+
 export function useInventoryItem(id: string) {
   return useQuery({
     queryKey: inventoryKeys.detail(id),
-    queryFn: () => apiFetch<Ledger>(`/inventory/${id}`),
+    queryFn: () => apiFetch<InventoryItemDetail>(`/inventory/${id}`),
   });
 }
 
@@ -162,7 +167,13 @@ function useLedgerMutation<TArgs>(id: string, request: (args: TArgs) => Promise<
   return useMutation({
     mutationFn: request,
     onSuccess: (outcome) => {
-      queryClient.setQueryData(inventoryKeys.detail(id), outcome.ledger);
+      // Merged, not replaced. A mutation answers with the *ledger* — quantities
+      // and allocations — while the detail cache also holds the item's
+      // identity, which no mutation returns. Writing the response straight in
+      // blanked the name, set and image the moment anyone adjusted a quantity.
+      queryClient.setQueryData<InventoryItemDetail>(inventoryKeys.detail(id), (previous) =>
+        previous ? { ...previous, ...outcome.ledger } : undefined,
+      );
       // The browse list shows derived quantities, so it is stale after any write.
       void queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] });
     },

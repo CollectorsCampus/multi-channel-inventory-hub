@@ -26,7 +26,7 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **890 tests** (api 524, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
+`main` is green: **933 tests** (api 567, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
 scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
@@ -1226,12 +1226,139 @@ Expect the stale-job churn again if you boot it against the **test** Redis on 63
 of `Allocation … no longer exists` warnings for jobs the test suites left behind. Harmless,
 documented under v0.1.1, and still alarming to read.
 
+### After v0.3.0 — PRs #48–#50 (2026-08-02), on `main`, in no released image
+
+The operator's own framing: "getting something useful and stable for me to use for my
+business", with the core loop first — cards into the ledger, cards onto Shopify.
+
+#### An outbound push happened once per allocation, then never again (#48)
+
+**The worst bug found in this project so far, and it was in every released image
+including the v0.3.0 tagged the same day.** Present since Phase 3 (`c83e59d`,
+2026-07-28).
+
+`OutboundQueue.enqueue` reuses one job id per allocation and operation so a burst of
+edits collapses into a single job. BullMQ enforces that by refusing `add` for an id it
+already holds — **including one sitting in the completed set**, which `removeOnComplete:
+{ count: 500 }` retained. So the first successful push for an allocation permanently
+poisoned its id: every later change was accepted by `enqueue`, logged `Queued`, and
+silently discarded until 500 more completions on that queue happened to evict it.
+
+The failure shape is the worst available: **a storefront that syncs once and then quietly
+never again.** No error, no failed job, nothing in the alert inbox, and `SyncEvent` shows
+the one push that did work.
+
+- **Found by driving the live store, not by a test.** A quantity was pushed, the revert
+  was queued, and it never left the building. Confirmed in Redis: the job hash still
+  carried the _first_ push's timestamp with `wait` and `active` both empty.
+- **`removeOnComplete: true`** frees the id the moment a push succeeds. Burst collapsing
+  is untouched, because it only ever needed to dedupe jobs that are pending or running.
+  The new test fails without it (`expected +0 to be 1`).
+- **Inbound and reconcile are correct and were checked.** Inbound's job id is a
+  `WebhookEvent` row id — unique per delivery, and retention there **is** the redelivery
+  dedup. Reconcile's per-channel path passes no custom id. The distinction worth keeping:
+  whether the id names a **unique event** or a **thing that changes repeatedly**.
+- One narrow race survives and is inherent to collapsing: a change landing while a job is
+  _active_ is collapsed into a job that has already read state. Milliseconds rather than
+  forever, and reconciliation exists to catch it. Seen once during verification.
+
+#### Intake and listing in one step, with per-channel defaults (#48)
+
+`POST /channels/:id/listings/intake`, and a "List on" choice on the intake screen.
+
+- **`ChannelInstance.autoListNewStock` + `listingDefaults`** (one migration, two columns;
+  the defaults are a JSON-encoded `String`, the same choice `config` makes and for the
+  same reason — nothing ever queries into them). `channels/listing-defaults.ts` is pure
+  functions with its own tests, the way `sku-code.ts` is.
+- **The toggle is refused until something is declared.** Automatic creation with nothing
+  declared puts untagged drafts on a storefront at the speed of intake, and on a
+  tag-driven store an untagged product is in no collection — invisible in the shop,
+  reported by nothing. The gate is "has the operator answered", **not** "has tags":
+  requiring tags would be the hub deciding every store organises by tag, and `{tags: []}`
+  is a deliberate answer.
+- **Only `undefined` falls back.** An explicit empty list is that run's answer and must
+  reach the channel unchanged, or "no tags, just this once" becomes inexpressible.
+- **The defaults are one fixed set applied to every card**, so the intake hint _names the
+  actual tags_ rather than describing them — a Magic card added while the channel says
+  Pokémon lands in the wrong collection. A mixed batch still belongs on `/list`.
+- **Intake wins.** The two halves are not atomic and the order is deliberate: a listing
+  failure is reported, never rolled back. Stock on the shelf is a fact; whether Shopify
+  accepted a draft is not.
+- Bulk file imports deliberately do **not** come through here — the 1,333-row rule is
+  untouched.
+
+#### Users, settings, and an account menu (#49)
+
+There was no user management **at all**: `auth` had login, logout, me, setup and
+change-password. Adding a colleague meant an `INSERT`.
+
+- **Two lock-out rules, both refused rather than warned about**, because there is no undo
+  and the only recovery is a database edit. You cannot demote, deactivate or delete
+  _yourself_; and the **last active admin** is untouchable by anyone, counted at the moment
+  of the change. Two admins demoting each other in sequence is otherwise a pair of legal
+  requests ending with nobody in charge. A deactivated admin does not count as cover.
+  Neither belongs in a guard: the caller **is** authorised, the _outcome_ is refused.
+- **A provisioned identity is never given a local password** — `LocalAuthProvider` refuses
+  to authenticate one, so it would be a credential that looks real and can never work.
+- The password rule moved to `auth/password-policy.ts`, shared by all three paths that set
+  one. Three copies drift silently: an account created through one path that another would
+  have refused.
+- **Deactivation needs no session sweep** — `SessionService.resolve` and
+  `ApiKeyService.resolve` both check `isActive` on the joined user, so it bites on the next
+  request. An admin _password reset_ does revoke sessions, because it usually answers a
+  compromise.
+- Settings reports the deployment **read-only**: `AUTH_PROVIDER` and the query console are
+  read from the environment at boot, so a form would either lie or imply a restart nobody
+  expects. Per-channel settings stay on the channel — which is where `listingDefaults`
+  finally got a UI.
+- **Developer mode** reveals `/match` and `/list` in the nav. A preference, not a
+  permission: the routes are guarded server-side and typing the path always worked.
+
+#### The allocation editor (#50)
+
+Reported as "just very confusing", and it was, concretely: **adding a channel meant typing
+its UUID by hand** — findable nowhere in the UI — beside a hint promising channel
+configuration "in Phase 3", which had shipped months earlier. Each row was then headed
+with that UUID, so the one question the panel exists to answer was the one thing it never
+said. The first control offered "fixed — exclusive partition" / "pooled — mirrors the
+pool", the price had no currency, and nothing said whether a listing was attached.
+
+Now: the channel's name, a price with its currency, Save. Modes sit behind an **Advanced**
+disclosure phrased as what they do to the number a customer sees. Adding a channel is a
+dropdown minus the ones the item is already on. **No engine change** — it still posts
+whole allocations and validates through `/preview`.
+
+#### Three things only driving it revealed
+
+- **The dev-mode toggle did nothing to the nav.** `AppShell` and the settings page each
+  called `useDevMode` and each got its own `useState`; the `storage` event deliberately
+  does not fire in the tab that caused it. Now one module-level store via
+  `useSyncExternalStore`. **Any preference read in two places needs this shape.**
+- **A `datalist` spends Enter on accepting the highlighted suggestion**, so a tag input
+  relying on Enter alone added nothing when a tag was picked from the dropdown. An explicit
+  button is required; Enter is a shortcut.
+- **Both of the operator's channels are called "Collector's Campus"** — their own business
+  name, the obvious thing to type twice. A display name alone is not an identifier in the
+  UI. The connector is appended where the two are ambiguous.
+
+**Screenshots were unavailable for most of this session** (the Browser pane was not
+displayed), so layout was checked with `getComputedStyle` and bounding boxes instead —
+grid columns, flex gaps, wrap behaviour, horizontal overflow. That catches the same class
+of bug the screenshot rule exists for, and is worth knowing as a fallback.
+
+**Verification touched the live store and was put back.** A push moved one variant 0 → 2
+and it was returned to 0, confirmed by reading Shopify directly. Channel listing defaults
+were set, exercised, and cleared. A test user was created through the form and deleted.
+
+**v0.3.1 is not cut.** The queue fix is on `main` and in no published image, so anyone
+pulling `latest` gets a hub whose sync stops after one push per allocation. That is the
+next release, and it is worth doing before anything else.
+
 ### Unmerged work
 
-None. Everything through **#46** is on `main` as of 2026-08-02: the category fix (#41),
-the OIDC allow-list and the Google login (#43), the UI work above (#44), and the v0.3.0
-release preparation (#46) — which is also **published**, so `main` and the newest image
-now agree for the first time since 0.2.0.
+None. Everything through **#50** is on `main` as of 2026-08-02. `main` and the published
+image agreed at #47 and **no longer do**: #48–#50 are unreleased, and #48 carries the
+outbound-queue fix, which is the argument for cutting v0.3.1 promptly.
 
 `listing.metafields` merged as **#37**, carrying the three decisions the operator made
 while it was open — sealed gets no variant option, `NA` with it, and the set is appended

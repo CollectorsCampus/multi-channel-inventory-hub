@@ -9,6 +9,7 @@ import { MatchPage } from './pages/MatchPage';
 import { ListOnChannelPage } from './pages/ListOnChannelPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { QueryConsolePage } from './pages/QueryConsolePage';
+import { SettingsPage } from './pages/SettingsPage';
 
 /**
  * Code-based routes rather than the file-based convention.
@@ -157,6 +158,16 @@ const queryConsoleRoute = createRoute({
   component: QueryConsolePage,
 });
 
+/**
+ * Reached from the account menu rather than the top navigation: it is where
+ * you go to change how the tool behaves, not somewhere you go while using it.
+ */
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   itemRoute,
@@ -167,6 +178,7 @@ const routeTree = rootRoute.addChildren([
   listRoute,
   activityRoute,
   queryConsoleRoute,
+  settingsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

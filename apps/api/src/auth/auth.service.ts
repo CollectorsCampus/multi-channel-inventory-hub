@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { SessionService, type IssuedSession } from './session.service';
 import { AUTH_PROVIDER, type AuthProvider } from './auth-provider.interface';
+import { assertPasswordAcceptable } from './password-policy';
 
 @Injectable()
 export class AuthService {
@@ -28,7 +29,7 @@ export class AuthService {
       throw new ConflictException('Setup has already been completed.');
     }
 
-    this.assertPasswordAcceptable(password);
+    assertPasswordAcceptable(password);
 
     try {
       await this.prisma.user.create({
@@ -62,7 +63,7 @@ export class AuthService {
   }
 
   async changePassword(userId: string, current: string, next: string): Promise<void> {
-    this.assertPasswordAcceptable(next);
+    assertPasswordAcceptable(next);
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.passwordHash || !(await this.passwords.verify(user.passwordHash, current))) {
@@ -76,20 +77,6 @@ export class AuthService {
 
     // A password change must invalidate every other session for that user.
     await this.sessions.revokeAllForUser(userId);
-  }
-
-  /**
-   * Minimum length only, per current NIST SP 800-63B guidance: composition
-   * rules ("must contain a symbol") measurably push users toward weaker,
-   * more predictable passwords.
-   */
-  private assertPasswordAcceptable(password: string): void {
-    if (password.length < 12) {
-      throw new BadRequestException('Password must be at least 12 characters.');
-    }
-    if (password.length > 1024) {
-      throw new BadRequestException('Password must be at most 1024 characters.');
-    }
   }
 
   static isAssignableRole(value: string): value is UserRole {

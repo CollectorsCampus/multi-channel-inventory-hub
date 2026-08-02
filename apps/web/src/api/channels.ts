@@ -104,6 +104,9 @@ export function useUpdateChannel() {
       config?: Record<string, unknown>;
       secrets?: Record<string, string>;
       reconcileAutoCorrect?: boolean;
+      autoListNewStock?: boolean;
+      /** Replaced wholesale, not merged — sending `{ tags: [] }` clears them. */
+      listingDefaults?: ChannelListingDefaults;
     }) => apiFetch<Channel>(`/channels/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   );
 }

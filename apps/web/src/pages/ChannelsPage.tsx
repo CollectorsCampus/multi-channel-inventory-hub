@@ -19,6 +19,7 @@ import {
 } from '../api/channels';
 import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
+import { useChannelTags } from '../api/listings';
 
 /**
  * Channel configuration (§7).
@@ -256,6 +257,8 @@ function ChannelCard({ channel }: { channel: Channel }) {
         </p>
       )}
 
+      <ListingDefaults channel={channel} />
+
       <Reconciliation channel={channel} />
 
       <FileTransport channel={channel} />
@@ -346,6 +349,161 @@ function ChannelCard({ channel }: { channel: Channel }) {
       )}
 
       {remove.isError && <FormError error={remove.error as Error} />}
+    </div>
+  );
+}
+
+/**
+ * What a listing created on this channel should carry, and whether to create
+ * one for new stock automatically.
+ *
+ * Here rather than on a settings page because it belongs to the channel: the
+ * values are that channel's own vocabulary and mean nothing anywhere else.
+ *
+ * The tags are picked from what the store already uses, never typed from
+ * memory and never derived — a tag the store does not use puts the product in
+ * no collection, which is invisible in the shop and reported by nothing. The
+ * server refuses the automatic toggle until something has been declared, so
+ * the two controls are deliberately next to each other.
+ */
+function ListingDefaults({ channel }: { channel: Channel }) {
+  const update = useUpdateChannel();
+  const vocabulary = useChannelTags(channel.id, channel.capabilities.includes('listing.tags'));
+
+  const [tags, setTags] = useState<string[]>(channel.listingDefaults.tags ?? []);
+  const [vendor, setVendor] = useState(channel.listingDefaults.vendor ?? '');
+  const [draft, setDraft] = useState('');
+
+  if (!channel.capabilities.includes('listing.create')) return null;
+
+  const declared =
+    channel.listingDefaults.tags !== undefined ||
+    channel.listingDefaults.vendor !== undefined ||
+    channel.listingDefaults.category !== undefined ||
+    channel.listingDefaults.metafields !== undefined;
+
+  const addTag = () => {
+    const value = draft.trim();
+    if (value && !tags.includes(value)) setTags([...tags, value]);
+    setDraft('');
+  };
+
+  const save = () =>
+    update.mutate({
+      id: channel.id,
+      listingDefaults: {
+        // Sent even when empty, because an empty list is an answer — "no tags"
+        // — and the only way to express it. Omitting it would read as "unset"
+        // and leave the previous value in place.
+        tags,
+        ...(vendor.trim() ? { vendor: vendor.trim() } : {}),
+        // Carried through untouched: this form does not edit them, and dropping
+        // them would silently discard a category or custom fields set elsewhere.
+        ...(channel.listingDefaults.category !== undefined
+          ? { category: channel.listingDefaults.category }
+          : {}),
+        ...(channel.listingDefaults.metafields !== undefined
+          ? { metafields: channel.listingDefaults.metafields }
+          : {}),
+      },
+    });
+
+  return (
+    <div className="file-transport">
+      <h3>New listings</h3>
+      <p className="muted">
+        Applied verbatim to products created here. The hub never invents a tag — pick from what the
+        store already uses.
+      </p>
+
+      <div className="inline-form">
+        <label htmlFor={`tag-${channel.id}`}>Tags</label>
+        <input
+          id={`tag-${channel.id}`}
+          list={`tags-${channel.id}`}
+          value={draft}
+          placeholder={vocabulary.data ? 'Pick or type…' : 'Type a tag…'}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return;
+            // Inside a card that has its own forms; Enter must add a tag, not
+            // submit something else.
+            event.preventDefault();
+            addTag();
+          }}
+        />
+        <datalist id={`tags-${channel.id}`}>
+          {(vocabulary.data ?? []).map((tag) => (
+            <option key={tag} value={tag} />
+          ))}
+        </datalist>
+        {/* An explicit button, not just Enter. With a datalist open the browser
+            spends Enter on accepting the highlighted suggestion, so picking a
+            tag from the list and pressing Enter adds nothing and looks broken —
+            which is exactly what happened the first time this was driven. Enter
+            stays as a shortcut for someone typing a tag the store does not have
+            yet. */}
+        <button type="button" className="ghost" onClick={addTag} disabled={draft.trim() === ''}>
+          Add tag
+        </button>
+
+        <label htmlFor={`vendor-${channel.id}`}>Vendor</label>
+        <input
+          id={`vendor-${channel.id}`}
+          value={vendor}
+          placeholder="optional"
+          onChange={(event) => setVendor(event.target.value)}
+        />
+
+        <button type="button" onClick={save} disabled={update.isPending}>
+          Save
+        </button>
+      </div>
+
+      {tags.length > 0 && (
+        <span className="chips">
+          {tags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              className="chip"
+              title="Remove"
+              onClick={() => setTags(tags.filter((t) => t !== tag))}
+            >
+              {tag} ×
+            </button>
+          ))}
+        </span>
+      )}
+
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={channel.autoListNewStock}
+          disabled={update.isPending || !declared}
+          onChange={(event) =>
+            update.mutate({ id: channel.id, autoListNewStock: event.target.checked })
+          }
+        />
+        List new stock here as it is taken in
+      </label>
+
+      <p className="field-hint">
+        {declared
+          ? 'Adding stock creates a draft product carrying the above. Nothing becomes buyable ' +
+            'until you publish it — and these apply to every card, so use the list screen for a ' +
+            'mixed batch.'
+          : 'Save what a created product should carry first. Without it the hub would have to ' +
+            'guess a tag, and a guessed tag means a product in no collection.'}
+      </p>
+
+      {vocabulary.isError && (
+        <p className="field-hint">
+          The store&rsquo;s tag list could not be read, so there are no suggestions. Tags can still
+          be typed — spelling must match exactly.
+        </p>
+      )}
+      {update.isError && <FormError error={update.error as Error} />}
     </div>
   );
 }

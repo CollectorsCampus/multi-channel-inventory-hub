@@ -43,6 +43,8 @@ import { AUTH_PROVIDER, type AuthProvider } from './auth-provider.interface';
     },
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
-  exports: [AuthService, SessionService, ApiKeyService],
+  // `PasswordService` is exported so user administration hashes with the same
+  // argon2 parameters as login, rather than a second copy that could drift.
+  exports: [AuthService, SessionService, ApiKeyService, PasswordService],
 })
 export class AuthModule {}

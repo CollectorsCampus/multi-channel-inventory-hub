@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ConnectorsModule } from './connectors/connectors.module';
 import { CatalogModule } from './catalog/catalog.module';
@@ -30,6 +31,7 @@ import { HealthController } from './health/health.controller';
     PrismaModule,
     QueueModule,
     AuthModule,
+    UsersModule,
     InventoryModule,
     ConnectorsModule,
     CatalogModule,

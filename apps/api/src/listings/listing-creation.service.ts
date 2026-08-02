@@ -11,7 +11,13 @@ import { ChannelContextFactory, type ResolvedChannel } from '../connectors/chann
 import { pickAttribution } from '../catalog/catalog.service';
 import { MinIntervalLimiter, intervalFor } from '../catalog/rate-limiter';
 import { InventoryService } from '../inventory/inventory.service';
+import { IntakeService, type IntakeRequest, type IntakeResult } from '../inventory/intake.service';
 import { encodeSkuCode, HUB_SOURCE_KEY } from '../inventory/sku-code';
+import {
+  applyListingDefaults,
+  parseListingDefaults,
+  type ChannelListingDefaults,
+} from '../channels/listing-defaults';
 
 /**
  * Putting a card the store does not carry onto the storefront.
@@ -181,6 +187,7 @@ export class ListingCreationService {
     private readonly prisma: PrismaService,
     private readonly channels: ChannelContextFactory,
     private readonly inventory: InventoryService,
+    private readonly intakeService: IntakeService,
   ) {}
 
   /**
@@ -248,15 +255,28 @@ export class ListingCreationService {
       );
     }
 
+    // What the channel has declared, for anything this run did not say. Applied
+    // here rather than at the controller so every caller gets it — the /list
+    // screen, a single item listed from its own page, and intake — and so there
+    // is one place that decides what "the caller did not say" means.
+    //
+    // Only `undefined` falls back. An explicit empty list is this run's answer
+    // and must reach the channel unchanged; silently refilling it would make
+    // "no tags, just this once" inexpressible.
+    const withDefaults = applyListingDefaults(
+      request,
+      await this.channelDefaults(request.channelInstanceId),
+    );
+
     const items = await this.loadItems(ids, request.channelInstanceId);
-    const optionName = request.optionName?.trim() || DEFAULT_OPTION_NAME;
-    const tags = (request.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag !== '');
-    const vendor = request.vendor?.trim();
+    const optionName = withDefaults.optionName?.trim() || DEFAULT_OPTION_NAME;
+    const tags = (withDefaults.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag !== '');
+    const vendor = withDefaults.vendor?.trim();
     // Carried through untouched. The core does not know what a value means —
     // on Shopify it is a metaobject id — so validating or normalising it here
     // would be the core inventing an opinion it cannot hold.
-    const metafields = request.metafields ?? [];
-    const category = request.category?.trim();
+    const metafields = withDefaults.metafields ?? [];
+    const category = withDefaults.category?.trim();
 
     const result: CreateListingsResult = { listings: [], problems: [] };
 
@@ -310,7 +330,103 @@ export class ListingCreationService {
     return result;
   }
 
+  /**
+   * Take stock in and put it on this channel, in one call.
+   *
+   * The everyday path for a seller adding cards one at a time: without it,
+   * getting a card from "in the box" to "on the storefront" means intake on one
+   * screen and a selection on another, for every card.
+   *
+   * ## This does not make creation automatic
+   *
+   * The constraint it preserves is the one that matters — "a 1,333-row import
+   * must not become 1,333 storefront products". This is still one item, named
+   * by a caller who asked for it. **Bulk file imports do not come through
+   * here**, and must not be routed through it: `ChannelFilesService` writes a
+   * `WebhookEvent` and the inbound worker applies it, which is a different path
+   * on purpose.
+   *
+   * ## Intake wins
+   *
+   * The two halves are deliberately not atomic, and the order is deliberate:
+   * the stock is recorded first and a listing failure is **reported, never
+   * rolled back**. A card that is physically on the shelf is a fact; whether
+   * Shopify accepted a draft product is not, and unwinding a real stock
+   * movement because a storefront was briefly unreachable would make the ledger
+   * lie about the shelf. The operator can retry the listing from the item, and
+   * `createListing` being idempotent on the SKU code is what makes that safe.
+   */
+  async intakeAndList(
+    request: IntakeRequest & {
+      channelInstanceId: string;
+      tags?: readonly string[];
+      metafields?: readonly ListingMetafield[];
+      category?: string;
+      vendor?: string;
+      optionName?: string;
+    },
+  ): Promise<{ intake: IntakeResult; listing: CreateListingsResult }> {
+    const { channelInstanceId, tags, metafields, category, vendor, optionName, ...intakeRequest } =
+      request;
+
+    // Deliberately not caught: with no stock recorded there is nothing to list,
+    // and reporting a listing problem for a card that was never taken in would
+    // describe a failure that did not happen.
+    const intake = await this.intakeService.intake(intakeRequest);
+
+    try {
+      const listing = await this.create({
+        channelInstanceId,
+        inventoryItemIds: [intake.ledger.inventoryItemId],
+        ...(tags !== undefined ? { tags } : {}),
+        ...(metafields !== undefined ? { metafields } : {}),
+        ...(category !== undefined ? { category } : {}),
+        ...(vendor !== undefined ? { vendor } : {}),
+        ...(optionName !== undefined ? { optionName } : {}),
+        ...(intakeRequest.actorUserId !== undefined
+          ? { actorUserId: intakeRequest.actorUserId }
+          : {}),
+      });
+
+      return { intake, listing };
+    } catch (error) {
+      // A whole-run failure — the channel is disabled, the connector cannot
+      // create, the run was refused — arrives as an exception rather than a
+      // per-item problem. Reported in the same shape so one caller handles both,
+      // and the intake above still stands.
+      return {
+        intake,
+        listing: {
+          listings: [],
+          problems: [
+            {
+              inventoryItemId: intake.ledger.inventoryItemId,
+              message: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        },
+      };
+    }
+  }
+
   // -------------------------------------------------------------------------
+
+  /**
+   * What this channel says a created product should carry.
+   *
+   * A missing row yields no defaults rather than throwing: `resolve` above has
+   * already established the channel exists, so the only way to get here without
+   * one is a deletion mid-request, and failing the whole run for that would be
+   * a worse answer than creating with exactly what the caller asked for.
+   */
+  private async channelDefaults(channelInstanceId: string): Promise<ChannelListingDefaults> {
+    const instance = await this.prisma.channelInstance.findUnique({
+      where: { id: channelInstanceId },
+      select: { listingDefaults: true },
+    });
+
+    return parseListingDefaults(instance?.listingDefaults);
+  }
 
   private async createOne(
     channelInstanceId: string,

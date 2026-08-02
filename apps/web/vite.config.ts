@@ -10,7 +10,10 @@ export default defineConfig({
     sourcemap: true,
   },
   server: {
-    port: 5173,
+    // PORT first so two dev servers can run side by side — nothing points at
+    // 5173 (the API is on its own port and the SPA is same-origin in
+    // production), so pinning it only ever causes a collision.
+    port: Number(process.env.PORT) || 5173,
     // Dev only. In production the SPA and API are same-origin, so session
     // cookies work without any CORS configuration at all.
     proxy: {

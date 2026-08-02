@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiFetch } from './client';
 import type { JsonSchema } from '../components/SchemaForm';
+import type { ListingMetafield } from './listings';
 
 export interface ConnectorSummary {
   key: string;
@@ -12,6 +13,20 @@ export interface ConnectorSummary {
   secretFields: string[];
   /** Subset of secretFields a channel can work without. */
   optionalSecretFields: string[];
+}
+
+/**
+ * What a channel puts on the listings it creates.
+ *
+ * Every field is optional, and an empty array is a real answer rather than an
+ * absent one — `tags: []` means "no tags" and is what lets a run say so. The
+ * server depends on that distinction, so nothing here may collapse it.
+ */
+export interface ChannelListingDefaults {
+  tags?: string[];
+  metafields?: ListingMetafield[];
+  category?: string;
+  vendor?: string;
 }
 
 export interface Channel {
@@ -29,6 +44,10 @@ export interface Channel {
   healthDetail: string | null;
   lastReconciledAt: string | null;
   reconcileAutoCorrect: boolean;
+  /** Opt-in: list stock here as it is taken in. Server refuses it without defaults. */
+  autoListNewStock: boolean;
+  /** What a listing created here carries. Applied verbatim; never derived. */
+  listingDefaults: ChannelListingDefaults;
   webhookPath: string | null;
   allocationCount: number;
   createdAt: string;

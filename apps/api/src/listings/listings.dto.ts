@@ -13,6 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { MAX_ITEMS } from './listing-creation.service';
+import { IntakeDto } from '../inventory/inventory.dto';
 
 /**
  * One custom field to set, as the channel described it.
@@ -112,6 +113,54 @@ export class CreateListingsDto {
     default: 'Condition',
     description: 'What distinguishes variants of one card on this channel.',
   })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  optionName?: string;
+}
+
+/**
+ * Take stock in and list it here, in one call.
+ *
+ * `IntakeDto`'s fields are inherited rather than restated, so the two paths
+ * cannot drift on what identifies a card. The listing half is every field
+ * `CreateListingsDto` has except the selection — the item is the one just
+ * taken in — and every one is optional, because a channel that has declared
+ * listing defaults has already answered them.
+ */
+export class IntakeAndListDto extends IntakeDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description: "Overrides the channel's default tags. Omit to use them; [] for no tags.",
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(255, { each: true })
+  tags?: string[];
+
+  @ApiPropertyOptional({ type: [ListingMetafieldDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(25)
+  @ValidateNested({ each: true })
+  @Type(() => ListingMetafieldDto)
+  metafields?: ListingMetafieldDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  category?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  vendor?: string;
+
+  @ApiPropertyOptional({ default: 'Condition' })
   @IsOptional()
   @IsString()
   @MaxLength(50)

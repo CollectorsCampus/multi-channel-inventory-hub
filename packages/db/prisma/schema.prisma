@@ -195,10 +195,31 @@ model ChannelInstance {
   /// direction — the ledger is never rewritten from a channel, so a platform
   /// that reports a wrong number cannot silently become the source of truth.
   reconcileAutoCorrect Boolean   @default(false) @map("reconcile_auto_correct")
+
+  /// Opt-in: create a listing on this channel for stock as it is taken in,
+  /// instead of waiting for the operator to select it on /list.
+  ///
+  /// Guarded by listingDefaults rather than standing alone. Creation applies
+  /// tags, metafields and a category verbatim and the hub may never derive
+  /// one — every collection on a real store is a tag equality rule, so a
+  /// guessed tag yields a product that exists in the admin and appears
+  /// nowhere in the shop, reported by nothing. With nothing declared there is
+  /// no honest value to send, so the service refuses to enable this until
+  /// listingDefaults says what a created product should carry.
+  autoListNewStock Boolean @default(false) @map("auto_list_new_stock")
+
+  /// JSON-encoded defaults applied to listings this channel creates:
+  /// { tags?, metafields?, category?, vendor? }. String, not Json — see header.
+  ///
+  /// Values are the channel's own vocabulary and opaque to the core, which is
+  /// exactly why they are stored wholesale and never queried into: no filter
+  /// asks "which channels default to this tag". Read entire at creation and
+  /// written entire from the settings form.
+  listingDefaults String    @default("{}") @map("listing_defaults")
   /// ChannelHealth: unknown | ok | degraded | error
-  healthStatus         String    @default("unknown") @map("health_status")
-  healthCheckedAt      DateTime? @map("health_checked_at")
-  healthDetail         String?   @map("health_detail")
+  healthStatus    String    @default("unknown") @map("health_status")
+  healthCheckedAt DateTime? @map("health_checked_at")
+  healthDetail    String?   @map("health_detail")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

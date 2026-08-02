@@ -79,7 +79,25 @@ export class OutboundQueue implements OnModuleDestroy {
           // staring at a stuck listing all day.
           attempts: 5,
           backoff: { type: 'exponential', delay: 5_000 },
-          removeOnComplete: { count: 500 },
+          // Removed the instant it succeeds, and that is **load-bearing rather
+          // than tidiness**. `enqueue` below reuses one job id per allocation
+          // and operation so a burst collapses; BullMQ enforces that by
+          // refusing `add` for an id it already holds — including one sitting
+          // in the *completed* set. Retaining completed jobs therefore meant
+          // the first successful quantity push for an allocation permanently
+          // poisoned its id: every later change was accepted by `enqueue`,
+          // logged as queued, and silently discarded, until 500 more
+          // completions on that queue happened to evict it.
+          //
+          // The failure mode is the worst shape available — a storefront that
+          // syncs once and then quietly never again, with no error, no failed
+          // job and nothing in the alert inbox. Found by pushing a quantity
+          // twice against the live store and watching the second vanish.
+          //
+          // Nothing is lost by removing them: `SyncEvent` is the durable record
+          // of what was pushed and how it went, and the comment below is why
+          // failures are still kept.
+          removeOnComplete: true,
           // Failures are kept far longer: they are what an operator needs to
           // look at, and SyncEvent records the outcome but not the job itself.
           removeOnFail: { age: 7 * 24 * 3600 },
@@ -105,6 +123,11 @@ export class OutboundQueue implements OnModuleDestroy {
     // Collapses a burst of edits to one allocation into a single pending job.
     // Safe precisely because the payload carries no value: whichever job
     // survives reads the latest state.
+    //
+    // This only collapses while a job is **pending or running**. Once it
+    // finishes it is removed (see `removeOnComplete` above), which frees the id
+    // for the next change — without that, an allocation would sync exactly once
+    // and then never again.
     //
     // Dash-separated, not colon: BullMQ rejects `:` in custom job ids for the
     // same reason it rejects it in queue names — it is their Redis key

@@ -3,7 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, RequireRole } from '../auth/decorators';
 import type { AuthenticatedPrincipal } from '../auth/auth-provider.interface';
 import { ListingCreationService } from './listing-creation.service';
-import { CreateListingsDto, ListTagsQueryDto } from './listings.dto';
+import { CreateListingsDto, IntakeAndListDto, ListTagsQueryDto } from './listings.dto';
 
 /**
  * Bringing listings into existence on a channel.
@@ -40,6 +40,36 @@ export class ListingsController {
   })
   metafields(@Param('id') channelInstanceId: string, @Query() query: ListTagsQueryDto) {
     return this.creation.listMetafields(channelInstanceId, query.limit);
+  }
+
+  @Post('intake')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'Take stock in and list it here, in one call.',
+    description:
+      'The everyday path for adding cards one at a time. Still one named item, so the rule that ' +
+      'a bulk import must not become a storefront full of products is untouched — file imports ' +
+      'do not come through here. Listing fields are optional and fall back to the channel’s ' +
+      'declared defaults. **The intake stands even if the listing fails**: stock on the shelf ' +
+      'is a fact, and it is reported as a problem to retry rather than rolled back.',
+  })
+  intakeAndList(
+    @Param('id') channelInstanceId: string,
+    @Body() body: IntakeAndListDto,
+    @CurrentUser() user: AuthenticatedPrincipal,
+  ) {
+    const { tags, metafields, category, vendor, optionName, ...intake } = body;
+
+    return this.creation.intakeAndList({
+      ...intake,
+      channelInstanceId,
+      actorUserId: user.userId,
+      ...(tags !== undefined ? { tags } : {}),
+      ...(metafields !== undefined ? { metafields } : {}),
+      ...(category !== undefined ? { category } : {}),
+      ...(vendor !== undefined ? { vendor } : {}),
+      ...(optionName !== undefined ? { optionName } : {}),
+    });
   }
 
   @Post()

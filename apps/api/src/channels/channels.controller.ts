@@ -14,10 +14,19 @@ import {
   Res,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RequireRole } from '../auth/decorators';
 import { ChannelsService } from './channels.service';
+import { ChannelListingDefaultsDto } from './listing-defaults.dto';
 import { ChannelFilesService } from './channel-files.service';
 import { ReconcileService } from '../sync/reconcile.service';
 import { IMPORT_KINDS, type ImportKind, type ImportSummary } from './file-transport';
@@ -88,6 +97,27 @@ export class UpdateChannelDto {
   @IsOptional()
   @IsBoolean()
   reconcileAutoCorrect?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Create a listing here for stock as it is taken in, instead of selecting it on /list. ' +
+      'Refused unless listingDefaults says what a created product should carry — the hub ' +
+      'applies tags and custom fields verbatim and will not guess one.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  autoListNewStock?: boolean;
+
+  @ApiPropertyOptional({
+    type: ChannelListingDefaultsDto,
+    description:
+      'Replaced wholesale rather than merged, unlike config: this is one form section answering ' +
+      'one question, and merging would make removing the last tag impossible.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ChannelListingDefaultsDto)
+  listingDefaults?: ChannelListingDefaultsDto;
 }
 
 @ApiTags('channels')

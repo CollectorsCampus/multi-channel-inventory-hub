@@ -125,6 +125,47 @@ describeQueue('outbound queue round trip', () => {
     expect(job!.data).not.toHaveProperty('quantity');
   });
 
+  /**
+   * The other half of collapsing, and the one that was wrong.
+   *
+   * The job id is fixed per allocation and operation so a burst becomes one
+   * job. BullMQ enforces that by refusing `add` for an id it already holds —
+   * and a completed job still counts. With completed jobs retained, the first
+   * successful push permanently poisoned the id: every later change was
+   * accepted, logged as queued, and silently discarded.
+   *
+   * Reproduced against the live store before it was fixed: a quantity pushed,
+   * then reverted, and the revert never left the building. The symptom is a
+   * storefront that syncs once and then quietly never again — no error, no
+   * failed job, nothing in the alert inbox.
+   */
+  it('queues again after the previous push completed', async () => {
+    const item = await seedItem(10);
+    const channel = await seedChannel();
+
+    await inventory.upsertAllocation(item.id, {
+      channelInstanceId: channel.id,
+      mode: 'pooled',
+      maxQuantity: null,
+    });
+
+    expect((await outbound.counts(CONNECTOR_KEY)).waiting).toBe(1);
+
+    // Drain it through a real worker, so the job reaches completion exactly as
+    // it does in production — which is the state that used to poison the id.
+    const drain = new Worker<OutboundJob>(outboundQueueName(CONNECTOR_KEY), async () => {}, {
+      connection: connection.duplicate(),
+    });
+    await new Promise<void>((resolve) => drain.once('completed', () => resolve()));
+    await drain.close();
+
+    await inventory.adjustQuantityOnHand(item.id, 5, { reason: 'intake' });
+
+    // Before the fix this was 0: `add` returned the retained completed job and
+    // created nothing, while `enqueue` logged "Queued" either way.
+    expect((await outbound.counts(CONNECTOR_KEY)).waiting).toBe(1);
+  });
+
   it('does not queue for a disabled channel', async () => {
     const item = await seedItem(10);
     const channel = await prisma.channelInstance.create({

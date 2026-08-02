@@ -5,6 +5,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConnectorRegistry } from '../connectors/connector-registry.service';
 import { CredentialStore } from '../connectors/credential-store.service';
 import { pickSchemaFields, validateChannelConfig } from './config-schema';
+import {
+  encodeListingDefaults,
+  hasDeclaredDefaults,
+  parseListingDefaults,
+  type ChannelListingDefaults,
+} from './listing-defaults';
 
 /**
  * Channel instance management (§7 "Channels").
@@ -32,6 +38,10 @@ export interface ChannelSummary {
   lastReconciledAt: Date | null;
   /** Opt-in re-push when reconciliation finds the channel showing something else (§6). */
   reconcileAutoCorrect: boolean;
+  /** Opt-in: list stock on this channel as it is taken in. Needs listingDefaults. */
+  autoListNewStock: boolean;
+  /** What a listing created here carries, applied verbatim. Never derived. */
+  listingDefaults: ChannelListingDefaults;
   /** Present only when the connector receives webhooks. */
   webhookPath: string | null;
   allocationCount: number;
@@ -51,6 +61,17 @@ export interface UpdateChannelInput {
   config?: Record<string, unknown>;
   secrets?: Record<string, string>;
   reconcileAutoCorrect?: boolean;
+  autoListNewStock?: boolean;
+  /**
+   * Replaced wholesale, not merged.
+   *
+   * The opposite of `config` above, and deliberately: this is one form section
+   * answering one question — "what should a product created here carry" — and
+   * merging would make removing the last tag impossible. `config` merges
+   * because it is assembled from whichever connector fields a form happened to
+   * render.
+   */
+  listingDefaults?: ChannelListingDefaults;
 }
 
 @Injectable()
@@ -141,6 +162,24 @@ export class ChannelsService {
       await this.credentials.put(credentialRef, { ...current, ...input.secrets });
     }
 
+    // Resolved against what this same request is writing, not against what is
+    // stored: declaring the defaults and switching the toggle on is one save in
+    // the settings form, and checking the stored column would reject it.
+    const listingDefaults = input.listingDefaults ?? parseListingDefaults(existing.listingDefaults);
+    const autoList = input.autoListNewStock ?? existing.autoListNewStock;
+
+    if (autoList && !hasDeclaredDefaults(listingDefaults)) {
+      // Refused rather than allowed-and-warned. Automatic creation with nothing
+      // declared puts untagged, uncategorised drafts on a storefront at the
+      // speed of intake — and on a tag-driven store an untagged product is in
+      // no collection, so it is invisible in the shop and reported by nothing.
+      throw new BadRequestException(
+        `"${existing.displayName}" has no listing defaults, so new stock cannot be listed ` +
+          `automatically. Set the tags, custom fields and category a created product should ` +
+          `carry first — the hub applies them verbatim and will not guess one.`,
+      );
+    }
+
     const instance = await this.prisma.channelInstance.update({
       where: { id },
       data: {
@@ -148,6 +187,12 @@ export class ChannelsService {
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
         ...(input.reconcileAutoCorrect !== undefined
           ? { reconcileAutoCorrect: input.reconcileAutoCorrect }
+          : {}),
+        ...(input.autoListNewStock !== undefined
+          ? { autoListNewStock: input.autoListNewStock }
+          : {}),
+        ...(input.listingDefaults !== undefined
+          ? { listingDefaults: encodeListingDefaults(input.listingDefaults) }
           : {}),
         ...(config !== undefined ? { config } : {}),
         ...(credentialRef !== existing.credentialRef ? { credentialRef } : {}),
@@ -232,6 +277,8 @@ export class ChannelsService {
     lastPolledAt: Date | null;
     lastReconciledAt: Date | null;
     reconcileAutoCorrect: boolean;
+    autoListNewStock: boolean;
+    listingDefaults: string;
     createdAt: Date;
     _count: { allocations: number };
   }): Promise<ChannelSummary> {
@@ -281,6 +328,11 @@ export class ChannelsService {
       lastPolledAt: instance.lastPolledAt,
       lastReconciledAt: instance.lastReconciledAt,
       reconcileAutoCorrect: instance.reconcileAutoCorrect,
+      // Reported even when the connector cannot create listings at all, so the
+      // settings form can say why the toggle is unavailable rather than hiding
+      // it and leaving the operator to wonder where it went.
+      autoListNewStock: instance.autoListNewStock,
+      listingDefaults: parseListingDefaults(instance.listingDefaults),
       webhookPath: receivesWebhooks ? `/api/webhooks/${instance.id}` : null,
       allocationCount: instance._count.allocations,
       createdAt: instance.createdAt,

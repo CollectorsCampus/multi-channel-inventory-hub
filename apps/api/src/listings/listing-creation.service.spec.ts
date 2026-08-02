@@ -10,7 +10,9 @@ import {
   titleFor,
 } from './listing-creation.service';
 import { InventoryService } from '../inventory/inventory.service';
+import type { IntakeService } from '../inventory/intake.service';
 import { HUB_SOURCE_KEY } from '../inventory/sku-code';
+import { encodeListingDefaults } from '../channels/listing-defaults';
 import type { ChannelContextFactory } from '../connectors/channel-context.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
@@ -33,6 +35,7 @@ let creation: ListingCreationService;
 let channelId: string;
 let createListing: ReturnType<typeof vi.fn>;
 let capabilities: string[];
+let intake: { intake: ReturnType<typeof vi.fn> };
 
 /** A catalog item with two conditions in stock, and no listings anywhere. */
 async function seedCard(options: { refs?: Array<{ source: string; externalId: string }> } = {}) {
@@ -123,10 +126,16 @@ describeDb('ListingCreationService', () => {
       })),
     } as unknown as ChannelContextFactory;
 
+    // Intake is stubbed rather than built: reaching it needs CatalogService and
+    // a source registry, and nothing in this file calls `intakeAndList` — the
+    // paths worth pinning here are all reachable from `create`.
+    intake = { intake: vi.fn() };
+
     creation = new ListingCreationService(
       prisma as unknown as PrismaService,
       channels,
       new InventoryService(prisma as unknown as PrismaService),
+      intake as unknown as IntakeService,
     );
   });
 
@@ -404,6 +413,86 @@ describeDb('ListingCreationService', () => {
     // Absent rather than empty: the hub has no tag of its own to fall back on,
     // and a derived one puts the product in no collection at all.
     expect(createListing.mock.calls[1]?.[1].tags).toBeUndefined();
+  });
+
+  /**
+   * The channel's declaration, for the fields a run did not mention.
+   *
+   * This is what makes listing at the speed of intake possible without the hub
+   * deriving anything: the values are still the operator's, applied verbatim —
+   * they were just chosen once instead of per card.
+   */
+  describe('channel listing defaults', () => {
+    const declare = (defaults: Parameters<typeof encodeListingDefaults>[0]) =>
+      prisma.channelInstance.update({
+        where: { id: channelId },
+        data: { listingDefaults: encodeListingDefaults(defaults) },
+      });
+
+    it('fills in every field the run left out', async () => {
+      const card = await seedCard();
+      await declare({
+        tags: ['Pokémon', 'SV04 Paradox Rift'],
+        category: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+        vendor: 'The Pokémon Company',
+        metafields: [
+          {
+            owner: 'product',
+            namespace: 'custom',
+            key: 'game',
+            type: 'metaobject_reference',
+            value: 'gid://shopify/Metaobject/1',
+          },
+        ],
+      });
+
+      await create([card.nm.inventoryItemId]);
+
+      const sent = createListing.mock.calls[0]?.[1];
+      expect(sent.tags).toEqual(['Pokémon', 'SV04 Paradox Rift']);
+      expect(sent.category).toBe('gid://shopify/TaxonomyCategory/ae-2-2-3-2');
+      expect(sent.vendor).toBe('The Pokémon Company');
+      expect(sent.metafields).toHaveLength(1);
+    });
+
+    it('never overrides what the run asked for', async () => {
+      const card = await seedCard();
+      await declare({ tags: ['Pokémon'], vendor: 'The Pokémon Company' });
+
+      await create([card.nm.inventoryItemId], {
+        tags: ['Magic: The Gathering'],
+        vendor: 'Wizards of the Coast',
+      });
+
+      const sent = createListing.mock.calls[0]?.[1];
+      expect(sent.tags).toEqual(['Magic: The Gathering']);
+      expect(sent.vendor).toBe('Wizards of the Coast');
+    });
+
+    /**
+     * An override, not an omission. If an empty list fell back to the channel,
+     * "no tags, just this once" could not be said at all — and the operator
+     * would have to clear the channel's defaults to say it.
+     */
+    it('treats an explicitly empty tag list as the run’s answer', async () => {
+      const card = await seedCard();
+      await declare({ tags: ['Pokémon'] });
+
+      await create([card.nm.inventoryItemId], { tags: [] });
+
+      expect(createListing.mock.calls[0]?.[1].tags).toBeUndefined();
+    });
+
+    it('changes nothing when the channel has declared nothing', async () => {
+      const card = await seedCard();
+
+      await create([card.nm.inventoryItemId]);
+
+      const sent = createListing.mock.calls[0]?.[1];
+      expect(sent.tags).toBeUndefined();
+      expect(sent.category).toBeUndefined();
+      expect(sent.vendor).toBeUndefined();
+    });
   });
 
   it('sends a price the allocation already carries, and none when it has one no more', async () => {

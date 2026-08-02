@@ -227,6 +227,103 @@ describeDb('ChannelsService', () => {
     });
   });
 
+  /**
+   * The gate on automatic listing.
+   *
+   * Creation applies tags and custom fields verbatim and the hub may never
+   * derive one — on a store whose collections are all tag equality rules, a
+   * guessed tag yields a product that is invisible in the shop and reported by
+   * nothing. So the toggle is refused until the operator has said what a
+   * created product should carry.
+   */
+  describe('automatic listing', () => {
+    it('refuses the toggle while nothing has been declared', async () => {
+      const channel = await create();
+
+      await expect(service.update(channel.id, { autoListNewStock: true })).rejects.toThrow(
+        /no listing defaults/i,
+      );
+
+      expect((await service.get(channel.id)).autoListNewStock).toBe(false);
+    });
+
+    /**
+     * Declaring and enabling is one save in the settings form, so the check
+     * must see what this request is writing rather than what is stored. Reading
+     * the column instead would reject the only sensible way to turn it on.
+     */
+    it('accepts the toggle and the declaration in one update', async () => {
+      const channel = await create();
+
+      const updated = await service.update(channel.id, {
+        autoListNewStock: true,
+        listingDefaults: { tags: ['Pokémon'], vendor: 'The Pokémon Company' },
+      });
+
+      expect(updated.autoListNewStock).toBe(true);
+      expect(updated.listingDefaults).toEqual({
+        tags: ['Pokémon'],
+        vendor: 'The Pokémon Company',
+      });
+    });
+
+    it('accepts the toggle once defaults are already stored', async () => {
+      const channel = await create();
+      await service.update(channel.id, { listingDefaults: { tags: ['Pokémon'] } });
+
+      expect((await service.update(channel.id, { autoListNewStock: true })).autoListNewStock).toBe(
+        true,
+      );
+    });
+
+    /**
+     * "No tags" is a deliberate answer, and a store that organises by something
+     * other than tags is entitled to give it. What the guard refuses is a
+     * channel where nothing was ever said.
+     */
+    it('accepts an explicit "no tags" as having been declared', async () => {
+      const channel = await create();
+
+      const updated = await service.update(channel.id, {
+        autoListNewStock: true,
+        listingDefaults: { tags: [] },
+      });
+
+      expect(updated.autoListNewStock).toBe(true);
+      expect(updated.listingDefaults.tags).toEqual([]);
+    });
+
+    /**
+     * Wholesale, unlike `config` above. Merging would make removing the last
+     * tag impossible — the form would submit `{tags: []}` and get back what it
+     * was trying to clear.
+     */
+    it('replaces the declaration rather than merging it', async () => {
+      const channel = await create();
+      await service.update(channel.id, {
+        listingDefaults: { tags: ['Pokémon'], vendor: 'The Pokémon Company' },
+      });
+
+      const updated = await service.update(channel.id, { listingDefaults: { tags: [] } });
+
+      expect(updated.listingDefaults).toEqual({ tags: [] });
+    });
+
+    it('refuses to clear the declaration out from under an enabled toggle', async () => {
+      const channel = await create();
+      await service.update(channel.id, {
+        autoListNewStock: true,
+        listingDefaults: { tags: ['Pokémon'] },
+      });
+
+      await expect(service.update(channel.id, { listingDefaults: {} })).rejects.toThrow(
+        /no listing defaults/i,
+      );
+
+      expect((await service.get(channel.id)).listingDefaults.tags).toEqual(['Pokémon']);
+    });
+  });
+
   describe('deletion', () => {
     it('removes the channel and its stored credentials', async () => {
       const channel = await create();

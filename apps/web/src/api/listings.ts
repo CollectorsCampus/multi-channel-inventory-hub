@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from './client';
+import type { IntakeResult } from './catalog';
 
 /**
  * Creating listings on a channel for stock the ledger already holds.
@@ -142,6 +143,45 @@ export function useCreateListings(channelInstanceId: string) {
     // the channel cards are both stale afterwards.
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['channels'] });
+    },
+  });
+}
+
+/**
+ * Take stock in and list it on a channel, in one call.
+ *
+ * The listing fields are omitted entirely so the channel's stored defaults
+ * apply — which is the whole point of declaring them. Sending `tags: []` here
+ * would mean "no tags", not "use the defaults", and would quietly produce
+ * products in no collection.
+ */
+export interface IntakeAndListRequest {
+  sourceKey: string;
+  sourceId: string;
+  condition: string;
+  printing?: string;
+  language?: string;
+  quantity: number;
+  costBasis?: number;
+}
+
+export interface IntakeAndListResult {
+  intake: IntakeResult;
+  listing: CreateListingsResult;
+}
+
+export function useIntakeAndList(channelInstanceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: IntakeAndListRequest) =>
+      apiFetch<IntakeAndListResult>(`/channels/${channelInstanceId}/listings/intake`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    // Both halves write: intake moves stock, creation writes an allocation.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
       void queryClient.invalidateQueries({ queryKey: ['channels'] });
     },
   });

@@ -4,6 +4,7 @@ import { useChannels } from '../api/channels';
 import { useInventoryList, type InventoryRow } from '../api/inventory';
 import {
   describeOutcome,
+  requiredCategories,
   useChannelMetafields,
   useChannelTags,
   useCreateListings,
@@ -49,6 +50,7 @@ export function ListOnChannelPage() {
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [tags, setTags] = useState<string[]>([]);
   const [metafields, setMetafields] = useState<ListingMetafield[]>([]);
+  const [category, setCategory] = useState('');
   const [vendor, setVendor] = useState('');
 
   // Only channels that can bring a listing into existence. Offering a
@@ -118,7 +120,13 @@ export function ListOnChannelPage() {
 
         <TagPicker channelId={channelId} tags={tags} onChange={setTags} />
 
-        <MetafieldPicker channelId={channelId} chosen={metafields} onChange={setMetafields} />
+        <MetafieldPicker
+          channelId={channelId}
+          chosen={metafields}
+          onChange={setMetafields}
+          category={category}
+          onCategoryChange={setCategory}
+        />
 
         <div className="inline-form">
           <label htmlFor="create-vendor">Vendor</label>
@@ -264,6 +272,7 @@ export function ListOnChannelPage() {
                 inventoryItemIds: selectedIds,
                 ...(tags.length > 0 ? { tags } : {}),
                 ...(metafields.length > 0 ? { metafields } : {}),
+                ...(category ? { category } : {}),
                 ...(vendor.trim() ? { vendor: vendor.trim() } : {}),
               })
             }
@@ -408,13 +417,31 @@ function MetafieldPicker({
   channelId,
   chosen,
   onChange,
+  category,
+  onCategoryChange,
 }: {
   channelId: string;
   chosen: ListingMetafield[];
   onChange: (fields: ListingMetafield[]) => void;
+  category: string;
+  onCategoryChange: (category: string) => void;
 }) {
   const fields = useChannelMetafields(channelId, channelId !== '');
   const definitions = fields.data ?? [];
+
+  // What the chosen fields will accept. Not a question for the operator where
+  // it comes to one answer — the constraints have already decided.
+  const allowed = requiredCategories(definitions, chosen);
+
+  useEffect(() => {
+    if (!allowed) {
+      if (category !== '') onCategoryChange('');
+      return;
+    }
+    // One answer: take it. Several: leave the operator on one of them rather
+    // than on a value their fields would reject.
+    if (!allowed.some((c) => c.id === category)) onCategoryChange(allowed[0]?.id ?? '');
+  }, [allowed, category, onCategoryChange]);
 
   const idOf = (d: { owner: string; namespace: string; key: string }) =>
     `${d.owner}:${d.namespace}:${d.key}`;
@@ -487,6 +514,41 @@ function MetafieldPicker({
         set&rdquo; is simply not written — fill it in on the product afterwards if the store has no
         entry for it yet.
       </p>
+
+      {/* Conditional definitions: a field restricted to a category is rejected
+          outright on a product that has none, with a message naming neither.
+          Shown rather than hidden, because the operator is about to see this
+          category on their products. */}
+      {allowed && allowed.length === 1 && (
+        <p className="field-hint">
+          These fields apply only to <strong>{allowed[0]!.label}</strong>, so products this run
+          creates will be set to that category.
+        </p>
+      )}
+
+      {allowed && allowed.length > 1 && (
+        <div className="inline-form">
+          <label htmlFor="create-category">Category</label>
+          <select
+            id="create-category"
+            value={category}
+            onChange={(e) => onCategoryChange(e.target.value)}
+          >
+            {allowed.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {allowed && allowed.length === 0 && (
+        <p className="error">
+          The fields you have chosen apply to no category in common, so no product can satisfy all
+          of them. Drop one of them, or set the rest by hand afterwards.
+        </p>
+      )}
 
       {unreadable.length > 0 && (
         <p className="field-hint">

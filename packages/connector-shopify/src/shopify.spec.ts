@@ -178,6 +178,9 @@ function mockClient(overrides: Record<string, unknown> = {}) {
               namespace: 'custom',
               key: 'game',
               type: { name: 'metaobject_reference' },
+              // Conditional: applies only to Gaming Cards, exactly as on the
+              // live store.
+              constraints: { key: 'category', values: { nodes: [{ value: 'ae-2-2-3-2' }] } },
             },
             {
               name: 'Rarity',
@@ -197,6 +200,7 @@ function mockClient(overrides: Record<string, unknown> = {}) {
               key: 'unused',
               type: { name: 'metaobject_reference' },
             },
+            ...((overrides.extraDefinitions ?? []) as unknown[]),
           ],
           PRODUCTVARIANT: [],
         }) as Record<string, unknown[]>;
@@ -240,6 +244,18 @@ function mockClient(overrides: Record<string, unknown> = {}) {
               }
             : // No product carries it — the real answer for an unused field.
               { nodes: [] };
+        }
+        return answer as T;
+      }
+
+      if (query.includes('HubTaxonomyNames')) {
+        const names = (overrides.categoryNames ?? {
+          'gid://shopify/TaxonomyCategory/ae-2-2-3-2': 'Gaming Cards',
+        }) as Record<string, string>;
+
+        const answer: Record<string, unknown> = {};
+        for (const [, alias, id] of query.matchAll(/(c\d+): node\(id: "([^"]+)"\)/g)) {
+          answer[alias!] = names[id!] ? { id, name: names[id!] } : null;
         }
         return answer as T;
       }
@@ -1398,6 +1414,61 @@ describe('reading the custom fields a shop models', () => {
   });
 });
 
+describe('conditional metafield definitions', () => {
+  /**
+   * The failure this exists for, seen live: `custom.game` applies only to
+   * "Gaming Cards", so a product created with no category has it rejected with
+   * "Owner subtype does not match the metafield definition's constraints" —
+   * which names neither the field nor the category.
+   */
+  it('reports the categories a restricted field requires, by name', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const game = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'game');
+
+    expect(game?.requiresCategory).toEqual([
+      { id: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2', label: 'Gaming Cards' },
+    ]);
+  });
+
+  /**
+   * A constraint yields the bare handle while every other surface speaks GIDs.
+   * Normalising in the connector is what lets the core hand the value straight
+   * back as `category` without knowing either spelling.
+   */
+  it('reports the id productCreate will accept, not the bare handle', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const game = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'game');
+    expect(game?.requiresCategory?.[0]?.id).toMatch(/^gid:\/\/shopify\/TaxonomyCategory\//);
+  });
+
+  it('leaves an unrestricted field with no category requirement', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const number = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'number');
+    expect(number?.requiresCategory).toBeUndefined();
+  });
+
+  it('keeps the id as the label when the taxonomy will not name it', async () => {
+    const { client } = mockClient({ categoryNames: {} });
+    const connector = createShopifyConnector({ client });
+
+    const game = (await connector.listMetafields!(ctx(), {})).find((f) => f.key === 'game');
+
+    // An unhelpful label beats dropping a category the field actually needs.
+    expect(game?.requiresCategory).toEqual([
+      {
+        id: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+        label: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+      },
+    ]);
+  });
+});
+
 describe('setting custom fields on a created listing', () => {
   const gameField = {
     owner: 'product' as const,
@@ -1468,6 +1539,58 @@ describe('setting custom fields on a created listing', () => {
     expect(variant?.metafields).toEqual([
       { namespace: 'custom', key: 'grade', type: 'metaobject_reference', value: gameField.value },
     ]);
+  });
+
+  it('sets the category on the product, so restricted fields are accepted', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), {
+      sku: CODE,
+      title: 'Pikachu ex',
+      category: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+      metafields: [gameField],
+    } satisfies CreateListingRequest);
+
+    const product = calls.find((c) => c.query.includes('CreateDraftProduct'))?.variables
+      ?.product as Record<string, unknown>;
+    expect(product.category).toBe('gid://shopify/TaxonomyCategory/ae-2-2-3-2');
+  });
+
+  /**
+   * Shopify's own words name neither the field nor the category, and reading
+   * them cost a live run to diagnose. The hint fires only in the case that
+   * actually explains it: metafields sent, no category set.
+   */
+  it('explains a constraint rejection instead of passing it through bare', async () => {
+    const { client } = mockClient({
+      createProductErrors: [
+        { message: "Owner subtype does not match the metafield definition's constraints." },
+      ],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.createListing!(ctx(), { sku: CODE, title: 'Pikachu ex', metafields: [gameField] }),
+    ).rejects.toThrow(/no category.*requiresCategory/s);
+  });
+
+  it('does not blame the category when one was set', async () => {
+    const { client } = mockClient({
+      createProductErrors: [
+        { message: "Owner subtype does not match the metafield definition's constraints." },
+      ],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.createListing!(ctx(), {
+        sku: CODE,
+        title: 'Pikachu ex',
+        category: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+        metafields: [gameField],
+      }),
+    ).rejects.toThrow(/^(?!.*requiresCategory).*Owner subtype/s);
   });
 
   it('sends nothing at all when no fields were chosen', async () => {

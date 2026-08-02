@@ -111,6 +111,15 @@ export interface CreateListingsRequest {
    * cards, the same scope a proposal run has.
    */
   metafields?: readonly ListingMetafield[];
+  /**
+   * The channel's own product classification, applied verbatim.
+   *
+   * Usually not a free choice: most of this store's metafield definitions are
+   * *conditional*, restricted to a category, so a product created without one
+   * has every metafield rejected. `ListingMetafieldDefinition.requiresCategory`
+   * carries the answer, and the screen fills this in from the fields chosen.
+   */
+  category?: string;
   vendor?: string;
   optionName?: string;
   actorUserId?: string;
@@ -247,6 +256,7 @@ export class ListingCreationService {
     // on Shopify it is a metaobject id — so validating or normalising it here
     // would be the core inventing an opinion it cannot hold.
     const metafields = request.metafields ?? [];
+    const category = request.category?.trim();
 
     const result: CreateListingsResult = { listings: [], problems: [] };
 
@@ -275,6 +285,7 @@ export class ListingCreationService {
             optionName,
             tags,
             metafields,
+            ...(category ? { category } : {}),
             ...(vendor ? { vendor } : {}),
           }),
         );
@@ -309,6 +320,7 @@ export class ListingCreationService {
       optionName: string;
       tags: readonly string[];
       metafields: readonly ListingMetafield[];
+      category?: string;
       vendor?: string;
     },
   ): Promise<CreatedListing> {
@@ -356,6 +368,7 @@ export class ListingCreationService {
     if (content.vendor) req.vendor = content.vendor;
     if (content.tags.length > 0) req.tags = content.tags;
     if (content.metafields.length > 0) req.metafields = content.metafields;
+    if (content.category) req.category = content.category;
     if (siblingListingId) req.siblingListingId = siblingListingId;
     // Only a price the allocation already carries. Creation does not price
     // anything, the same way it does not set a quantity — but sending a price

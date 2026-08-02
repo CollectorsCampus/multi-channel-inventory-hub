@@ -90,6 +90,18 @@ export class CreateListingsDto {
   @Type(() => ListingMetafieldDto)
   metafields?: ListingMetafieldDto[];
 
+  @ApiPropertyOptional({
+    example: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+    description:
+      "The channel's own product classification, applied verbatim. Usually required by the " +
+      'metafields: most definitions are conditional on a category, and a product without one ' +
+      'has every metafield rejected. Take it from requiresCategory on the chosen fields.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  category?: string;
+
   @ApiPropertyOptional({ description: 'Publisher or brand. Applied verbatim.' })
   @IsOptional()
   @IsString()

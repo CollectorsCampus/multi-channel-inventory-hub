@@ -974,6 +974,40 @@ names are not this store's vocabulary.
 product the operator already curated must not rewrite that product's description of
 itself.
 
+#### Conditional metafields need a category, and Shopify will not say so (2026-08-01)
+
+The first real attempt to set `custom.game` and `custom.set` **failed on all three items,
+creating nothing**, with:
+
+> Owner subtype does not match the metafield definition's constraints.
+
+That message names neither the field nor the cause. The cause: **almost every metafield
+definition on this store is _conditional_** — restricted to a product category. `custom.game`
+and `custom.set` apply only to `ae-2-2-3-2` ("Gaming Cards"); `shopify.rarity` to ten
+categories; only the Google and discovery ones are unrestricted. Every existing product
+carries a category and a newly created one carries none, so it satisfies no constraint at
+all.
+
+- **`ListingMetafieldDefinition.requiresCategory`** reports them, read from
+  `metafieldDefinitions.constraints`. Names come from the taxonomy in one aliased request,
+  because a constraint yields only `ae-2-2-3-2` and that tells an operator nothing.
+- **`CreateListingRequest.category`** carries the answer back, verbatim and opaque, exactly
+  like a metafield value. `toTaxonomyGid` normalises the bare handle a constraint gives
+  into the GID `productCreate` wants, so the core never learns either spelling.
+- **The screen does not ask when it does not have to.** It intersects the categories the
+  chosen fields require: one in common — the usual case — is applied silently and stated;
+  several offers a picker limited to those; **none is an error**, because two fields that
+  share no category cannot both apply to one product and the run would fail whatever was
+  picked.
+- **The connector explains the rejection** rather than passing it through bare, but only in
+  the case that accounts for it — metafields sent, no category set. Two tests pin both
+  directions, because a hint that fires when the category _was_ set would send the next
+  person down the wrong path.
+
+**Proven live.** One product, three variants, `category: Gaming Cards`,
+`custom.game: Pokémon`, `custom.set: ME02 Phantasmal Flames`, read back through the
+references.
+
 Two things the first live creations exposed, both now settled by the operator:
 
 - **Sealed product gets no variant option at all** — their call. Creation had given it
@@ -1909,19 +1943,16 @@ Worth stating plainly, because the README is optimistic by nature:
   after the re-stamp (above). Everything below `certain` is still what a live run of an
   _unlinked_ set returns: `possible · name-partial`, because store titles are prefixed
   and tcgcsv's are not. Nothing has changed about that half.
-- **Creation is proven live, on test rows** — three draft products created across two
-  runs, verified field by field, quantity pushed by the normal worker, then deleted
-  (above). What remains untried is the shape that matters for singles: **a second
-  condition of a card already listed**, i.e. the add-a-variant path with a real
-  `siblingListingId`. It is covered by tests, mutation-checked, and has never met Shopify.
-- **No metafield has been written to a real product.** `listMetafields` is proven live —
-  40 definitions, 6 vocabularies, read through the hub — but every product created so far
-  predates the writer, so `custom.game` and `custom.set` have never actually been set by
-  it. The read half is the half that could surprise; the write is one field on a mutation
-  that already works. Still: unproven is unproven.
-- **There are no real singles in the ledger at all.** Everything in it is sealed product
-  the store already carries, so nothing has exercised creation for stock somebody means
-  to sell.
+- **Creation is proven live in every shape it has**, on 2026-08-01: one product with
+  **three variants** — two conditions and a printing of Mega Charizard X ex — created in a
+  single run, so the `siblingListingId` add-a-variant path has now met Shopify twice over.
+  Quantities (2/1/1) arrived by the normal worker, `custom.game` and `custom.set` are set,
+  the category is Gaming Cards, and the draft is still on the store. Nothing about
+  creation is untried any more.
+- **The ledger now holds 12 real singles** across Pokémon, Magic and One Piece, five
+  conditions and two printings, ingested from tcgcsv on 2026-08-01 (Bloomburrow 472 cards,
+  Romance Dawn 163). Three of them are listed; the rest are test stock nobody means to
+  sell, so treat their quantities as fiction.
 - **The ingest has never run at catalogue scale.** #24 built the bulk path and 27 Pokémon
   sets (433 items) have been through it, but no full-game ingest — Magic is 453 groups —
   has ever run.

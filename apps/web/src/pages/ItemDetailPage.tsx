@@ -15,6 +15,7 @@ import {
 } from '../api/inventory';
 import { STOCK_MOVEMENT_REASONS } from '../constants';
 import { useSyncEvents } from '../api/sync';
+import { useChannels } from '../api/channels';
 
 /**
  * Item detail with the allocation editor (§7).
@@ -236,16 +237,59 @@ function QuantityControls({ ledger }: { ledger: Ledger }) {
   );
 }
 
+/**
+ * Where this item is for sale.
+ *
+ * Rewritten because the previous version asked the operator to **type a channel
+ * UUID by hand**, next to a hint saying channel configuration would arrive in
+ * Phase 3 — which shipped months earlier. It then labelled each allocation with
+ * that same UUID, so the one thing the panel had to answer, "which shop is
+ * this", was the one thing it did not say.
+ *
+ * ## Selling everything you have is the default, and the only visible mode
+ *
+ * `fixed` and `pooled` are a real distinction and the engine keeps both. But
+ * "pooled, uncapped" is what almost every allocation wants — offer whatever is
+ * on the shelf — and presenting the choice up front made an ordinary act
+ * (sell this on Shopify) look like a decision about partitioning strategy. The
+ * modes now live behind **Advanced**, phrased as what they do to the number a
+ * customer sees rather than as the internal vocabulary.
+ *
+ * Nothing about the engine changed: this screen still posts whole allocations
+ * and still validates by asking `/preview`, so what is shown is what the server
+ * will enforce.
+ */
 function AllocationEditor({ ledger }: { ledger: Ledger }) {
   const remove = useRemoveAllocation(ledger.inventoryItemId);
+  const channels = useChannels();
+
+  /**
+   * A channel's name, with its connector when the name alone is ambiguous.
+   *
+   * Two channels may legitimately share a display name — the store this was
+   * built for has a Shopify and a TCGPlayer channel both called "Collector's
+   * Campus", which is the seller's own name and the obvious thing to type
+   * twice. Showing the name alone makes the two rows indistinguishable, and
+   * appending the connector unconditionally clutters the common case where
+   * they are already distinct.
+   */
+  const named = (id: string) => {
+    const channel = channels.data?.find((c) => c.id === id);
+    if (!channel) return id;
+
+    const ambiguous =
+      (channels.data ?? []).filter((c) => c.displayName === channel.displayName).length > 1;
+
+    return ambiguous ? `${channel.displayName} (${channel.connectorKey})` : channel.displayName;
+  };
 
   return (
     <div className="panel">
-      <h2>Channel allocations</h2>
+      <h2>Selling channels</h2>
 
       {ledger.allocations.length === 0 && (
         <p className="muted">
-          Not listed anywhere. All {ledger.quantityOnHand} unit(s) sit unallocated.
+          Not for sale anywhere. All {ledger.quantityOnHand} unit(s) sit unallocated.
         </p>
       )}
 
@@ -254,6 +298,7 @@ function AllocationEditor({ ledger }: { ledger: Ledger }) {
           key={allocation.id}
           ledger={ledger}
           allocation={allocation}
+          channelName={named(allocation.channelInstanceId)}
           onRemove={() => remove.mutate(allocation.channelInstanceId)}
         />
       ))}
@@ -267,10 +312,12 @@ function AllocationEditor({ ledger }: { ledger: Ledger }) {
 function AllocationRow({
   ledger,
   allocation,
+  channelName,
   onRemove,
 }: {
   ledger: Ledger;
   allocation: Allocation;
+  channelName: string;
   onRemove: () => void;
 }) {
   const save = useUpsertAllocation(ledger.inventoryItemId);
@@ -322,11 +369,20 @@ function AllocationRow({
   return (
     <div className="allocation">
       <div className="allocation-head">
-        <code>{allocation.channelInstanceId}</code>
-        <span className={`chip chip-${allocation.mode}`}>
-          listing {allocation.desiredListedQuantity}
-        </span>
+        {/* The channel's name, not its id. This is the question the panel
+            exists to answer and it used to print a UUID instead. */}
+        <strong>{channelName}</strong>
+        <span className="chip">showing {allocation.desiredListedQuantity}</span>
         <span className="muted">{allocation.status}</span>
+        {/* Whether a listing is actually attached is the difference between an
+            allocation that syncs and one that silently never will. */}
+        {allocation.externalListingId ? (
+          <span className="muted" title={allocation.externalListingId}>
+            · linked
+          </span>
+        ) : (
+          <span className="muted">· not linked to a listing yet</span>
+        )}
       </div>
 
       <form
@@ -342,56 +398,81 @@ function AllocationRow({
           });
         }}
       >
-        <select
-          value={mode}
-          onChange={(e) => setMode(e.target.value as AllocationMode)}
-          aria-label="Allocation mode"
-        >
-          <option value="fixed">fixed — exclusive partition</option>
-          <option value="pooled">pooled — mirrors the pool</option>
-        </select>
-
-        {mode === 'fixed' ? (
-          <input
-            type="number"
-            min={0}
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            aria-label="Partition size"
-          />
-        ) : (
-          <input
-            type="number"
-            min={0}
-            value={cap}
-            placeholder="no cap"
-            onChange={(e) => setCap(e.target.value)}
-            aria-label="Maximum quantity, blank for uncapped"
-          />
-        )}
-
+        <label htmlFor={`price-${allocation.id}`}>Price</label>
         <input
+          id={`price-${allocation.id}`}
           type="number"
           step="0.01"
           min={0}
           value={price}
-          placeholder="price"
+          placeholder="not set"
           onChange={(e) => setPrice(e.target.value)}
-          aria-label="Price"
         />
+        {/* The currency was missing entirely, so the box could as easily have
+            been read as cents. It comes from the allocation, not a constant. */}
+        <span className="muted">{allocation.currency}</span>
 
         <button type="submit" disabled={save.isPending || blocked}>
           Save
         </button>
         <button type="button" className="ghost" onClick={onRemove}>
-          Remove
+          Stop selling here
         </button>
       </form>
 
+      <details className="quiet-details">
+        <summary>Advanced — how much of the stock this channel may show</summary>
+
+        <div className="inline-form">
+          <select
+            value={mode}
+            onChange={(e) => setMode(e.target.value as AllocationMode)}
+            aria-label="How this channel draws from stock"
+          >
+            <option value="pooled">Show whatever is in stock</option>
+            <option value="fixed">Reserve a fixed number for this channel</option>
+          </select>
+
+          {mode === 'fixed' ? (
+            <>
+              <label htmlFor={`qty-${allocation.id}`}>Units reserved</label>
+              <input
+                id={`qty-${allocation.id}`}
+                type="number"
+                min={0}
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+              />
+            </>
+          ) : (
+            <>
+              <label htmlFor={`cap-${allocation.id}`}>Never show more than</label>
+              <input
+                id={`cap-${allocation.id}`}
+                type="number"
+                min={0}
+                value={cap}
+                placeholder="no limit"
+                onChange={(e) => setCap(e.target.value)}
+              />
+            </>
+          )}
+        </div>
+
+        <p className="field-hint">
+          {mode === 'pooled'
+            ? 'Shared: this channel and every other pooled one all offer the same stock, so ' +
+              'whichever sells first takes it. A limit caps what is shown, not what is held.'
+            : 'Exclusive: these units are held for this channel and no other channel can offer ' +
+              'them, even when nothing else is selling.'}{' '}
+          Both changes take effect on <strong>Save</strong> above.
+        </p>
+      </details>
+
       {preview.data && !blocked && (
         <p className="muted">
-          Would list <strong>{preview.data.listed[allocation.channelInstanceId] ?? 0}</strong> ·
-          pool becomes <strong>{preview.data.pool}</strong>
+          Would show <strong>{preview.data.listed[allocation.channelInstanceId] ?? 0}</strong> here
+          · shared pool becomes <strong>{preview.data.pool}</strong>
         </p>
       )}
       {issues.map((issue) => (
@@ -404,47 +485,82 @@ function AllocationRow({
   );
 }
 
+/**
+ * Put this item on another channel.
+ *
+ * Previously a text box for a channel **UUID**, which had to be found by
+ * reading the database or the network tab, beside a note promising channel
+ * management "in Phase 3" — a phase that had shipped. It is a dropdown of the
+ * channels that exist, and only the ones this item is not already on.
+ *
+ * New allocations are pooled and uncapped, which is the sensible default: offer
+ * whatever is on the shelf. Anything else is one disclosure away on the row it
+ * creates, so the common case is a single click.
+ */
 function AddAllocation({ ledger }: { ledger: Ledger }) {
   const save = useUpsertAllocation(ledger.inventoryItemId);
+  const channels = useChannels();
   const [channelInstanceId, setChannelInstanceId] = useState('');
-  const [mode, setMode] = useState<AllocationMode>('pooled');
+
+  const taken = new Set(ledger.allocations.map((a) => a.channelInstanceId));
+  // Offering a channel the item is already on would produce an "edit" wearing
+  // an "add" label, and silently overwrite the settings on the row above.
+  const available = (channels.data ?? []).filter((c) => c.enabled && !taken.has(c.id));
+
+  if (channels.isError) {
+    return <p className="field-hint">Channels could not be loaded, so none can be added here.</p>;
+  }
+
+  if (channels.data && available.length === 0) {
+    return (
+      <p className="field-hint">
+        {taken.size > 0
+          ? 'This item is on every enabled channel.'
+          : 'No channels are connected yet. Connect one first.'}{' '}
+        <Link to="/channels">Channels →</Link>
+      </p>
+    );
+  }
 
   return (
     <form
       className="inline-form"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!channelInstanceId.trim()) return;
+        if (!channelInstanceId) return;
         save.mutate(
           {
-            channelInstanceId: channelInstanceId.trim(),
-            mode,
-            quantityAllocated: mode === 'fixed' ? 0 : null,
+            channelInstanceId,
+            mode: 'pooled',
+            quantityAllocated: null,
             maxQuantity: null,
           },
           { onSuccess: () => setChannelInstanceId('') },
         );
       }}
     >
-      <input
-        placeholder="Channel instance id"
+      <label htmlFor="add-channel">Also sell on</label>
+      <select
+        id="add-channel"
         value={channelInstanceId}
         onChange={(e) => setChannelInstanceId(e.target.value)}
-        aria-label="Channel instance id"
-      />
-      <select
-        value={mode}
-        onChange={(e) => setMode(e.target.value as AllocationMode)}
-        aria-label="Mode for the new allocation"
       >
-        <option value="pooled">pooled</option>
-        <option value="fixed">fixed</option>
+        <option value="">Choose a channel…</option>
+        {available.map((channel) => (
+          <option key={channel.id} value={channel.id}>
+            {/* Always qualified here: the list is short, the reader is choosing
+                between them, and two channels sharing a name is normal — it is
+                usually the seller's own business name. */}
+            {channel.displayName} ({channel.connectorKey})
+          </option>
+        ))}
       </select>
-      <button type="submit" disabled={save.isPending}>
-        Add channel
+
+      <button type="submit" disabled={save.isPending || channelInstanceId === ''}>
+        Add
       </button>
-      {/* Channel management arrives in Phase 3; until then ids are entered by hand. */}
-      <span className="muted">Channel configuration lands in Phase 3.</span>
+
+      {save.isError && <p className="error">{(save.error as Error).message}</p>}
     </form>
   );
 }

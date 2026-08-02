@@ -19,6 +19,14 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 declare module 'fastify' {
   interface FastifyRequest {
     principal?: AuthenticatedPrincipal;
+    /**
+     * The CSRF token of the session that authenticated this request.
+     *
+     * Attached so `/auth/me` can re-issue the readable cookie and heal a
+     * browser whose cookie has drifted from its session. Absent for a Bearer
+     * key, which carries no cookie and needs no token.
+     */
+    sessionCsrfToken?: string;
   }
 }
 
@@ -75,11 +83,16 @@ export class AuthGuard implements CanActivate {
     const resolved = await this.sessions.resolve(token);
     if (!resolved) return null;
 
+    request.sessionCsrfToken = resolved.csrfToken;
+
     if (UNSAFE_METHODS.has(request.method)) {
       const presented = request.headers[CSRF_HEADER];
       const value = Array.isArray(presented) ? presented[0] : presented;
       if (!SessionService.csrfMatches(resolved.csrfToken, value)) {
-        throw new ForbiddenException('Missing or invalid CSRF token');
+        throw new ForbiddenException(
+          'Missing or invalid CSRF token. Reload the page — the browser will pick up a fresh ' +
+            'one — and sign in again if that does not help.',
+        );
       }
     }
 

@@ -1274,8 +1274,10 @@ outside `connector-shopify` changed except the fields an operator fills in.
   failed with a version error that looks exactly like a credentials problem.
 
 Scopes the connector actually needs, derived from its own documents:
-`read_products,write_products,read_inventory,write_inventory,read_locations,read_orders`.
-Not `write_orders` — §6 is explicit that we never cancel or modify an order.
+`read_products,write_products,read_inventory,write_inventory,read_locations,read_orders`,
+plus **`read_metaobjects`** since `listing.metafields` (#37) — see that section for why it is
+the only extra one. Not `write_orders` — §6 is explicit that we never cancel or modify an
+order.
 
 **Confirmed against the live store (2026-07-29).** A read-only probe drove the connector's
 own client and token source against a real shop. Everything passed:

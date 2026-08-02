@@ -3,6 +3,110 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.3.0] — 2026-08-02
+
+The release that lets the hub **put a card on a storefront the store does not carry yet**.
+0.2.0 could link the hub to listings that already existed; until now, a card the shop had
+never sold had to be created by hand in the Shopify admin before anything here could touch
+it. That path is now built end to end and has been run against a real store — selection,
+variant grouping, an identifier that survives a rebuild, the store's own tags and custom
+fields, and the product category those fields turn out to require.
+
+Also: the local catalogue became real rather than a fetch-on-demand prototype, a real
+identity provider signed a user in for the first time, and the UI got its first session of
+actual use, which found five defects that reading the markup never would.
+
+### Added
+
+- **Listing creation.** `POST /channels/:id/listings` and a `/list` screen: pick ledger
+  items the channel does not carry and create them there. **Selected, never automatic** — a
+  1,333-row import must not become 1,333 storefront products, so this is reachable from
+  nothing else, has no "select all", and a run over 50 items is refused rather than
+  truncated. Products are created as **drafts**; creation sets no quantity, so stock still
+  arrives by the ordinary push path and there is exactly one route from the ledger to a
+  platform's numbers. A second condition of a card already listed becomes a **variant** of
+  it, grouped by catalogue item.
+- **`listing.create`** capability and a Shopify implementation. Distinct from `listing.push`,
+  which syncs a listing that exists and carries no title, image or vendor with which to
+  invent one; here the content is an input the operator supplies. Idempotent on the SKU, so a
+  failure after the platform call is recoverable rather than a duplicate product.
+- **A composite hub SKU code**, and a `hub-sku` match reason ranked `certain`.
+  `tcgcsv:662182:NM:1ST_EDITION_HOLOFOIL:EN` — source, id, condition, printing, language —
+  written into the channel's seller-SKU field. 0.2.0 wrote a bare product id there, which is
+  right for sealed product and wrong for singles: a card in Near Mint and the same card
+  Damaged share it, so an exact-match test would have equated them. One format for both,
+  parsed strictly because it is read back off other people's listings.
+- **`listing.tags`** and **`listing.metafields`** capabilities, so a created product carries
+  the store's own vocabulary. Neither value is ever derived: catalogue names are not a
+  store's tags (`Pokemon` against `Pokémon`, `Magic` against `Magic: The Gathering`), and on
+  Shopify a custom field's value is a metaobject reference that means nothing outside that
+  one shop. The operator picks; the hub applies verbatim. A field the connector cannot read
+  is reported as **unavailable with a reason** rather than as an empty list, because a
+  missing scope and a store with no entries otherwise look identical.
+- **Bulk catalogue ingest**, and a local catalogue that is read first. `listSets` and
+  `fetchSet` are new optional `CatalogSource` methods — declared together or not at all —
+  with `GET /catalog/local/sets`, `GET /catalog/local/search` and a `/catalog` screen for
+  browsing and running an ingest. Matching now draws candidates from the local catalogue
+  where a set has been ingested and falls back to the source where it has not, which is
+  worth most exactly where a remote source is least willing to help: a proposal run needs a
+  whole set at once. Prices are deliberately **not** stored — identity is durable, prices are
+  not.
+- **`OIDC_ALLOWED_ENDPOINT_ORIGINS`**, naming extra origins an issuer's endpoints may live
+  on. Empty by default and most providers need it empty; Google needs it because its token
+  and JWKS endpoints are not on `accounts.google.com`.
+- Inventory browsing gained **rows per page**, a **channel filter** including "on no
+  channel" — the question behind "what have I not listed yet" — a **game filter** with
+  counts from what is actually held, and optional card art.
+
+### Fixed
+
+- **A `name-partial` tie could swamp a whole set.** Containment fires in either direction, so
+  a card literally named "Winterspell" was contained by every sealed listing in the
+  Winterspell set and tied with the correct product on all of them — every proposal came back
+  ambiguous. Candidates now carry how much of the name matched and sort by it. This is not a
+  loosening of the never-resolve-a-tie rule: names of equal length still tie exactly, so two
+  reprints behave as before.
+- **Creating a product with custom fields failed with a message naming neither the field nor
+  the cause.** Almost every metafield definition on a real store is _conditional_ — restricted
+  to a product category — and a newly created product has none, so it satisfies no constraint
+  at all. Definitions now report the categories they require, creation carries the answer, and
+  the screen only asks when the chosen fields do not agree on one.
+- **A form laid its controls out one per line.** A bare `form { flex-direction: column }` was
+  overriding the shared filter bar, so identical markup in a `<form>` and a `<div>` looked
+  unrelated for no visible reason.
+- **Two-line table cells ran together** — "151 Booster BundleSV: Scarlet & Violet 151" — on the
+  match, catalogue and listing screens. They had only ever stacked by accident, inside a
+  container that happened to be a flex column.
+- **The intake screen's Game field never rendered**, so tcgcsv — which refuses to search
+  without a game — could not be given one, and every intake search reported it unavailable.
+- **A drifted CSRF cookie was unrecoverable.** It was issued once at login, so a browser
+  holding one from an earlier session failed every mutation with 403 while every read
+  succeeded. `/auth/me` now re-issues it, so a reload repairs it.
+- **The item detail page never said what the item was**, returning allocations and quantities
+  and no identity.
+
+### Changed
+
+- `zod` to 4. Its single consumer is the boot-time config validator, which had no tests at
+  all; those were written first, against the old version, then the upgrade ran. Three
+  environment variables are booleans derived from strings and two of them fail _towards less
+  safety_ if that coercion degrades.
+- OIDC endpoint pinning is now an allow-list rather than an absolute same-origin rule. The
+  property that mattered survives — the operator decides which hosts may receive the client
+  secret, not the discovery document.
+
+### Notes
+
+- **No schema changes.** The four migrations are unchanged since 0.1.0, so upgrading applies
+  nothing.
+- **The SKU write is still opt-in and still overwrites.** If you used 0.2.0's `listing.sku`,
+  those listings carry a bare product id; re-running a confirmation with the option set
+  replaces them with the composite code. Back up the field first — it may mean something to
+  its owner.
+- **`read_metaobjects` is a new Shopify scope**, needed only for `listing.metafields`. Without
+  it Shopify answers `null` with no error, which is why an unreadable field reports why rather
+  than looking empty. Granting a new scope needs the app **reinstalled**, not merely released.
+
 ## [0.2.0] — 2026-07-30
 
 The release that makes an **existing storefront usable**. Until now the only route from a
@@ -193,6 +297,7 @@ verified against real accounts rather than only against mocks.
 - **A wrong credential is not distinguishable from a transient failure** in the alert
   inbox; both surface as `sync_failure`.
 
+[0.3.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.3.0
 [0.2.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.2.0
 [0.1.1]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.1.1
 [0.1.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.1.0

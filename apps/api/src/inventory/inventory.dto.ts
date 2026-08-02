@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -45,6 +45,19 @@ export class ListInventoryQueryDto {
   @IsOptional()
   @IsString()
   channelInstanceId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Only items on no channel at all — "what have I not listed yet". Ignored when ' +
+      'channelInstanceId is also given, since the two ask opposite questions.',
+  })
+  @IsOptional()
+  // `@Type(() => Boolean)` would be wrong here: every non-empty query string is
+  // truthy, so `?unlisted=false` would filter. An explicit comparison is the
+  // only thing that reads a query param as the boolean it looks like.
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  unlisted?: boolean;
 
   @ApiPropertyOptional({ description: 'Only items with stock in no fixed partition.' })
   @IsOptional()

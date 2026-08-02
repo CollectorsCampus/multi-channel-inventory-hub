@@ -682,6 +682,40 @@ button.sort {
  * "151 Booster BundleSV: Scarlet & Violet 151" — which read as a typo in the
  * data rather than a missing style.
  */
+.cell-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+/**
+ * A fixed box the art sits inside, whatever shape it is.
+ *
+ * Sized here rather than on the image so a row is the same height before the
+ * picture arrives and after — a table that reflows as a hundred lazy images
+ * land is unreadable while it settles. Cards are portrait and sealed product is
+ * not, so `contain` rather than `cover`: a booster box cropped to a card's
+ * aspect ratio is unrecognisable.
+ */
+.thumb {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .cell-title {
   display: block;
   font-weight: 600;

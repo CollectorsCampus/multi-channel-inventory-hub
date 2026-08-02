@@ -33,6 +33,8 @@ export type InventoryRow = Ledger & {
   name: string;
   game: string | null;
   setName: string | null;
+  /** Catalogue art, where the source had any. Null for a hand-entered item. */
+  imageUrl: string | null;
   condition: string;
   printing: string;
   language: string;
@@ -67,6 +69,8 @@ export interface InventoryFilters {
   game?: string;
   condition?: string;
   channelInstanceId?: string;
+  /** Items on no channel at all. */
+  unlisted?: boolean;
   page?: number;
   pageSize?: number;
   sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';

@@ -129,6 +129,8 @@ export interface InventoryQuery {
   game?: string;
   condition?: string;
   channelInstanceId?: string;
+  /** Items on no channel at all. Mutually sensible with `channelInstanceId`, not with it. */
+  unlisted?: boolean;
   hasUnallocated?: boolean;
   page?: number;
   pageSize?: number;
@@ -140,6 +142,7 @@ export type InventoryRow = LedgerSnapshot & {
   name: string;
   game: string | null;
   setName: string | null;
+  imageUrl: string | null;
   condition: string;
   printing: string;
   language: string;
@@ -305,6 +308,11 @@ export class InventoryService {
       ...(query.channelInstanceId
         ? { allocations: { some: { channelInstanceId: query.channelInstanceId } } }
         : {}),
+      // "On no channel at all" — the question behind "what have I not listed
+      // yet", which is the whole input to the creation screen. Unlike
+      // `hasUnallocated` below this one *is* expressible in SQL, so it narrows
+      // the result set rather than the current page.
+      ...(query.unlisted ? { allocations: { none: {} } } : {}),
     };
 
     const orderBy = buildOrderBy(query.sortBy ?? 'name', query.sortDir ?? 'asc');
@@ -325,6 +333,10 @@ export class InventoryService {
       name: row.sku.catalogItem.name,
       game: row.sku.catalogItem.game,
       setName: row.sku.catalogItem.setName,
+      // Already loaded with the catalog item, so carrying it costs nothing
+      // here. Whether a browser fetches a hundred thumbnails is the browser's
+      // decision, not this endpoint's.
+      imageUrl: row.sku.catalogItem.imageUrl,
       condition: row.sku.condition,
       printing: row.sku.printing,
       language: row.sku.language,

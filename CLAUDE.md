@@ -366,8 +366,10 @@ both measured on 2026-07-30:
 1. **Nothing populates it.** `CatalogCandidate` has no barcode field, and `toTarget` never
    sets `MatchTarget.barcode`, so the `barcode` branch of `bestReasonFor` cannot fire for a
    catalogue-sourced target. It is currently dead code.
-2. **tcgcsv's `extUPC` must not be plumbed into it.** The column does exist and is carried
-   through in `extended`, which makes wiring it up look like a free win. It is not.
+2. **tcgcsv's `extUPC` must not be plumbed into it.** The column exists and is parsed onto
+   `TcgcsvProductRow.extended`, which makes wiring it up look like a free win. It is not —
+   and it is not free either: `toCandidates` drops `extended`, `CatalogCandidate` has no
+   field for it and `CatalogItem` has no column, so "carried through" stops at the row.
    Measured across five real Pokémon sets: only **74 of 2112 rows** carry one (3.5%, sealed
    only), and **the values are not unique** — `196214136113` is on both "Mega Evolution
    Booster Pack" and "Mega Evolution Booster **Box Case**", and `196214143340` on both the
@@ -1023,6 +1025,36 @@ Also confirmed here: the 1-Pack blisters are **separate single-variant products*
 `[Drifloon]` and `[Drifblim]` still share seller SKU `10-10053-110` — the old non-unique
 scheme, exactly as recorded. Where the hub has re-stamped, the ambiguity is gone: the
 Psyduck and Golduck 3-packs now hold `tcgcsv:644357` and `tcgcsv:644356`.
+
+#### Collector numbers in a title: free for Pokémon, a migration for anything else
+
+Asked 2026-08-01, after the first real singles went into the ledger. The operator wants
+the number in a created product's title so it is searchable.
+
+**Pokémon already has it and needs no code at all**, because tcgcsv puts the number in the
+product name: `Mega Charizard X ex - 013/094`. With the set appended the title reads
+"Mega Charizard X ex - 013/094 - ME02: Phantasmal Flames". Magic and One Piece names carry
+no number — `Mabel, Heir to Cragflame`, `Nami` — so theirs cannot.
+
+**Doing it for the others is not a small change**, which is worth writing down because the
+data looks tantalisingly close to hand. `TcgcsvProductRow.extended.extNumber` is parsed and
+sits right there, and every layer above drops it:
+
+| Layer              | Holds a number?                                  |
+| ------------------ | ------------------------------------------------ |
+| `TcgcsvProductRow` | **yes**, `extended.extNumber`                    |
+| `toCandidates`     | no — `extended` is not copied onto the candidate |
+| `CatalogCandidate` | no field                                         |
+| `CatalogItem`      | no column                                        |
+
+So it is an SDK field, a tcgcsv change, **a schema migration** (dialect-neutral, rule 2),
+intake and ingest plumbing, `titleFor`, and a re-ingest to backfill the ~1,100 items
+already stored. An hour or so, not a line. Deferred on the operator's own instruction —
+"let's not spend a lot of time on it now if it's not something very simple".
+
+Note if it is ever picked up: **some One Piece names already carry a parenthesised number**
+(`Donquixote Doflamingo (060)`) but only where tcgcsv needed to disambiguate a repeated
+name, so it is not a substitute for the real field.
 
 #### Non-TCG goods need no "other" mode — the ledger already holds them
 

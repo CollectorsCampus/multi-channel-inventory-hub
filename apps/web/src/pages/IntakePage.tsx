@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   useCatalogSearch,
@@ -11,6 +11,7 @@ import { formatPrice } from '../api/inventory';
 import { useChannels, type Channel } from '../api/channels';
 import { describeOutcome, useIntakeAndList } from '../api/listings';
 import { SKU_CONDITIONS } from '../constants';
+import { enlargedImageUrl } from '../cardImage';
 
 /**
  * Intake: search the catalog, pick a printing, add stock (§7).
@@ -25,6 +26,12 @@ export function IntakePage() {
   const [game, setGame] = useState('');
   const [setName, setSetName] = useState('');
   const [selected, setSelected] = useState<CatalogCandidate | null>(null);
+  /**
+   * Kept apart from `selected` on purpose: examining a card is how you decide
+   * whether to pick it, so looking must not commit you to it. Closing the
+   * viewer leaves the selection exactly as it was.
+   */
+  const [zoomed, setZoomed] = useState<CatalogCandidate | null>(null);
 
   // Catalog sources sit behind someone else's rate limits; do not query them
   // on every keystroke.
@@ -177,15 +184,33 @@ export function IntakePage() {
 
         <ul className="candidates">
           {search.data?.candidates.map((candidate) => (
-            <li key={`${candidate.sourceKey}:${candidate.sourceId}`}>
+            <li key={`${candidate.sourceKey}:${candidate.sourceId}`} className="candidate-row">
+              {/* The art is its own button, outside the one that selects.
+                  Nesting them would be invalid HTML and would give the row two
+                  competing activations for one keyboard Enter — and the whole
+                  point is that looking closely and choosing are different acts.
+                  A candidate with no art gets a spacer so the rows still line
+                  up; a ragged left edge in a list you are scanning is worse
+                  than an empty box. */}
+              {candidate.imageUrl ? (
+                <button
+                  type="button"
+                  className="candidate-art"
+                  onClick={() => setZoomed(candidate)}
+                  aria-label={`Enlarge the picture of ${candidate.name}`}
+                  title="Click to enlarge"
+                >
+                  <img src={candidate.imageUrl} alt="" width={44} height={61} loading="lazy" />
+                </button>
+              ) : (
+                <span className="candidate-art candidate-art-empty" aria-hidden="true" />
+              )}
+
               <button
                 type="button"
                 className={`candidate${selected?.sourceId === candidate.sourceId ? ' candidate-selected' : ''}`}
                 onClick={() => setSelected(candidate)}
               >
-                {candidate.imageUrl && (
-                  <img src={candidate.imageUrl} alt="" width={44} height={61} loading="lazy" />
-                )}
                 <span className="candidate-body">
                   <span className="cell-title">{candidate.name}</span>
                   <span className="cell-sub">
@@ -209,11 +234,138 @@ export function IntakePage() {
       </div>
 
       {selected && <IntakeForm candidate={selected} onDone={() => setSelected(null)} />}
+
+      {zoomed && <CardViewer candidate={zoomed} onClose={() => setZoomed(null)} />}
     </section>
   );
 }
 
-function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone: () => void }) {
+/**
+ * The card, big enough to actually check — and the place you add it from.
+ *
+ * The reason this exists: at 44px you can tell a card from a booster box and
+ * nothing else, and the question being asked is "is this the right printing" —
+ * which is decided by art, set symbol and collector number.
+ *
+ * ## The form is here, not just a "choose this" button
+ *
+ * Looking at the card and saying what you have are the *same* decision: the art
+ * is how you tell 013/094 from 130/094, and the condition and printing you then
+ * enter describe that exact copy. Sending the operator back to a form further
+ * down the page to type them would put the picture out of view at the moment it
+ * is most needed.
+ *
+ * It is the **same** `IntakeForm` the page renders below, not a second copy —
+ * two forms writing stock would eventually disagree about defaults, validation
+ * or which channel to list on.
+ *
+ * ## Resolution is the whole feature
+ *
+ * Showing the *stored* URL larger would be pointless for most of the
+ * catalogue: tcgcsv's images are 200 pixels wide, and scaling one to card size
+ * is a blur that answers nothing. `enlargedImageUrl` swaps in a bigger variant
+ * where the source publishes one, and `onError` falls back to the stored URL —
+ * so an unknown host or a changed CDN degrades to what would have been shown
+ * anyway rather than to a broken image.
+ */
+function CardViewer({ candidate, onClose }: { candidate: CatalogCandidate; onClose: () => void }) {
+  const [src, setSrc] = useState(() => enlargedImageUrl(candidate.imageUrl) ?? candidate.imageUrl);
+  const closeButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    setSrc(enlargedImageUrl(candidate.imageUrl) ?? candidate.imageUrl);
+  }, [candidate.imageUrl]);
+
+  // Escape closes, and focus moves into the overlay so that Escape reaches it
+  // and Tab does not wander back into the list behind.
+  //
+  // Focus is then handed back to whatever opened this. Without that it drops to
+  // <body>, and a keyboard user comparing four printings of one card loses
+  // their place in the list every time they close the viewer — which is exactly
+  // the task the viewer exists for.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    closeButton.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      // Only if it is still in the document: choosing this card replaces the
+      // list, and focusing a detached node silently does nothing.
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="viewer-backdrop"
+      role="presentation"
+      // Only a click on the backdrop itself, never one that bubbled up from the
+      // picture — otherwise looking closely at the card dismisses it.
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="viewer" role="dialog" aria-modal="true" aria-label={candidate.name}>
+        <img
+          className="viewer-art"
+          src={src ?? undefined}
+          alt={candidate.name}
+          onError={() => {
+            // The enlarged variant did not resolve. Fall back once, to the URL
+            // the catalogue actually stores.
+            if (src !== candidate.imageUrl) setSrc(candidate.imageUrl);
+          }}
+        />
+
+        <div className="viewer-meta">
+          <h3>{candidate.name}</h3>
+          <p className="muted">
+            {[candidate.setName, candidate.game].filter(Boolean).join(' · ') || 'No set recorded'}
+          </p>
+          {candidate.marketPrice !== undefined && (
+            <p className="muted">Market {formatPrice(candidate.marketPrice)}</p>
+          )}
+
+          {/* Stays open after a successful add, deliberately: a playset is
+              often several conditions of one card, and closing would mean
+              finding the same row again for each. Close is explicit. */}
+          <IntakeForm candidate={candidate} onDone={onClose} embedded closeRef={closeButton} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Say what you have, and put it in the ledger.
+ *
+ * Rendered in two places and deliberately one component: below the results when
+ * a row is selected, and inside the enlarged card. Two copies would drift on
+ * defaults, validation or which channel to list on, and the drift would show up
+ * as stock added one way behaving differently from stock added the other.
+ *
+ * `embedded` drops the panel chrome — inside a dialog the card's own heading is
+ * already the title, and a second `<h2>` repeating the name is noise. It also
+ * stacks the fields, because the dialog column is far narrower than the panel
+ * and a wrapping row there breaks into unreadable fragments.
+ */
+function IntakeForm({
+  candidate,
+  onDone,
+  embedded = false,
+  closeRef,
+}: {
+  candidate: CatalogCandidate;
+  onDone: () => void;
+  embedded?: boolean;
+  /** So the dialog can put initial focus on a control inside its own form. */
+  closeRef?: Ref<HTMLButtonElement>;
+}) {
   const printings = candidate.printings ?? ['NORMAL'];
 
   /**
@@ -266,9 +418,17 @@ function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone
 
   const missingTcgplayer = !candidate.externalIds.tcgplayer;
 
+  /**
+   * Both copies of this form can be on screen at once — a row is selected below
+   * while the enlarged card is open above — so the ids must not collide.
+   * Duplicate ids do not fail loudly: the label just focuses whichever control
+   * the document happens to reach first, which is the one behind the dialog.
+   */
+  const fieldId = (name: string) => (embedded ? `dialog-${name}` : name);
+
   return (
-    <div className="panel">
-      <h2>Add {candidate.name}</h2>
+    <div className={embedded ? 'embedded-intake' : 'panel'}>
+      {!embedded && <h2>Add {candidate.name}</h2>}
 
       {/* ADR 0002: coverage is incomplete, and this matters later when matching
           a TCGPlayer listing back to this item. */}
@@ -280,7 +440,7 @@ function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone
       )}
 
       <form
-        className="inline-form"
+        className={embedded ? 'stacked-form' : 'inline-form'}
         onSubmit={(e) => {
           e.preventDefault();
           const body = {
@@ -301,8 +461,12 @@ function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone
           else intake.mutate(body, done);
         }}
       >
-        <label htmlFor="condition">Condition</label>
-        <select id="condition" value={condition} onChange={(e) => setCondition(e.target.value)}>
+        <label htmlFor={fieldId('condition')}>Condition</label>
+        <select
+          id={fieldId('condition')}
+          value={condition}
+          onChange={(e) => setCondition(e.target.value)}
+        >
           {SKU_CONDITIONS.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -310,8 +474,12 @@ function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone
           ))}
         </select>
 
-        <label htmlFor="printing">Printing</label>
-        <select id="printing" value={printing} onChange={(e) => setPrinting(e.target.value)}>
+        <label htmlFor={fieldId('printing')}>Printing</label>
+        <select
+          id={fieldId('printing')}
+          value={printing}
+          onChange={(e) => setPrinting(e.target.value)}
+        >
           {printings.map((p) => (
             <option key={p} value={p}>
               {p}
@@ -319,18 +487,18 @@ function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone
           ))}
         </select>
 
-        <label htmlFor="quantity">Quantity</label>
+        <label htmlFor={fieldId('quantity')}>Quantity</label>
         <input
-          id="quantity"
+          id={fieldId('quantity')}
           type="number"
           min={1}
           value={quantity}
           onChange={(e) => setQuantity(e.target.value)}
         />
 
-        <label htmlFor="cost">Unit cost</label>
+        <label htmlFor={fieldId('cost')}>Unit cost</label>
         <input
-          id="cost"
+          id={fieldId('cost')}
           type="number"
           step="0.01"
           min={0}
@@ -341,8 +509,12 @@ function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone
 
         {listable.length > 0 && (
           <>
-            <label htmlFor="list-on">List on</label>
-            <select id="list-on" value={listOn} onChange={(e) => setListOn(e.target.value)}>
+            <label htmlFor={fieldId('list-on')}>List on</label>
+            <select
+              id={fieldId('list-on')}
+              value={listOn}
+              onChange={(e) => setListOn(e.target.value)}
+            >
               <option value="">Nowhere — just add to inventory</option>
               {listable.map((channel) => (
                 <option key={channel.id} value={channel.id}>
@@ -353,12 +525,16 @@ function IntakeForm({ candidate, onDone }: { candidate: CatalogCandidate; onDone
           </>
         )}
 
-        <button type="submit" disabled={pending}>
-          {pending ? 'Adding…' : listOn ? 'Add and list' : 'Add to inventory'}
-        </button>
-        <button type="button" className="ghost" onClick={onDone}>
-          Done
-        </button>
+        <div className="form-actions">
+          <button type="submit" disabled={pending}>
+            {pending ? 'Adding…' : listOn ? 'Add and list' : 'Add to inventory'}
+          </button>
+          {/* "Close" in the dialog, "Done" in the panel: the same action, but in
+              a dialog "Done" reads as "finish and save" and this saves nothing. */}
+          <button type="button" className="ghost" onClick={onDone} ref={closeRef}>
+            {embedded ? 'Close' : 'Done'}
+          </button>
+        </div>
       </form>
 
       {/* The defaults are shown rather than described, and that is the point.

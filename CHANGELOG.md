@@ -3,6 +3,78 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.4.0] — 2026-08-03
+
+The release that makes the daily loop usable: **add a card and put it on the storefront in
+one action**, with the channel deciding its tags from rules you set once. It also carries a
+fix for a defect that has been in every published image since 0.1.0 — outbound sync stopped
+after the first push per item, silently.
+
+### Fixed
+
+- **An allocation pushed to a channel once and then never again.** The outbound queue reuses
+  one job id per allocation and operation so a burst of edits collapses into a single job.
+  BullMQ enforces that by refusing a job id it already holds — **including one in the
+  completed set**, which was retained 500 deep. So the first successful push permanently
+  poisoned that allocation's id: every later change was accepted, logged as queued, and
+  discarded. There was no error, no failed job and nothing in the alert inbox; the symptom is
+  a storefront that syncs once and then quietly goes stale. Present since 0.1.0. **If you run
+  any earlier version, this is the upgrade that matters.**
+- **The dev-mode toggle changed nothing in the navigation**, because two components each held
+  their own copy of the preference and the browser's `storage` event does not fire in the tab
+  that caused it.
+- Two places caught an error, threw a new one and dropped the original — OIDC discovery,
+  where a DNS or TLS failure's detail is all an operator has, and the Shopify category hint.
+  Both attach `cause` now.
+
+### Added
+
+- **Take stock in and list it in one step.** `POST /channels/:id/listings/intake`, and a
+  "List on" choice on the intake screen. The intake stands even if the listing fails: stock
+  on the shelf is a fact, whether a storefront accepted a draft is not.
+- **Tag rules per channel.** A created product's tags are decided by rules you set once —
+  _game is Pokemon → `Pokémon`_, _set is `ME02: Phantasmal Flames` → `ME02 Phantasmal
+Flames`_, _name contains `Elite Trainer Box` → `Elite Trainer Box`_. This replaces a flat
+  list per channel, which could only ever be right for a single-game, single-set batch. **The
+  hub still never derives a tag**: every value is one you picked from the store's own
+  vocabulary, and the rule only says which cards it applies to. Unmapped sets are _suggested_
+  from the store's real tag list, and only when exactly one candidate matches — a set the
+  store spells two ways produces no suggestion.
+- **`autoListNewStock`**, per channel, refused until the channel has been told what a created
+  product should carry. Automatic creation with nothing declared would put untagged drafts on
+  a storefront at the speed of intake, and on a tag-driven store an untagged product is in no
+  collection.
+- **User administration** — list, create local accounts, assign roles, activate, reset
+  passwords, delete. Two things are refused rather than warned about, because there is no
+  undo: you cannot demote, deactivate or delete **yourself**, and the **last active admin** is
+  untouchable by anyone.
+- **A settings page**, reached from a new account menu, reporting what the deployment is
+  running read-only, plus a developer-mode toggle that surfaces the screens normally reached
+  from a channel.
+- **Click a card's art at intake to see it large** — with the intake form beside it, so
+  condition and printing are entered while the picture is still in view. Resolution is the
+  point: the stored images are 200px wide, so a higher-resolution variant is substituted
+  where the source publishes one, falling back to the stored URL if it does not resolve.
+- **An "in stock only" filter** on the inventory browser. Greater than zero, not non-zero: a
+  channel may report a negative available quantity for oversold stock.
+
+### Changed
+
+- The allocation editor names the **channel** rather than printing its UUID, shows the price
+  with its currency, says whether a listing is attached, and picks a channel from a dropdown
+  instead of asking you to type an id that appeared nowhere in the UI. `fixed` and `pooled`
+  move behind an "advanced" disclosure, phrased as what they do to the number a customer sees.
+- `fastify` to 5.11, pinned through `pnpm.overrides` — without it two copies resolve and the
+  plugin types stop matching. `eslint` to 10, `jose` to 6.2.7, and `@types/node` aligned to
+  the **24** line, matching the Node the image actually runs rather than the newest published.
+
+### Notes
+
+- **One migration**, adding two columns to `channel_instances` for the listing defaults.
+  Dialect-neutral and validated against all three targets.
+- Nothing here lists anything on a marketplace on its own. `autoListNewStock` is off by
+  default and cannot be switched on until the channel has been configured.
+
 ## [0.3.0] — 2026-08-02
 
 The release that lets the hub **put a card on a storefront the store does not carry yet**.
@@ -297,6 +369,7 @@ verified against real accounts rather than only against mocks.
 - **A wrong credential is not distinguishable from a transient failure** in the alert
   inbox; both surface as `sync_failure`.
 
+[0.4.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.3.0
 [0.2.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.2.0
 [0.1.1]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.1.1

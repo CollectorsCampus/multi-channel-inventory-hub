@@ -63,6 +63,47 @@ _your_ database. No middleman sits between you and your money.
 - **Local accounts or SSO.** Username/password out of the box, or any OpenID Connect
   provider with PKCE, with break-glass local login retained by default.
 
+## Screens
+
+**Add stock.** Search the catalogue, click the art to check you have the right printing,
+and take it in. The dialog is the everyday loop in one place: condition, printing, quantity
+and cost go to the ledger, while the channel and the price go to the listing it creates —
+pre-filled with the catalogue's market price, which is per _product_ and so a starting
+point rather than an answer. The tags come from rules set on the channel, and the screen
+says which ones will be applied before you commit.
+
+![The add-stock screen with a card enlarged and the intake form beside it](docs/screenshots/intake-card.jpg)
+
+Behind it, the search itself. A game narrows it — some sources refuse without one — and
+each result carries the sources that know it.
+
+![Catalogue search results at intake, each with its source badges and market price](docs/screenshots/intake.png)
+
+**The ledger.** Everything held, filterable by game, by channel — including "on no
+channel", which is the question behind _what have I not listed yet_ — and by whether there
+is any stock at all.
+
+![The inventory table, filtered to items in stock](docs/screenshots/inventory.png)
+
+**One item.** On hand is the physical truth; the other three say where it has been
+committed. Each channel states what it would show and what that leaves the shared pool, so
+the arithmetic is visible before you save it rather than after.
+
+![An item's detail page showing quantities and its Shopify allocation](docs/screenshots/item.png)
+
+**Channels.** What a channel will put on a product it creates, decided once. Tags are
+rules — _game is Pokémon_ → `Pokémon` — because a Magic card and a Pokémon card do not
+belong in the same collection, and the store's own vocabulary is offered rather than
+guessed: a tag that does not already exist produces a product that is in the admin and in
+no collection, which nothing reports.
+
+![A Shopify channel's listing defaults, showing tag rules and the store's tag vocabulary](docs/screenshots/channels.png)
+
+**The catalogue.** What has been ingested locally, per set. Matching draws its candidates
+from here first, with no network involved.
+
+![The local catalogue, listing sets held and their item counts](docs/screenshots/catalog.png)
+
 ## Quick start
 
 ```bash

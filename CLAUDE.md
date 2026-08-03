@@ -19,15 +19,18 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
 | 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.3.0 released 2026-08-02** |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.4.0 released 2026-08-03** |
 
 Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fix, the
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **933 tests** (api 567, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
-scryfall 26, db 7), lint/typecheck/format/build clean. **Five jobs run on a push** —
+`main` is green: **978 tests** (api 590, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
+scryfall 26, web 22, db 7), lint/typecheck/format/build clean. `apps/web` has tests now —
+the first are the card-image and tag-suggestion grammars. **Count these rather than
+trusting a remembered total**: several commits in this range say "990", which was simply
+added up wrong. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
@@ -1354,11 +1357,47 @@ were set, exercised, and cleared. A test user was created through the form and d
 pulling `latest` gets a hub whose sync stops after one push per allocation. That is the
 next release, and it is worth doing before anything else.
 
+### v0.4.0 (2026-08-03) — and the dependency decisions behind it
+
+Everything from #48 to #58. The headline is the outbound-queue fix, which had been in
+**every published image since 0.1.0**.
+
+**Dependabot was cleared first: five open PRs, zero security alerts.** Three taken, two
+refused, and the reasoning is worth keeping because it is the same three traps each time.
+
+- **fastify 5.11 needed an `overrides` entry, not a bump.** The minor-and-patch group
+  _failed the build_ — `FastifyCookie` not assignable to `FastifyPluginCallback` — because
+  bumping fastify left **two copies** installed: `@nestjs/platform-fastify` resolves its own
+  5.10.0, so the plugin's types bound to a different `FastifyInstance` than `app.register`
+  came from. Third time this repo has hit the two-copies shape, after `find-my-way` and
+  `js-yaml`; `pnpm.overrides` now carries `fastify@5` beside them. Verified by the lockfile
+  no longer mentioning 5.10.0, not by the update running.
+- **`@eslint/js` is not versioned with `eslint`** — latest 10.0.1 against eslint 10.8.0 — so
+  bumping both to `^10.8.0` resolves nothing and silently leaves eslint at 9.
+- **eslint 10's `preserve-caught-error` found two real defects**, both rethrowing without
+  `cause`. And the guard that matters was checked directly rather than inferred from green
+  lint: a throwaway file calling `prisma.$queryRaw` still fails the raw-SQL ban (rule 1).
+  **Do this on every eslint upgrade** — that rule is why the MySQL/SQLite targets stay
+  possible, and it would have gone quiet without a word.
+- **`@types/node` follows the runtime, not the registry.** Dependabot's 22 → 26 passed CI and
+  is still wrong: the Dockerfile pins `node:24`, so types for Node 26 describe APIs that are
+  not there and code compiles then fails at run time. Aligned to the **24** line, which also
+  fixed types that were already _behind_ the runtime.
+
+**Refused, and now on `dependabot.yml`'s ignore list so they stop reopening weekly:**
+`@vitejs/plugin-react` 6 needs `vite ^8`, two majors past what is here and Vite majors are
+already ignored; and **typescript 6**, which fails on config rather than code —
+`moduleResolution: "Node"` is deprecated, and fixing it properly means every package's
+tsconfig plus a `module: Node16` switch that changes the CommonJS emit `packages/db`'s own
+comment says the NestJS boundary depends on. Both are real work someone should do
+deliberately; neither is urgent, and a security update overrides an ignore rule anyway.
+
 ### Unmerged work
 
-None. Everything through **#50** is on `main` as of 2026-08-02. `main` and the published
-image agreed at #47 and **no longer do**: #48–#50 are unreleased, and #48 carries the
-outbound-queue fix, which is the argument for cutting v0.3.1 promptly.
+None. Everything through **#58** is on `main` as of 2026-08-03 and shipped in **v0.4.0**, so
+`main` and the published image agree again. It went out as a minor rather than the v0.3.1
+first planned: by the time the queue fix was released it had a schema migration and five
+features beside it.
 
 `listing.metafields` merged as **#37**, carrying the three decisions the operator made
 while it was open — sealed gets no variant option, `NA` with it, and the set is appended

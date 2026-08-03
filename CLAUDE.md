@@ -1410,12 +1410,58 @@ tsconfig plus a `module: Node16` switch that changes the CommonJS emit `packages
 comment says the NestJS boundary depends on. Both are real work someone should do
 deliberately; neither is urgent, and a security update overrides an ignore rule anyway.
 
+#### README screenshots, and which screens must never be in one (#67)
+
+Six captures of the running app, in `docs/screenshots/`, taken with playwright-core driving
+installed Chrome against the local instance. Two things worth not re-deriving:
+
+- **Two screens are excluded on disclosure grounds, and the rule is durable.**
+  **Settings/Users displays a real email address**, and the Shopify channel's _edit_ form
+  holds the shop domain and the client id — so channels is captured **collapsed**, which is
+  where the tag rules are anyway. This is the same rule as "never put a real shop domain in
+  a tracked file", and a screenshot is a tracked file. The operator's business name does
+  appear and is fine: it is already the repository owner's.
+- **Downscaling a 2× UI capture to 1× makes the PNG _bigger_.** Measured, not guessed:
+  catalog went 49 kB → 118 kB, channels 88 kB → 175 kB. Bicubic resampling invents
+  intermediate colours that PNG then cannot compress, while a crisp 2× capture of flat UI
+  has very few. So the naive optimisation is a pessimisation — keep Chrome's output
+  untouched. The exception is the card viewer, which is dominated by photographic art:
+  there PNG is the wrong codec and JPEG at q88 took 1.6 MB to 420 kB.
+
+The design-document **PDFs were deleted** rather than moved into `docs/` (#67). Nothing
+referenced them, `docs/TECHNICAL_DESIGN.md` is what every §-reference points at, and a
+non-diffable snapshot of a design the ADRs partly overrule is an invitation to read the
+wrong one. `a49b0d1` still has them.
+
+#### Two more advisories, and the reachability rule paying off twice (#68, #69)
+
+Both cleared the same day they appeared; **Dependabot is back to 0 open, 21 fixed**.
+
+- **`brace-expansion` < 1.1.17** (high, OOM via unbounded expansion). Reached 1.1.16 through
+  `minimatch@3.1.5` under `fork-ts-checker-webpack-plugin` — a **build-time** type checker,
+  so not in the runtime image. Dependabot labelled it `runtime`; that label describes the
+  manifest, not reachability. Needed an override, scoped `brace-expansion@1` so the
+  unrelated 5.x line is untouched.
+- **`fast-uri`** (high, host confusion: `\\evil.com/path` folds into the path because
+  fast-uri needs a literal `//`, while WHATWG `URL` treats `\` as `/`). **This one _is_ in
+  the runtime image**, via `ajv` and `fast-json-stringify` under Fastify — so the question
+  was worth answering properly. The precondition still fails: the only host-based policy
+  here is OIDC endpoint pinning, and `discovery.ts` builds its origins with `new URL()`, the
+  same parser the following `fetch()` uses. Nothing to desync.
+- **No override for `fast-uri`, deliberately.** `ajv` declares `^3.0.1` and
+  `fast-json-stringify` `^4.0.0` — **ranges**, not the exact pins that forced the
+  `find-my-way` and `js-yaml` overrides — so `pnpm update fast-uri -r` moved both. Check the
+  parent's declared range before reaching for an override; one that was never needed still
+  has to be carried forever.
+
 ### Unmerged work
 
-None. Everything through **#58** is on `main` as of 2026-08-03 and shipped in **v0.4.0**, so
-`main` and the published image agree again. It went out as a minor rather than the v0.3.1
-first planned: by the time the queue fix was released it had a schema migration and five
-features beside it.
+None. Everything through **#69** is on `main` as of 2026-08-03. **v0.4.0** shipped everything
+through #58, so the four commits after it — the intake price (#66), the screenshots (#67) and
+the two dependency fixes — are on `main` and in no released image.
+
+v0.4.0 went out as a minor rather than the v0.3.1 first planned: by the time the queue fix
+was released it had a schema migration and five features beside it.
 
 `listing.metafields` merged as **#37**, carrying the three decisions the operator made
 while it was open — sealed gets no variant option, `NA` with it, and the set is appended

@@ -1353,14 +1353,30 @@ of bug the screenshot rule exists for, and is worth knowing as a fallback.
 and it was returned to 0, confirmed by reading Shopify directly. Channel listing defaults
 were set, exercised, and cleared. A test user was created through the form and deleted.
 
-**v0.3.1 is not cut.** The queue fix is on `main` and in no published image, so anyone
-pulling `latest` gets a hub whose sync stops after one push per allocation. That is the
-next release, and it is worth doing before anything else.
+**The queue fix went out in v0.4.0**, not the v0.3.1 planned here — by the time it reached a
+release it had a migration and five features beside it. Until then, anyone pulling `latest`
+had a hub whose sync stopped after one push per allocation.
 
 ### v0.4.0 (2026-08-03) — and the dependency decisions behind it
 
+Tagged at `783540f` (#59). Multi-arch image at
+`ghcr.io/collectorscampus/multi-channel-inventory-hub`, tagged `0.4.0`, `0.4` and `latest` —
+all at digest `sha256:d6a040cd…`, replacing v0.3.0's `sha256:0ccf660e…`. The build took
+**11m27s**, the slowest since v0.1.0: the fastify and eslint bumps invalidated the arm64
+layer cache, so a dependency refresh in the same release costs roughly double.
+
 Everything from #48 to #58. The headline is the outbound-queue fix, which had been in
 **every published image since 0.1.0**.
+
+Verified anonymously, then inside the artifact — and here the inside check earned its keep
+twice over. `removeOnComplete: true` is present in the built
+`outbound-queue.service.js`, so the fix genuinely shipped rather than merely being on
+`main`; and there is exactly **one** `fastify@5.11.0`, proving the `pnpm.overrides` entry
+survived the `--prod` install rather than only working in the dev tree — which is the same
+thing the `find-my-way` note warns about. `jose@6.2.7`, `find-my-way@9.7.0` and
+`js-yaml@5.2.2` intact, zero `vite`/`vitest`/`esbuild`, and the booted image reports
+`info.version: 0.4.0` with `/api/users` and `/api/channels/{id}/listings/intake` in its own
+OpenAPI document.
 
 **Dependabot was cleared first: five open PRs, zero security alerts.** Three taken, two
 refused, and the reasoning is worth keeping because it is the same three traps each time.

@@ -154,6 +154,9 @@ export function InventoryListPage() {
       : search.channel
         ? { channelInstanceId: search.channel }
         : {}),
+    // Sent only when on: `inStock: false` would be a different query key and a
+    // needless refetch for the same rows.
+    ...(search.inStock ? { inStock: true } : {}),
     page: search.page ?? 1,
     pageSize,
     sortBy: search.sortBy ?? 'name',
@@ -283,6 +286,28 @@ export function InventoryListPage() {
             </option>
           ))}
         </select>
+
+        {/* In the URL, unlike "Show images" below it: this changes *which rows*
+            the table shows, so a shared or bookmarked link must carry it.
+            Card art is a preference about reading the table and must not. */}
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={search.inStock ?? false}
+            onChange={(e) =>
+              void navigate({
+                search: (prev) => ({
+                  ...prev,
+                  inStock: e.target.checked ? true : undefined,
+                  // Page 1: filtering down from 400 rows to 30 leaves page 6
+                  // off the end, and an empty table reads as a broken filter.
+                  page: 1,
+                }),
+              })
+            }
+          />
+          In stock only
+        </label>
 
         <label className="inline-check">
           <input

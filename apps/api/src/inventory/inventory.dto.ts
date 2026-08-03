@@ -67,6 +67,20 @@ export class ListInventoryQueryDto {
   @IsBoolean()
   unlisted?: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      'Only items physically held (quantityOnHand > 0). Greater than, not non-zero: a channel ' +
+      'may report a negative available quantity for oversold stock and the hub passes it ' +
+      'through, so "in stock" must not include minus five.',
+  })
+  @IsOptional()
+  // Same explicit comparison as the two above, for the same reason: every
+  // non-empty query string is truthy, so `@Type(() => Boolean)` would make
+  // `?inStock=false` filter.
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  inStock?: boolean;
+
   @ApiPropertyOptional({ description: 'Only items with stock in no fixed partition.' })
   @IsOptional()
   @Type(() => Boolean)

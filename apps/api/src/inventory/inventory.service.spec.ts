@@ -379,4 +379,67 @@ describeDb('InventoryService', () => {
       expect(oversells).toHaveLength(1);
     });
   });
+
+  /**
+   * The browse filter, which is a database question rather than a page one —
+   * it narrows the whole result set, so the pagination totals must move too.
+   */
+  describe('in-stock filter', () => {
+    it('shows only what is physically held, and counts accordingly', async () => {
+      await seedItem(3);
+      await seedItem(1);
+      await seedItem(0);
+
+      const all = await service.listInventory({});
+      const held = await service.listInventory({ inStock: true });
+
+      expect(all.total).toBe(3);
+      expect(held.total).toBe(2);
+      expect(held.items.every((row) => row.quantityOnHand > 0)).toBe(true);
+    });
+
+    /**
+     * Greater than zero, not merely non-zero. Shopify reports negative
+     * available quantities for oversold stock and the hub passes them through
+     * — so a `!= 0` filter would put "minus five" under "in stock", which is
+     * the opposite of what the operator is asking to see.
+     */
+    it('excludes an oversold negative quantity', async () => {
+      const oversold = await seedItem(0);
+      await prisma.inventoryItem.update({
+        where: { id: oversold.id },
+        data: { quantityOnHand: -5 },
+      });
+      await seedItem(2);
+
+      const held = await service.listInventory({ inStock: true });
+
+      expect(held.total).toBe(1);
+      expect(held.items[0]!.quantityOnHand).toBe(2);
+    });
+
+    it('leaves everything visible when it is off', async () => {
+      await seedItem(0);
+      expect((await service.listInventory({ inStock: false })).total).toBe(1);
+      expect((await service.listInventory({})).total).toBe(1);
+    });
+
+    /** Filters narrow together rather than replacing one another. */
+    it('combines with the other filters', async () => {
+      const stocked = await seedItem(4);
+      await seedItem(0);
+
+      const channel = await seedChannel('Somewhere');
+      await service.upsertAllocation(stocked.id, {
+        channelInstanceId: channel.id,
+        mode: 'pooled',
+        maxQuantity: null,
+      });
+
+      expect((await service.listInventory({ inStock: true, unlisted: true })).total).toBe(0);
+      expect(
+        (await service.listInventory({ inStock: true, channelInstanceId: channel.id })).total,
+      ).toBe(1);
+    });
+  });
 });

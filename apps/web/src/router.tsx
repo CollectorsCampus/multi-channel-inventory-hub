@@ -34,6 +34,8 @@ export interface InventorySearch {
   game?: string;
   /** A channel the item is allocated to, or the sentinel below for "none". */
   channel?: string;
+  /** Only what is physically held. Part of what the table shows, so it lives in the URL. */
+  inStock?: boolean;
   page?: number;
   pageSize?: number;
   sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';
@@ -87,6 +89,10 @@ const indexRoute = createRoute({
       condition: typeof raw.condition === 'string' && raw.condition ? raw.condition : undefined,
       game: typeof raw.game === 'string' && raw.game ? raw.game : undefined,
       channel: typeof raw.channel === 'string' && raw.channel ? raw.channel : undefined,
+      // Only `true` survives. Anything else — absent, "false", a stray string —
+      // means the filter is off, so a malformed URL shows everything rather
+      // than hiding rows for a reason nobody can see.
+      inStock: raw.inStock === true || raw.inStock === 'true' ? true : undefined,
       page: Number.isInteger(page) && page > 0 ? page : undefined,
       // Only a size the picker offers. Anything else is dropped rather than
       // passed through to a `take` in a database query.

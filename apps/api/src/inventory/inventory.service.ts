@@ -133,6 +133,8 @@ export interface InventoryQuery {
   noGame?: boolean;
   /** Items on no channel at all. Mutually sensible with `channelInstanceId`, not with it. */
   unlisted?: boolean;
+  /** Only items physically held — `quantityOnHand > 0`. */
+  inStock?: boolean;
   hasUnallocated?: boolean;
   page?: number;
   pageSize?: number;
@@ -364,6 +366,15 @@ export class InventoryService {
       // `hasUnallocated` below this one *is* expressible in SQL, so it narrows
       // the result set rather than the current page.
       ...(query.unlisted ? { allocations: { none: {} } } : {}),
+      // Physically on the shelf. A zero row is not junk to be tidied away — it
+      // is a card that has sold out and keeps its price, its links and its
+      // history — but most of the time it is not what someone browsing wants
+      // to look at.
+      //
+      // `> 0` rather than `!= 0`: Shopify reports negative available quantities
+      // for oversold stock, and the hub passes them through. "In stock" must
+      // not include minus five.
+      ...(query.inStock ? { quantityOnHand: { gt: 0 } } : {}),
     };
 
     const orderBy = buildOrderBy(query.sortBy ?? 'name', query.sortDir ?? 'asc');

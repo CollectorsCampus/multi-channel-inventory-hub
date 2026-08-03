@@ -73,6 +73,8 @@ export interface InventoryFilters {
   noGame?: boolean;
   /** Items on no channel at all. */
   unlisted?: boolean;
+  /** Only items physically held — quantityOnHand > 0, so not oversold negatives either. */
+  inStock?: boolean;
   page?: number;
   pageSize?: number;
   sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';

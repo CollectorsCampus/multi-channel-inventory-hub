@@ -202,6 +202,60 @@ of tier gate the documentation does not mention and ADR 0002 exists to remember.
 against the operator's own account before building.** A token visible in profile settings
 would settle it in a minute.
 
+#### Settled and detailed, 2026-08-03
+
+**The tier gate is not a gate here.** The operator has a working production token — the
+Postman collections they exported carry a bearer JWT issued by `cardtrader-production` for
+their own app. That is the confirmation the section above asked for, and it was obtained
+without an application. **No live call has been made yet**, so what follows is still
+documentation plus a credential, not a probe: the ADR 0002 standard of evidence is a request
+that returned data, and this is not that.
+
+The collections are in `private/cardtrader/` and **must stay there** — they embed that token
+in an `Authorization: Bearer` header, and its `exp` is in 2126, so it is effectively
+permanent. Treat it as a live credential, not a sample.
+
+The reference fills in what mattered and could not be guessed:
+
+- **`user_data_field` on a product is the SKU-code home.** `POST /products` and
+  `PUT /products/:id` both take it, described as free-form seller metadata. That is
+  CardTrader's analogue of the Shopify seller-SKU field, so `listing.sku` and the `hub-sku`
+  `certain` path transfer directly — and unlike Shopify's, it is a field whose _purpose_ is
+  seller bookkeeping, so writing to it overwrites nothing the platform relies on.
+- **Products carry a `blueprint_id`**, and `GET /blueprints/export?expansion_id=` enumerates
+  them. So CardTrader has its own catalogue identity that must be mapped, exactly as
+  tcgcsv's `productId` is — a `CatalogExternalRef` source, not something derivable.
+- **Webhook signing is the same shape as Shopify's**: a `Signature` header carrying a
+  base64 HMAC-SHA256 of the raw body, keyed on the app's `shared_secret`. `verifyWebhook`
+  needs no new concepts, and the raw-body plumbing already exists.
+- **`PATCH /app` sets `webhook_url`**, so a subscription can be registered from the
+  connector rather than by hand in a settings page.
+- **Webhooks carry `mode: test|live`.** A test mode is worth knowing about before building
+  — nothing else researched here offers one.
+- **Rate limits are published**: 200 requests / 10s in general, 10/s on
+  `marketplace/products`, and **1/s on job status**. The last one shapes the bulk path, which
+  is asynchronous: `bulk_create`/`bulk_update`/`bulk_destroy` return a job, polled at
+  `GET /jobs/:uuid`.
+- **Pagination** is `page` + `limit`, limit capped at 100.
+
+**The one genuinely subtle thing, and it belongs in the inbound worker.** A webhook is not
+automatically a sale. CardTrader's own guidance is to decrement stock only when
+`via_cardtrader_zero: true` **and** `state: "hub_pending"`, or `via_cardtrader_zero: false`
+**and** `state: "paid"` — every other combination is an update to an order already seen.
+Getting that wrong double-decrements, which is the failure this hub exists to prevent. It is
+also a second sale-detection rule beside Shopify's, so it belongs in the connector's
+`parseWebhook`, not in the core.
+
+**Out of scope: buying.** `/cart/add`, `/cart/purchase` and the CardTrader Zero
+`ct0_box_items` endpoints are a purchasing flow. This hub sells; nothing in the model has a
+buyer side, and §6's "we never cancel or modify an order" already draws the same line on the
+order endpoints (`ship` and `tracking_code` are writes we would not make either).
+
+**Still open before building:** whether `products/export` returns enough to satisfy
+`listing.enumerate` on its own, what a real order webhook body looks like, and whether the
+blueprint catalogue can be matched to `CatalogItem` well enough to avoid hand-mapping every
+card. All three are one authenticated call away, using the token already in `private/`.
+
 ### Mana Pool — _researched 2026-07-30; a public API does exist_
 
 **The previous "genuinely unknown to me" is resolved: there is a public API**, documented at
@@ -350,8 +404,9 @@ asking whether it has an API.**
    is done (2026-07-30) and it separates them clearly. CardTrader has a self-serve bearer
    token, **absolute quantity setting**, signed order webhooks, bulk endpoints and an export
    for enumeration — it maps onto the existing capability set with less adaptation than eBay
-   does. The one thing to confirm is the "active sellers on appropriate plans" hint that the
-   documentation does not mention.
+   does. **The tier question is settled** (2026-08-03): the operator already holds a working
+   production token, so there is no gate. It has a `user_data_field` the SKU code fits, and
+   webhook signing identical in shape to Shopify's. **This is the one to build next.**
 3. **Cardmarket** — bigger European reach, but more work for it: OAuth 1.0a signing, and
    quantity only through increase/decrease, so a read-then-delta push like
    `connector-shopify`'s compare-and-swap. Admission is _not_ gated on seller tier, which was

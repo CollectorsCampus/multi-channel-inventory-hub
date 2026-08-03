@@ -1,10 +1,12 @@
 # Working notes for Claude
 
 Context for anyone (human or model) picking this project up. The design documents
-(`TECHNICAL_DESIGN.md`, `PROJECT_OVERVIEW.md`) describe the _intent_; this file records what
+(`docs/TECHNICAL_DESIGN.md`, `docs/PROJECT_OVERVIEW.md`) describe the _intent_; this file records what
 was actually built, where reality diverged, and the rules that keep it coherent.
 
-**`TECHNICAL_DESIGN.md` is authoritative — except where an ADR supersedes it.** Several
+**`docs/TECHNICAL_DESIGN.md` is authoritative — except where an ADR supersedes it.** It now
+sits beside the ADRs that amend it, which is the point; §-citations throughout the code name
+the document rather than its path, so they were unaffected by the move. Several
 parts of it turned out to be wrong or unimplementable; those are recorded in
 `docs/adr/`, not silently ignored. Read the ADRs before trusting a §-reference.
 
@@ -2065,9 +2067,16 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
   `cloudflared tunnel --url http://localhost:<port> --no-autoupdate`, then read the
   `https://<name>.trycloudflare.com` line out of the log; it takes about 10 seconds.
 - **Real marketplace data lives in `private/`**, which is gitignored: the operator's own
-  TCGPlayer exports, and `shopify.local.json` holding live Shopify credentials. Useful for
-  verifying against reality; `ShippingExport` and `PackingSlips` must never be opened, as
-  they carry customers' names and addresses.
+  TCGPlayer exports, `shopify.local.json` holding live Shopify credentials, and
+  `cardtrader/` — their CardTrader Postman collections. Useful for verifying against
+  reality; `ShippingExport` and `PackingSlips` must never be opened, as they carry
+  customers' names and addresses.
+- **The CardTrader collections embed a live bearer token** and arrived in the repo root, not
+  in `private/`. They were moved on 2026-08-03; the token was never committed (the files were
+  untracked, and the string appears in no object in history). Its `exp` is **2126**, so it is
+  effectively permanent — a leak would not age out. **A Postman export is a credential
+  export**: anything downloaded from a platform's docs page goes to `private/` unread until
+  it has been checked for an `Authorization` header.
 - **`prisma migrate reset` is blocked** for AI agents without explicit per-invocation
   consent passed in `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION`. Ask first; do not work
   around it.

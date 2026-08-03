@@ -41,7 +41,7 @@
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.1.28",
     "@swc/core": "^1.15.47",
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.1.2",
     "typescript": "^5.9.3",
     "unplugin-swc": "^1.5.9",
     "vitest": "^3.2.6"

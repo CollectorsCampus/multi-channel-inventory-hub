@@ -300,6 +300,21 @@ specific about which parts have met reality.
   set files).
 - **Scale.** This has run against one store's catalogue, not a hundred thousand listings.
 
+## Documentation
+
+| Document                                       | What it is                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [PROJECT_OVERVIEW](docs/PROJECT_OVERVIEW.md)   | What this is for and who it is for                                                   |
+| [TECHNICAL_DESIGN](docs/TECHNICAL_DESIGN.md)   | The specification. Authoritative **except where an ADR supersedes it**               |
+| [ADRs](docs/adr/)                              | Decisions that changed the design, and why                                           |
+| [CONNECTOR_GUIDE](docs/CONNECTOR_GUIDE.md)     | Writing a connector against the SDK                                                  |
+| [CONNECTOR_ROADMAP](docs/CONNECTOR_ROADMAP.md) | Which marketplace to connect next, and what each one's gate is                       |
+| [CLAUDE.md](CLAUDE.md)                         | What was actually built, where reality diverged, and the rules that keep it coherent |
+
+Read the ADRs before trusting a `TECHNICAL_DESIGN.md` §-reference: several parts of the
+specification turned out to be wrong or unimplementable, and those are recorded rather than
+quietly ignored.
+
 ## How this was built
 
 **Most of this code was written by Claude** — Anthropic's Opus models — working with a single

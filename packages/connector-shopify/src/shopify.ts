@@ -831,6 +831,9 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
         throw new Error(
           `${message} — this product has no category, and a metafield definition may be ` +
             `restricted to one. See requiresCategory on the field from listMetafields.`,
+          // The hint replaces Shopify's wording in the message; `cause` keeps
+          // the original, including any other userErrors it carried.
+          { cause: error },
         );
       }
       throw error;

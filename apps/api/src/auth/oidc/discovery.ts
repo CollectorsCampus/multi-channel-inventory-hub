@@ -61,7 +61,15 @@ export async function fetchDiscovery(
   try {
     response = await doFetch(url, { headers: { Accept: 'application/json' }, signal });
   } catch (error) {
-    throw new Error(`Could not reach the identity provider at ${url}: ${(error as Error).message}`);
+    // `cause` as well as the message: a discovery failure is usually a DNS or
+    // TLS problem whose detail lives in the original error, and this is the one
+    // point in an OIDC setup where an operator has least to go on.
+    throw new Error(
+      `Could not reach the identity provider at ${url}: ${(error as Error).message}`,
+      {
+        cause: error,
+      },
+    );
   }
 
   if (!response.ok) {

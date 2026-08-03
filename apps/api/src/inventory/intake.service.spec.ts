@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { PrismaClient } from '@hub/db';
 import type { CatalogCandidate } from '@hub/connector-sdk';
 import { IntakeService } from './intake.service';
+import { AlertsService } from '../sync/alerts.service';
 import { InventoryService } from './inventory.service';
 import type { CatalogService } from '../catalog/catalog.service';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -55,6 +56,7 @@ describeDb('IntakeService', () => {
   });
 
   beforeEach(async () => {
+    await prisma.alert.deleteMany();
     await prisma.stockMovement.deleteMany();
     await prisma.channelAllocation.deleteMany();
     await prisma.inventoryItem.deleteMany();
@@ -70,7 +72,12 @@ describeDb('IntakeService', () => {
 
     const catalog = { fetchCandidate } as unknown as CatalogService;
     const inventory = new InventoryService(prisma as unknown as PrismaService);
-    intake = new IntakeService(prisma as unknown as PrismaService, catalog, inventory);
+    intake = new IntakeService(
+      prisma as unknown as PrismaService,
+      catalog,
+      inventory,
+      new AlertsService(prisma as unknown as PrismaService),
+    );
   });
 
   const bolt = (overrides: Partial<Parameters<IntakeService['intake']>[0]> = {}) =>
@@ -81,6 +88,73 @@ describeDb('IntakeService', () => {
       quantity: 3,
       ...overrides,
     });
+
+  /**
+   * A split catalogue: two items each holding one of the ids a single candidate
+   * carries. It happens whenever a source starts publishing an id that another
+   * item already claims — and it is exactly what a CardTrader ingest will do,
+   * because `blueprint_id` shares an id space with nothing already stored.
+   *
+   * This used to be a `debug` line, which meant nobody would ever learn about
+   * it. The split is permanent until someone merges the two, so it is a flag.
+   */
+  describe('when two catalog items claim one platform id', () => {
+    async function split() {
+      const scryfallSide = await prisma.catalogItem.create({
+        data: {
+          name: 'Lightning Bolt',
+          searchName: 'lightning bolt',
+          externalRefs: { create: [{ source: 'scryfall', externalId: 'sf-bolt' }] },
+        },
+      });
+      const tcgSide = await prisma.catalogItem.create({
+        data: {
+          name: 'Lightning Bolt (other row)',
+          searchName: 'lightning bolt (other row)',
+          externalRefs: { create: [{ source: 'tcgplayer', externalId: '697344' }] },
+        },
+      });
+      return { scryfallSide, tcgSide };
+    }
+
+    it('raises an alert naming both items', async () => {
+      await split();
+
+      // Succeeds: intake must not fail over a catalogue problem it did not
+      // create, and the operator still gets their stock.
+      await bolt();
+
+      const alerts = await prisma.alert.findMany({ where: { kind: 'invariant_violation' } });
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]!.title).toMatch(/Two catalog items claim/);
+      expect(alerts[0]!.severity).toBe('warning');
+      expect(alerts[0]!.detail).toMatch(/Lightning Bolt/);
+    });
+
+    /** A flag, not a tally: intaking the same card again must not flood. */
+    it('stays one alert however many intakes hit it', async () => {
+      await split();
+
+      await bolt();
+      await bolt();
+      await bolt();
+
+      const alerts = await prisma.alert.findMany({ where: { kind: 'invariant_violation' } });
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]!.title).toMatch(/seen 3 times/);
+    });
+
+    /**
+     * The other half, and the one that would make this useless if wrong: an
+     * ordinary re-intake races nobody and must stay silent.
+     */
+    it('says nothing when the ids agree', async () => {
+      await bolt();
+      await bolt();
+
+      expect(await prisma.alert.count()).toBe(0);
+    });
+  });
 
   it('creates catalog item, SKU and unallocated stock', async () => {
     const result = await bolt();

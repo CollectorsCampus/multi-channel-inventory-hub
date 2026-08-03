@@ -3,6 +3,7 @@ import { PrismaClient } from '@hub/db';
 import type { CatalogCandidate, CatalogSource } from '@hub/connector-sdk';
 import { CatalogIngestService } from './catalog-ingest.service';
 import { IntakeService } from '../inventory/intake.service';
+import { AlertsService } from '../sync/alerts.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { CatalogService } from './catalog.service';
 import type { CatalogSourceRegistry } from './catalog-source-registry.service';
@@ -81,7 +82,12 @@ describeDb('CatalogIngestService', () => {
     const registry = { get: vi.fn(() => source) } as unknown as CatalogSourceRegistry;
     const catalog = {} as unknown as CatalogService;
     const inventory = new InventoryService(prisma as unknown as PrismaService);
-    const intake = new IntakeService(prisma as unknown as PrismaService, catalog, inventory);
+    const intake = new IntakeService(
+      prisma as unknown as PrismaService,
+      catalog,
+      inventory,
+      new AlertsService(prisma as unknown as PrismaService),
+    );
 
     ingest = new CatalogIngestService(registry, intake);
   });
@@ -177,6 +183,7 @@ describeDb('CatalogIngestService', () => {
       prisma as unknown as PrismaService,
       {} as unknown as CatalogService,
       inventory,
+      new AlertsService(prisma as unknown as PrismaService),
     );
 
     const limited = new CatalogIngestService(registry, intake);

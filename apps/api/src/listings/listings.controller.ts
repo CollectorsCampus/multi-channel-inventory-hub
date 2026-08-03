@@ -58,7 +58,7 @@ export class ListingsController {
     @Body() body: IntakeAndListDto,
     @CurrentUser() user: AuthenticatedPrincipal,
   ) {
-    const { tags, metafields, category, vendor, optionName, ...intake } = body;
+    const { tags, metafields, category, vendor, optionName, price, ...intake } = body;
 
     return this.creation.intakeAndList({
       ...intake,
@@ -69,6 +69,7 @@ export class ListingsController {
       ...(category !== undefined ? { category } : {}),
       ...(vendor !== undefined ? { vendor } : {}),
       ...(optionName !== undefined ? { optionName } : {}),
+      ...(price !== undefined ? { price } : {}),
     });
   }
 

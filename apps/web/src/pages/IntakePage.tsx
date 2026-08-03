@@ -392,14 +392,39 @@ function IntakeForm({
   const autoChannel = listable.find((c) => c.autoListNewStock);
   const listedChannel = listable.find((c) => c.id === listOn);
 
+  /**
+   * Seeded **once**, when the channels first arrive.
+   *
+   * `listOn` was in this effect's dependencies, so every time it went back to
+   * "" the effect re-fired and put the channel straight back. With
+   * `autoListNewStock` on, that made "Nowhere — just add to inventory"
+   * unselectable: the operator could not take stock in without listing it,
+   * which is worse than the default is useful. It also contradicted the note
+   * right here promising they could clear it for one card.
+   *
+   * A ref rather than a dependency change, because the condition is "has this
+   * form ever seeded" — not something React can derive from the values.
+   */
+  const seededChannel = useRef(false);
   useEffect(() => {
-    if (autoChannel && listOn === '') setListOn(autoChannel.id);
-  }, [autoChannel, listOn]);
+    if (seededChannel.current || !autoChannel) return;
+    seededChannel.current = true;
+    setListOn(autoChannel.id);
+  }, [autoChannel]);
 
   const [condition, setCondition] = useState('NM');
   const [printing, setPrinting] = useState(printings[0] ?? 'NORMAL');
   const [quantity, setQuantity] = useState('1');
   const [cost, setCost] = useState('');
+  /**
+   * What to sell it for, seeded from the catalogue's market price.
+   *
+   * A **starting point, not a valuation** — see the hint below the field. It is
+   * pre-filled rather than left blank because the alternative is listing at no
+   * price and correcting it later, and a draft with a price is easier to sanity
+   * check than an empty box.
+   */
+  const [price, setPrice] = useState(() => centsToInput(candidate.marketPrice));
 
   const intake = useIntake();
   const intakeAndList = useIntakeAndList(listOn);
@@ -410,12 +435,15 @@ function IntakeForm({
     setPrinting(candidate.printings?.[0] ?? 'NORMAL');
     setQuantity('1');
     setCost('');
+    // Re-seeded with the new card's price, not cleared: switching cards should
+    // leave the field as useful as it was on the first one.
+    setPrice(centsToInput(candidate.marketPrice));
     intake.reset();
     intakeAndList.reset();
     // Resetting when the operator picks a different card; the mutation objects
     // themselves are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidate.sourceKey, candidate.sourceId]);
+  }, [candidate.sourceKey, candidate.sourceId, candidate.marketPrice]);
 
   const missingTcgplayer = !candidate.externalIds.tcgplayer;
 
@@ -426,6 +454,10 @@ function IntakeForm({
    * the document happens to reach first, which is the one behind the dialog.
    */
   const fieldId = (name: string) => (embedded ? `dialog-${name}` : name);
+
+  /** Still showing the catalogue's suggestion, rather than something typed. */
+  const priceIsSeeded =
+    candidate.marketPrice !== undefined && price === centsToInput(candidate.marketPrice);
 
   return (
     <div className={embedded ? 'embedded-intake' : 'panel'}>
@@ -458,8 +490,14 @@ function IntakeForm({
           // Two endpoints rather than one with a nullable channel: listing on
           // no channel is plain intake, and routing it through the channel path
           // would mean inventing a channel id to ignore.
-          if (listOn) intakeAndList.mutate(body, done);
-          else intake.mutate(body, done);
+          if (listOn) {
+            intakeAndList.mutate(
+              // Empty means "no price", which is a real answer — the listing is
+              // created unpriced and can be set later. Not the same as 0.
+              { ...body, ...(price === '' ? {} : { price: Math.round(Number(price) * 100) }) },
+              done,
+            );
+          } else intake.mutate(body, done);
         }}
       >
         <label htmlFor={fieldId('condition')}>Condition</label>
@@ -526,6 +564,24 @@ function IntakeForm({
           </>
         )}
 
+        {/* Only with a channel chosen: a selling price with nothing to sell on
+            is a number with nowhere to go, and offering it would imply the
+            ledger stores one. It does not — price belongs to the allocation. */}
+        {listOn && (
+          <>
+            <label htmlFor={fieldId('price')}>Sell for</label>
+            <input
+              id={fieldId('price')}
+              type="number"
+              step="0.01"
+              min={0}
+              placeholder="no price"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+            />
+          </>
+        )}
+
         <div className="form-actions">
           <button type="submit" disabled={pending}>
             {pending ? 'Adding…' : listOn ? 'Add and list' : 'Add to inventory'}
@@ -544,6 +600,21 @@ function IntakeForm({
           Pokémon, land in the wrong collection, and nothing would report it.
           Naming them here makes that visible before the card is added instead
           of after. Listing a mixed batch belongs on /list, which picks per run. */}
+      {/* The caveat that stops the default being trusted more than it deserves.
+          tcgcsv publishes one market price per *product* — it does not publish
+          the SKU tier at all, so there is no per-condition price to be had — and
+          `CatalogCandidate.marketPrice` is a single number, so a card sold in
+          two finishes reports the non-foil one. A Damaged foil therefore
+          pre-fills with the Near Mint non-foil price, which is a starting point
+          and emphatically not a valuation. */}
+      {listOn && priceIsSeeded && (
+        <p className="field-hint">
+          Pre-filled with the catalogue&rsquo;s market price for this <em>product</em> —{' '}
+          {formatPrice(candidate.marketPrice!)}. That is one number per product, not per condition
+          or printing, so treat it as a reference and adjust for what you actually hold.
+        </p>
+      )}
+
       {listable.length > 0 && (
         <p className="field-hint">
           {listOn ? (
@@ -613,6 +684,17 @@ function IntakeForm({
       )}
     </div>
   );
+}
+
+/**
+ * Cents to what belongs in a `step="0.01"` number input.
+ *
+ * Empty for an absent price rather than "0.00": two thirds of the rows in a
+ * real tcgcsv file carry no market price, and a card pre-filled at zero would
+ * go to a storefront free if nobody noticed.
+ */
+function centsToInput(cents: number | undefined): string {
+  return cents === undefined ? '' : (cents / 100).toFixed(2);
 }
 
 /**

@@ -163,7 +163,10 @@ export interface IntakeAndListRequest {
   printing?: string;
   language?: string;
   quantity: number;
+  /** What it cost you, in cents. Belongs to the ledger. */
   costBasis?: number;
+  /** What a customer pays, in cents. Belongs to the channel. */
+  price?: number;
 }
 
 export interface IntakeAndListResult {

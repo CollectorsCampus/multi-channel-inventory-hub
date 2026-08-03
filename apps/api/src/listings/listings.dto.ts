@@ -165,6 +165,19 @@ export class IntakeAndListDto extends IntakeDto {
   @IsString()
   @MaxLength(50)
   optionName?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'What to sell it for, in **cents**. Recorded on the allocation and sent at creation, so ' +
+      'the listing never appears as a $0 draft. Distinct from costBasis, which is what the ' +
+      'card cost you. Omitted leaves the price alone.',
+    minimum: 0,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  price?: number;
 }
 
 export class ListTagsQueryDto {

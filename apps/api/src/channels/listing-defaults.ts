@@ -20,29 +20,109 @@ import { decodeJson } from '@hub/db';
  * `Pokémon`, and `SV: Prismatic Evolutions` where the store has *both*
  * `SV085 Prismatic Evolutions` and `SV85 Prismatic Evolutions`.
  *
- * So an operator who wants stock listed without re-picking the same five
- * values per card has exactly one honest option: declare them once, per
- * channel, and have the hub repeat that declaration. This is that declaration.
- * It is still the operator's vocabulary, applied verbatim — the hub has just
- * stopped asking every time.
+ * ## Why a flat list per channel was not enough
+ *
+ * The first version of this stored one list of tags per channel. That is only
+ * ever right for a single-game, single-set session: a store's tags are
+ * `Pokémon`, `SV04 Paradox Rift` and `Elite Trainer Box`, and **all three vary
+ * per card**. Two cards from different games added in one sitting would both
+ * get whichever tags the channel happened to hold, and on a tag-driven store
+ * that puts one of them in a collection it does not belong in.
+ *
+ * {@link ChannelListingDefaults.tagRules} replaces it: the operator maps a fact
+ * the ledger already holds — game, set, or a phrase in the name — onto a tag
+ * they picked from the store's own vocabulary, once. The hub still invents
+ * nothing; it has been told the mapping instead of being asked for it per card.
+ *
+ * The remaining fields are genuinely per channel. A category is one
+ * classification for everything this channel creates, and a vendor is usually
+ * one publisher — where it is not, a rule-shaped answer would be the same
+ * extension as tags took.
  */
+
+/**
+ * What a rule looks at. Only facts the ledger already holds about a card.
+ *
+ * - `game` and `set` compare **exactly** against `CatalogItem.game` /
+ *   `setName`, because the operator picks those values from what the catalogue
+ *   actually stores rather than typing them. An exact comparison is then
+ *   predictable, and predictability is what makes a rule safe to leave running.
+ * - `name-contains` is the escape hatch for the one thing the hub does *not*
+ *   model — what kind of product it is. "Elite Trainer Box" and "Booster Pack"
+ *   exist only inside the product name, so this matches a substring, and
+ *   case-insensitively because it is typed by hand.
+ */
+export type TagRuleMatch = 'game' | 'set' | 'name-contains';
+
+export const TAG_RULE_MATCHES: readonly TagRuleMatch[] = ['game', 'set', 'name-contains'];
+
+export interface TagRule {
+  match: TagRuleMatch;
+  /** The catalogue value to look for. */
+  value: string;
+  /** The channel's own tag, applied verbatim. */
+  tag: string;
+}
+
+/** The facts a rule may be evaluated against. */
+export interface TaggableItem {
+  name: string;
+  game?: string | null;
+  setName?: string | null;
+}
 
 export interface ChannelListingDefaults {
   /**
-   * Applied to created products. An empty array is a real answer — "no tags" —
-   * and is deliberately distinguishable from the key being absent.
+   * Applied to **every** created product, whatever it is. An empty array is a
+   * real answer — "no unconditional tags" — and is deliberately distinguishable
+   * from the key being absent.
+   *
+   * Usually empty in practice. Almost every tag a real store uses varies by
+   * game, set or kind of product, which is what {@link tagRules} is for.
    */
   tags?: string[];
+  /**
+   * Applied to a created product when they match it.
+   *
+   * This is the answer to the thing a flat `tags` list gets wrong: a store's
+   * tags are `Pokémon`, `SV04 Paradox Rift` and `Elite Trainer Box`, and all
+   * three differ per card, so one list per channel can only ever be right for a
+   * single-game, single-set session.
+   *
+   * It does **not** loosen "the hub never derives a tag". Every tag here is one
+   * the operator chose from the store's own vocabulary; the rule only says
+   * which cards it applies to, using facts the ledger already holds. The hub
+   * still invents nothing — it has just been told the mapping once instead of
+   * being asked for it per card.
+   */
+  tagRules?: TagRule[];
   metafields?: ListingMetafield[];
   category?: string;
   vendor?: string;
 }
 
 /** Fields a stored default may carry. Anything else is dropped on read. */
-const KNOWN_KEYS = ['tags', 'metafields', 'category', 'vendor'] as const;
+const KNOWN_KEYS = ['tags', 'tagRules', 'metafields', 'category', 'vendor'] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseTagRule(raw: unknown): TagRule | null {
+  if (!isPlainObject(raw)) return null;
+
+  const { match, value, tag } = raw;
+
+  // A rule missing any part cannot be evaluated, and a blank tag would put a
+  // product in no collection while looking configured. Dropped rather than
+  // repaired: there is no sensible repair.
+  if (typeof match !== 'string' || !(TAG_RULE_MATCHES as readonly string[]).includes(match)) {
+    return null;
+  }
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  if (typeof tag !== 'string' || tag.trim() === '') return null;
+
+  return { match: match as TagRuleMatch, value: value.trim(), tag: tag.trim() };
 }
 
 function parseMetafield(raw: unknown): ListingMetafield | null {
@@ -80,6 +160,10 @@ export function parseListingDefaults(raw: string | null | undefined): ChannelLis
 
   if (Array.isArray(decoded.tags)) {
     defaults.tags = decoded.tags.filter((t): t is string => typeof t === 'string' && t !== '');
+  }
+
+  if (Array.isArray(decoded.tagRules)) {
+    defaults.tagRules = decoded.tagRules.map(parseTagRule).filter((r): r is TagRule => r !== null);
   }
 
   if (Array.isArray(decoded.metafields)) {
@@ -129,17 +213,53 @@ export function hasDeclaredDefaults(defaults: ChannelListingDefaults): boolean {
   return KNOWN_KEYS.some((key) => defaults[key] !== undefined);
 }
 
+/** Does this rule apply to this card? */
+export function tagRuleMatches(rule: TagRule, item: TaggableItem): boolean {
+  switch (rule.match) {
+    case 'game':
+      // Exact: the value came from the catalogue, not from typing.
+      return item.game === rule.value;
+    case 'set':
+      return item.setName === rule.value;
+    case 'name-contains':
+      return item.name.toLowerCase().includes(rule.value.toLowerCase());
+  }
+}
+
+/**
+ * Every tag a created product should carry, for this card.
+ *
+ * Unconditional tags first, then whichever rules match, in the order the
+ * operator arranged them — a store's tags are read by people as well as by
+ * collection rules, and a set that reshuffles per card looks like a bug.
+ *
+ * Deduplicated, because two rules legitimately arriving at the same tag (a
+ * game rule and a name rule both saying `Pokémon`) is a configuration worth
+ * tolerating rather than an error worth refusing.
+ */
+export function resolveTags(defaults: ChannelListingDefaults, item: TaggableItem): string[] {
+  const matched = (defaults.tagRules ?? [])
+    .filter((rule) => tagRuleMatches(rule, item))
+    .map((rule) => rule.tag);
+
+  return [...new Set([...(defaults.tags ?? []), ...matched])];
+}
+
 /**
  * What the caller asked for, falling back to the channel's declaration.
  *
  * Per field, and `undefined` is the only thing that falls back: an explicit
- * empty array means "no tags on this run" and must not be quietly refilled from
+ * empty array means "none on this run" and must not be quietly refilled from
  * the channel. That distinction is already how `ListingsController` treats the
  * request body, and it is the difference between a default and an override.
+ *
+ * **Tags are deliberately not handled here.** They are the one field that
+ * depends on *which card* is being created, so they are resolved per item by
+ * {@link resolveTags} rather than once per run. A run may still override them
+ * wholesale, and `ListingCreationService` is where those two meet.
  */
 export function applyListingDefaults<
   T extends {
-    tags?: readonly string[];
     metafields?: readonly ListingMetafield[];
     category?: string;
     vendor?: string;
@@ -147,7 +267,6 @@ export function applyListingDefaults<
 >(request: T, defaults: ChannelListingDefaults): T {
   return {
     ...request,
-    ...(request.tags === undefined && defaults.tags !== undefined ? { tags: defaults.tags } : {}),
     ...(request.metafields === undefined && defaults.metafields !== undefined
       ? { metafields: defaults.metafields }
       : {}),

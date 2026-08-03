@@ -516,17 +516,24 @@ ul.error {
   background: var(--surface);
 }
 
+/* Bounded on both sides, and sized by the image inside them.
+
+   Sizing by height alone assumed every image is a 5:7 card. Sealed product is
+   not: an Elite Trainer Box photo is roughly square, so at a card's height it
+   came out about as wide as it was tall and pushed the form off the dialog.
+
+   `max-*` rather than fixed dimensions, so the picture keeps its own aspect
+   ratio and the dialog shrinks to it. A fixed box with `object-fit: contain`
+   also preserves the ratio, but letterboxes a square image inside a
+   card-shaped hole — dead space that makes the dialog look broken.
+
+   The ceilings come from the source images rather than from taste: the largest
+   variant either CDN publishes is 1000px, so going beyond this would upscale —
+   the blur this feature exists to avoid. */
 .viewer-art {
-  /* Cards are 5:7. Sizing by height keeps it as large as the window allows
-     while leaving the metadata beside it readable.
-     The 44rem ceiling is set by the source images rather than by taste: the
-     largest variant either CDN publishes is 1000px tall, so going beyond this
-     would upscale — which is the blur this feature exists to avoid. */
-  height: min(78vh, 44rem);
-  width: auto;
-  max-width: 100%;
+  max-width: min(26rem, 100%);
+  max-height: min(72vh, 36rem);
   border-radius: 8px;
-  background: var(--surface-2);
 }
 
 .viewer-meta {
@@ -585,8 +592,10 @@ ul.error {
   }
 
   .viewer-art {
-    height: auto;
-    width: 100%;
+    /* Capped by height too: a square image at full width would otherwise be a
+       full screen width tall and push the form below the fold. */
+    max-width: 100%;
+    max-height: min(50vh, 26rem);
   }
 }
 

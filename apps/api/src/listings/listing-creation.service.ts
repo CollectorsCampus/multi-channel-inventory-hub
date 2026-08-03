@@ -16,6 +16,7 @@ import { encodeSkuCode, HUB_SOURCE_KEY } from '../inventory/sku-code';
 import {
   applyListingDefaults,
   parseListingDefaults,
+  resolveTags,
   type ChannelListingDefaults,
 } from '../channels/listing-defaults';
 
@@ -166,6 +167,8 @@ type SelectedItem = {
     catalogItem: {
       id: string;
       name: string;
+      /** Read for tag rules, which map a catalogue game onto the store's word for it. */
+      game: string | null;
       setName: string | null;
       imageUrl: string | null;
       externalRefs: Array<{ source: string; externalId: string }>;
@@ -263,14 +266,30 @@ export class ListingCreationService {
     // Only `undefined` falls back. An explicit empty list is this run's answer
     // and must reach the channel unchanged; silently refilling it would make
     // "no tags, just this once" inexpressible.
-    const withDefaults = applyListingDefaults(
-      request,
-      await this.channelDefaults(request.channelInstanceId),
-    );
+    const defaults = await this.channelDefaults(request.channelInstanceId);
+    const withDefaults = applyListingDefaults(request, defaults);
 
     const items = await this.loadItems(ids, request.channelInstanceId);
     const optionName = withDefaults.optionName?.trim() || DEFAULT_OPTION_NAME;
-    const tags = (withDefaults.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag !== '');
+
+    /**
+     * Tags are the one field that depends on *which card* this is, so they are
+     * resolved per item rather than once per run.
+     *
+     * A store's tags are `Pokémon`, `SV04 Paradox Rift` and `Elite Trainer
+     * Box` — all three differ per card, so a single list per run is only ever
+     * right for a single-game, single-set batch. The channel's rules map facts
+     * the ledger already holds onto tags the operator chose.
+     *
+     * A run may still override them wholesale, and that wins outright: it is
+     * how `/list` says "this whole batch is one set" and how an explicit empty
+     * list says "no tags this time".
+     */
+    const runTags =
+      request.tags === undefined
+        ? null
+        : request.tags.map((tag) => tag.trim()).filter((tag) => tag !== '');
+
     const vendor = withDefaults.vendor?.trim();
     // Carried through untouched. The core does not know what a value means —
     // on Shopify it is a metaobject id — so validating or normalising it here
@@ -298,6 +317,7 @@ export class ListingCreationService {
       }
 
       const name = item.sku.catalogItem.name;
+      const tags = runTags ?? resolveTags(defaults, item.sku.catalogItem);
 
       try {
         result.listings.push(
@@ -590,6 +610,7 @@ export class ListingCreationService {
               select: {
                 id: true,
                 name: true,
+                game: true,
                 setName: true,
                 imageUrl: true,
                 externalRefs: { select: { source: true, externalId: true } },

@@ -553,6 +553,73 @@ describeDb('ListingCreationService', () => {
     });
   });
 
+  /**
+   * A price supplied by the run, which is how intake prices a card at the
+   * moment it is added. One price only makes sense for one card, which is why
+   * nothing but `intakeAndList` sets it.
+   */
+  describe('a price given by the run', () => {
+    it('reaches the channel and the allocation in one write', async () => {
+      const card = await seedCard();
+
+      await create([card.nm.inventoryItemId], { price: 1250 });
+
+      expect(createListing.mock.calls[0]?.[1].price).toBe(1250);
+      const allocation = await prisma.channelAllocation.findFirst({
+        where: { inventoryItemId: card.nm.inventoryItemId },
+      });
+      expect(allocation?.price).toBe(1250);
+    });
+
+    it('wins over a price the allocation already had', async () => {
+      const card = await seedCard();
+      await prisma.channelAllocation.create({
+        data: {
+          inventoryItemId: card.nm.inventoryItemId,
+          channelInstanceId: channelId,
+          price: 999,
+        },
+      });
+
+      await create([card.nm.inventoryItemId], { price: 1500 });
+
+      expect(createListing.mock.calls[0]?.[1].price).toBe(1500);
+    });
+
+    /**
+     * Absent is not zero. Re-running a selection must not quietly reprice a
+     * card the operator has since adjusted by hand — the failure would be a
+     * storefront changing price for no reason anyone could trace.
+     */
+    it('leaves an existing price alone when the run gives none', async () => {
+      const card = await seedCard();
+      await prisma.channelAllocation.create({
+        data: {
+          inventoryItemId: card.nm.inventoryItemId,
+          channelInstanceId: channelId,
+          price: 777,
+        },
+      });
+
+      await create([card.nm.inventoryItemId]);
+
+      expect(createListing.mock.calls[0]?.[1].price).toBe(777);
+      const allocation = await prisma.channelAllocation.findFirst({
+        where: { inventoryItemId: card.nm.inventoryItemId },
+      });
+      expect(allocation?.price).toBe(777);
+    });
+
+    /** Free is a real answer, and must survive the "absent" check above. */
+    it('treats zero as a price rather than as absent', async () => {
+      const card = await seedCard();
+
+      await create([card.nm.inventoryItemId], { price: 0 });
+
+      expect(createListing.mock.calls[0]?.[1].price).toBe(0);
+    });
+  });
+
   it('sends a price the allocation already carries, and none when it has one no more', async () => {
     const card = await seedCard();
     await prisma.channelAllocation.create({

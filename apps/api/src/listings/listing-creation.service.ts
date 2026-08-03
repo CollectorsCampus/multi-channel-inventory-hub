@@ -129,6 +129,19 @@ export interface CreateListingsRequest {
   category?: string;
   vendor?: string;
   optionName?: string;
+  /**
+   * What to sell these for, in cents. Applied to the allocation and sent at
+   * creation.
+   *
+   * **One price for the whole run, so it is only meaningful for a run of one** —
+   * which is why nothing but `intakeAndList` sets it. Fifty cards do not share
+   * a price, and `/list` deliberately leaves this alone so each keeps whatever
+   * its allocation already held.
+   *
+   * Absent leaves existing prices untouched, so re-running a selection never
+   * silently reprices a card the operator has adjusted by hand.
+   */
+  price?: number;
   actorUserId?: string;
 }
 
@@ -327,6 +340,7 @@ export class ListingCreationService {
             metafields,
             ...(category ? { category } : {}),
             ...(vendor ? { vendor } : {}),
+            ...(request.price !== undefined ? { price: request.price } : {}),
           }),
         );
       } catch (error) {
@@ -384,10 +398,27 @@ export class ListingCreationService {
       category?: string;
       vendor?: string;
       optionName?: string;
+      /**
+       * What to sell it for, in cents.
+       *
+       * Distinct from `costBasis`, which the same form also collects: that is
+       * what the card cost to buy and belongs to the ledger, this is what a
+       * customer pays and belongs to the channel. Conflating them is an easy
+       * mistake to make and an expensive one to notice.
+       */
+      price?: number;
     },
   ): Promise<{ intake: IntakeResult; listing: CreateListingsResult }> {
-    const { channelInstanceId, tags, metafields, category, vendor, optionName, ...intakeRequest } =
-      request;
+    const {
+      channelInstanceId,
+      tags,
+      metafields,
+      category,
+      vendor,
+      optionName,
+      price,
+      ...intakeRequest
+    } = request;
 
     // Deliberately not caught: with no stock recorded there is nothing to list,
     // and reporting a listing problem for a card that was never taken in would
@@ -403,6 +434,8 @@ export class ListingCreationService {
         ...(category !== undefined ? { category } : {}),
         ...(vendor !== undefined ? { vendor } : {}),
         ...(optionName !== undefined ? { optionName } : {}),
+        // A run of one, which is the only shape a single price makes sense in.
+        ...(price !== undefined ? { price } : {}),
         ...(intakeRequest.actorUserId !== undefined
           ? { actorUserId: intakeRequest.actorUserId }
           : {}),
@@ -458,6 +491,7 @@ export class ListingCreationService {
       metafields: readonly ListingMetafield[];
       category?: string;
       vendor?: string;
+      price?: number;
     },
   ): Promise<CreatedListing> {
     const { catalogItem } = item.sku;
@@ -506,10 +540,12 @@ export class ListingCreationService {
     if (content.metafields.length > 0) req.metafields = content.metafields;
     if (content.category) req.category = content.category;
     if (siblingListingId) req.siblingListingId = siblingListingId;
-    // Only a price the allocation already carries. Creation does not price
-    // anything, the same way it does not set a quantity — but sending a price
-    // we already hold saves the storefront a moment as a $0 draft.
-    if (existing?.price != null) req.price = existing.price;
+    // A price the operator gave this run, or one the allocation already
+    // carries. Creation still invents nothing — the same way it sets no
+    // quantity — but sending a price we hold saves the storefront a spell as a
+    // $0 draft, and saves a second push to correct it.
+    const price = content.price ?? existing?.price ?? null;
+    if (price != null) req.price = price;
 
     const { connector, ctx } = channel;
     const created = await this.limiter.run(connector.key, intervalFor(connector.rateLimit), () =>
@@ -546,6 +582,10 @@ export class ListingCreationService {
       // about listing a card says they want that.
       mode: existing?.mode === 'fixed' ? 'fixed' : 'pooled',
       externalListingId,
+      // Only when this run supplied one. Omitted leaves whatever the allocation
+      // already had, so re-running a selection never silently reprices a card
+      // the operator has since adjusted by hand.
+      ...(content.price !== undefined ? { price: content.price } : {}),
     });
 
     return {

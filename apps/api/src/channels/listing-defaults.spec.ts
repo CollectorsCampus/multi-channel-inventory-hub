@@ -5,6 +5,7 @@ import {
   encodeListingDefaults,
   hasDeclaredDefaults,
   parseListingDefaults,
+  resolveTags,
   type ChannelListingDefaults,
 } from './listing-defaults';
 
@@ -99,7 +100,6 @@ describe('hasDeclaredDefaults', () => {
 
 describe('applyListingDefaults', () => {
   const defaults: ChannelListingDefaults = {
-    tags: ['Pokémon'],
     metafields: [gameField],
     category: 'ae-2-2-3-2',
     vendor: 'The Pokémon Company',
@@ -110,34 +110,162 @@ describe('applyListingDefaults', () => {
   });
 
   it('never overrides what the caller asked for', () => {
-    const request = {
-      tags: ['Magic: The Gathering'],
-      metafields: [],
-      category: 'other',
-      vendor: 'Wizards of the Coast',
-    };
+    const request = { metafields: [], category: 'other', vendor: 'Wizards of the Coast' };
     expect(applyListingDefaults(request, defaults)).toEqual(request);
   });
 
   /**
-   * An override, not a gap. A run that says "no tags" must reach the channel
-   * saying no tags — silently refilling it from the channel would make the
-   * per-run choice unexpressible.
+   * An override, not a gap. A run that says "no custom fields" must reach the
+   * channel saying none — silently refilling would make the per-run choice
+   * unexpressible.
    */
   it('treats an explicitly empty list as an answer, not an omission', () => {
-    expect(applyListingDefaults({ tags: [] }, defaults).tags).toEqual([]);
+    expect(applyListingDefaults({ metafields: [] }, defaults).metafields).toEqual([]);
   });
 
   it('leaves unrelated request fields alone', () => {
-    const request = { inventoryItemIds: ['a', 'b'], tags: undefined };
-    expect(applyListingDefaults(request, { tags: ['Pokémon'] })).toEqual({
+    const request = { inventoryItemIds: ['a', 'b'], vendor: undefined };
+    expect(applyListingDefaults(request, { vendor: 'The Pokémon Company' })).toEqual({
       inventoryItemIds: ['a', 'b'],
-      tags: ['Pokémon'],
+      vendor: 'The Pokémon Company',
     });
   });
 
   it('changes nothing when the channel has declared nothing', () => {
-    const request = { tags: ['Pokémon'] };
+    const request = { vendor: 'The Pokémon Company' };
     expect(applyListingDefaults(request, {})).toEqual(request);
+  });
+
+  /**
+   * Tags depend on which card is being created, so they are resolved per item
+   * rather than once per run. Filling them in here would pick one answer for a
+   * whole batch, which is the bug this design replaced.
+   */
+  it('does not touch tags at all', () => {
+    expect(applyListingDefaults({}, { tags: ['Pokémon'] })).toEqual({});
+  });
+});
+
+/**
+ * The heart of the tag design.
+ *
+ * A store's tags are `Pokémon`, `SV04 Paradox Rift` and `Elite Trainer Box` —
+ * every one varies per card — so one list per channel can only ever be right
+ * for a single-game, single-set batch. Rules map facts the ledger already holds
+ * onto tags the operator chose, which keeps "the hub never derives a tag" while
+ * letting a mixed batch come out correct.
+ */
+describe('resolveTags', () => {
+  const defaults: ChannelListingDefaults = {
+    tagRules: [
+      { match: 'game', value: 'Pokemon', tag: 'Pokémon' },
+      { match: 'game', value: 'Magic', tag: 'Magic: The Gathering' },
+      { match: 'set', value: 'ME02: Phantasmal Flames', tag: 'ME02 Phantasmal Flames' },
+      { match: 'name-contains', value: 'Elite Trainer Box', tag: 'Elite Trainer Box' },
+    ],
+  };
+
+  const etb = {
+    name: 'Phantasmal Flames Elite Trainer Box',
+    game: 'Pokemon',
+    setName: 'ME02: Phantasmal Flames',
+  };
+
+  it('gives a card every tag whose rule matches', () => {
+    expect(resolveTags(defaults, etb)).toEqual([
+      'Pokémon',
+      'ME02 Phantasmal Flames',
+      'Elite Trainer Box',
+    ]);
+  });
+
+  /** The whole point: two cards in one batch get different, correct tags. */
+  it('gives a different card a different set', () => {
+    expect(
+      resolveTags(defaults, { name: 'Lightning Bolt', game: 'Magic', setName: 'Masters 25' }),
+    ).toEqual(['Magic: The Gathering']);
+  });
+
+  it('applies unconditional tags to everything, before the matched ones', () => {
+    const withAlways = { ...defaults, tags: ['Trading Cards'] };
+    expect(resolveTags(withAlways, etb)[0]).toBe('Trading Cards');
+    expect(resolveTags(withAlways, { name: 'Anything' })).toEqual(['Trading Cards']);
+  });
+
+  /**
+   * Exact, because the value is picked from what the catalogue stores rather
+   * than typed. A near miss must produce no tag rather than a wrong one — an
+   * untagged product is findable in the admin, a mis-tagged one is in somebody
+   * else's collection.
+   */
+  it('matches game and set exactly', () => {
+    expect(resolveTags(defaults, { name: 'x', game: 'pokemon' })).toEqual([]);
+    expect(resolveTags(defaults, { name: 'x', setName: 'ME02 Phantasmal Flames' })).toEqual([]);
+  });
+
+  /** Typed by hand, and a seller's capitalisation of "booster box" varies. */
+  it('matches a name substring case-insensitively', () => {
+    expect(resolveTags(defaults, { name: 'PHANTASMAL FLAMES ELITE TRAINER BOX' })).toEqual([
+      'Elite Trainer Box',
+    ]);
+  });
+
+  it('tolerates a card with no game or set', () => {
+    expect(resolveTags(defaults, { name: 'Dragon Shield Sleeves' })).toEqual([]);
+    expect(resolveTags(defaults, { name: 'x', game: null, setName: null })).toEqual([]);
+  });
+
+  /**
+   * Two rules arriving at the same tag is a configuration worth tolerating —
+   * a game rule and a name rule both saying `Pokémon` is an easy thing to set
+   * up and means no harm.
+   */
+  it('does not repeat a tag two rules agree on', () => {
+    const duplicated: ChannelListingDefaults = {
+      tags: ['Pokémon'],
+      tagRules: [
+        { match: 'game', value: 'Pokemon', tag: 'Pokémon' },
+        { match: 'name-contains', value: 'Elite', tag: 'Pokémon' },
+      ],
+    };
+    expect(resolveTags(duplicated, etb)).toEqual(['Pokémon']);
+  });
+
+  it('is empty when nothing is configured', () => {
+    expect(resolveTags({}, etb)).toEqual([]);
+  });
+});
+
+describe('tag rules survive storage', () => {
+  it('round-trips', () => {
+    const rules: ChannelListingDefaults = {
+      tagRules: [{ match: 'set', value: 'ME02: Phantasmal Flames', tag: 'ME02 Phantasmal Flames' }],
+    };
+    expect(parseListingDefaults(encodeListingDefaults(rules))).toEqual(rules);
+  });
+
+  it.each([
+    ['an unknown match kind', { match: 'rarity', value: 'Rare', tag: 'Rare' }],
+    ['no value', { match: 'game', value: '  ', tag: 'Pokémon' }],
+    ['no tag', { match: 'game', value: 'Pokemon', tag: '' }],
+    ['not an object', 'game=Pokemon'],
+  ])('drops a rule with %s', (_label, bad) => {
+    const good = { match: 'game', value: 'Pokemon', tag: 'Pokémon' };
+    const raw = JSON.stringify({ tagRules: [bad, good] });
+    expect(parseListingDefaults(raw).tagRules).toEqual([good]);
+  });
+
+  it('trims stored values, so a stray space cannot stop a rule matching', () => {
+    const raw = '{"tagRules":[{"match":"game","value":" Pokemon ","tag":" Pokémon "}]}';
+    expect(parseListingDefaults(raw).tagRules).toEqual([
+      { match: 'game', value: 'Pokemon', tag: 'Pokémon' },
+    ]);
+  });
+
+  /** Rules alone are a real declaration — they are the usual way to configure this. */
+  it('counts as having declared defaults', () => {
+    expect(
+      hasDeclaredDefaults({ tagRules: [{ match: 'game', value: 'Pokemon', tag: 'Pokémon' }] }),
+    ).toBe(true);
   });
 });

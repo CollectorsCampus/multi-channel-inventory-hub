@@ -20,6 +20,16 @@ import {
 import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
 import { useChannelTags } from '../api/listings';
+import { useLocalSets } from '../api/catalog';
+import { suggestTag } from '../tagSuggest';
+import type { TagRule } from '../api/channels';
+
+/** How a rule reads in a table, rather than as its wire value. */
+const RULE_LABELS: Record<TagRule['match'], string> = {
+  game: 'Game is',
+  set: 'Set is',
+  'name-contains': 'Name contains',
+};
 
 /**
  * Channel configuration (§7).
@@ -369,42 +379,83 @@ function ChannelCard({ channel }: { channel: Channel }) {
 function ListingDefaults({ channel }: { channel: Channel }) {
   const update = useUpdateChannel();
   const vocabulary = useChannelTags(channel.id, channel.capabilities.includes('listing.tags'));
+  /**
+   * What is actually in the ledger, which is what needs mapping. Offering every
+   * set tcgcsv publishes would be hundreds of rows for a shop that stocks
+   * twenty.
+   */
+  const heldSets = useLocalSets().data ?? [];
 
-  const [tags, setTags] = useState<string[]>(channel.listingDefaults.tags ?? []);
-  const [vendor, setVendor] = useState(channel.listingDefaults.vendor ?? '');
-  const [draft, setDraft] = useState('');
+  const stored = channel.listingDefaults;
+  const [rules, setRules] = useState<TagRule[]>(stored.tagRules ?? []);
+  const [vendor, setVendor] = useState(stored.vendor ?? '');
+  const [match, setMatch] = useState<TagRule['match']>('game');
+  const [value, setValue] = useState('');
+  const [tag, setTag] = useState('');
 
   if (!channel.capabilities.includes('listing.create')) return null;
 
   const declared =
-    channel.listingDefaults.tags !== undefined ||
-    channel.listingDefaults.vendor !== undefined ||
-    channel.listingDefaults.category !== undefined ||
-    channel.listingDefaults.metafields !== undefined;
+    stored.tags !== undefined ||
+    stored.tagRules !== undefined ||
+    stored.vendor !== undefined ||
+    stored.category !== undefined ||
+    stored.metafields !== undefined;
 
-  const addTag = () => {
-    const value = draft.trim();
-    if (value && !tags.includes(value)) setTags([...tags, value]);
-    setDraft('');
+  const storeTags = vocabulary.data ?? [];
+  const games = [...new Set(heldSets.flatMap((s) => (s.game ? [s.game] : [])))].sort();
+  const sets = [...new Set(heldSets.map((s) => s.setName))].sort();
+
+  const has = (m: TagRule['match'], v: string) => rules.some((r) => r.match === m && r.value === v);
+
+  /**
+   * Functional update, not `setRules([...rules, rule])`.
+   *
+   * Adding two suggestions before React re-renders — two quick clicks — makes
+   * both calls read the same stale `rules`, so the second silently replaces the
+   * first. Reproduced by clicking two chips in one tick: only one rule
+   * survived, with no error.
+   */
+  const addRule = (rule: TagRule) => {
+    setRules((current) =>
+      current.some((r) => r.match === rule.match && r.value === rule.value && r.tag === rule.tag)
+        ? current
+        : [...current, rule],
+    );
   };
+
+  /**
+   * Sets and games in the ledger with no rule yet, where exactly one of the
+   * store's own tags plainly means the same thing.
+   *
+   * Nothing is invented: the proposal is always a tag the store already has,
+   * and it only appears when there is exactly one candidate. A set the store
+   * spells two ways produces no suggestion, which is the point.
+   */
+  const suggestions: TagRule[] = [
+    ...games.map((g) => ({ match: 'game' as const, value: g })),
+    ...sets.map((s) => ({ match: 'set' as const, value: s })),
+  ]
+    .filter((s) => !has(s.match, s.value))
+    .flatMap((s) => {
+      const tag = suggestTag(s.value, storeTags);
+      return tag === null ? [] : [{ ...s, tag }];
+    })
+    .slice(0, 12);
 
   const save = () =>
     update.mutate({
       id: channel.id,
       listingDefaults: {
-        // Sent even when empty, because an empty list is an answer — "no tags"
-        // — and the only way to express it. Omitting it would read as "unset"
-        // and leave the previous value in place.
-        tags,
+        tagRules: rules,
+        // Preserved: an empty list is a real answer and the only way to say
+        // "nothing on every product", which is the usual case here.
+        ...(stored.tags !== undefined ? { tags: stored.tags } : {}),
         ...(vendor.trim() ? { vendor: vendor.trim() } : {}),
         // Carried through untouched: this form does not edit them, and dropping
         // them would silently discard a category or custom fields set elsewhere.
-        ...(channel.listingDefaults.category !== undefined
-          ? { category: channel.listingDefaults.category }
-          : {}),
-        ...(channel.listingDefaults.metafields !== undefined
-          ? { metafields: channel.listingDefaults.metafields }
-          : {}),
+        ...(stored.category !== undefined ? { category: stored.category } : {}),
+        ...(stored.metafields !== undefined ? { metafields: stored.metafields } : {}),
       },
     });
 
@@ -412,41 +463,117 @@ function ListingDefaults({ channel }: { channel: Channel }) {
     <div className="file-transport">
       <h3>New listings</h3>
       <p className="muted">
-        Applied verbatim to products created here. The hub never invents a tag — pick from what the
-        store already uses.
+        Which tags a created product gets. Every tag here is one <em>you</em> picked from the
+        store&rsquo;s own vocabulary — the rule just says which cards it applies to, so a mixed
+        batch comes out correctly tagged.
       </p>
 
+      {rules.length > 0 && (
+        <table className="compact">
+          <tbody>
+            {rules.map((rule, index) => (
+              <tr key={`${rule.match}:${rule.value}:${rule.tag}`}>
+                <td className="muted">{RULE_LABELS[rule.match]}</td>
+                <td>{rule.value}</td>
+                <td className="muted">→</td>
+                <td>
+                  <span className="chip">{rule.tag}</span>
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => setRules(rules.filter((_, i) => i !== index))}
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {suggestions.length > 0 && (
+        <>
+          <p className="field-hint">
+            Suggested from what you hold, matched against the store&rsquo;s own tags. Nothing is
+            applied until you add it.
+          </p>
+          <span className="chips">
+            {suggestions.map((s) => (
+              <button
+                key={`${s.match}:${s.value}`}
+                type="button"
+                className="chip"
+                title={`Add rule: ${RULE_LABELS[s.match]} ${s.value} → ${s.tag}`}
+                onClick={() => addRule(s)}
+              >
+                + {s.value} → {s.tag}
+              </button>
+            ))}
+          </span>
+        </>
+      )}
+
       <div className="inline-form">
-        <label htmlFor={`tag-${channel.id}`}>Tags</label>
+        <select
+          value={match}
+          onChange={(event) => setMatch(event.target.value as TagRule['match'])}
+          aria-label="What the rule looks at"
+        >
+          <option value="game">Game is</option>
+          <option value="set">Set is</option>
+          <option value="name-contains">Name contains</option>
+        </select>
+
         <input
-          id={`tag-${channel.id}`}
-          list={`tags-${channel.id}`}
-          value={draft}
-          placeholder={vocabulary.data ? 'Pick or type…' : 'Type a tag…'}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter') return;
-            // Inside a card that has its own forms; Enter must add a tag, not
-            // submit something else.
-            event.preventDefault();
-            addTag();
-          }}
+          list={`rule-values-${channel.id}-${match}`}
+          value={value}
+          placeholder={match === 'name-contains' ? 'e.g. Elite Trainer Box' : 'Pick…'}
+          onChange={(event) => setValue(event.target.value)}
+          aria-label="Value to match"
         />
-        <datalist id={`tags-${channel.id}`}>
-          {(vocabulary.data ?? []).map((tag) => (
-            <option key={tag} value={tag} />
+        <datalist id={`rule-values-${channel.id}-${match}`}>
+          {(match === 'game' ? games : match === 'set' ? sets : []).map((v) => (
+            <option key={v} value={v} />
           ))}
         </datalist>
+
+        <span className="muted">→</span>
+
+        <input
+          list={`tags-${channel.id}`}
+          value={tag}
+          placeholder={storeTags.length > 0 ? 'Pick a tag…' : 'Type a tag…'}
+          onChange={(event) => setTag(event.target.value)}
+          aria-label="Tag to apply"
+        />
+        <datalist id={`tags-${channel.id}`}>
+          {storeTags.map((t) => (
+            <option key={t} value={t} />
+          ))}
+        </datalist>
+
         {/* An explicit button, not just Enter. With a datalist open the browser
             spends Enter on accepting the highlighted suggestion, so picking a
             tag from the list and pressing Enter adds nothing and looks broken —
-            which is exactly what happened the first time this was driven. Enter
-            stays as a shortcut for someone typing a tag the store does not have
-            yet. */}
-        <button type="button" className="ghost" onClick={addTag} disabled={draft.trim() === ''}>
-          Add tag
+            which is exactly what happened the first time this was driven. */}
+        <button
+          type="button"
+          className="ghost"
+          disabled={value.trim() === '' || tag.trim() === ''}
+          onClick={() => {
+            addRule({ match, value: value.trim(), tag: tag.trim() });
+            setValue('');
+            setTag('');
+          }}
+        >
+          Add rule
         </button>
+      </div>
 
+      <div className="inline-form">
         <label htmlFor={`vendor-${channel.id}`}>Vendor</label>
         <input
           id={`vendor-${channel.id}`}
@@ -454,27 +581,14 @@ function ListingDefaults({ channel }: { channel: Channel }) {
           placeholder="optional"
           onChange={(event) => setVendor(event.target.value)}
         />
+        <span className="muted">
+          One value for the channel — set it per game with rules if your publishers differ.
+        </span>
 
         <button type="button" onClick={save} disabled={update.isPending}>
           Save
         </button>
       </div>
-
-      {tags.length > 0 && (
-        <span className="chips">
-          {tags.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              className="chip"
-              title="Remove"
-              onClick={() => setTags(tags.filter((t) => t !== tag))}
-            >
-              {tag} ×
-            </button>
-          ))}
-        </span>
-      )}
 
       <label className="inline-check">
         <input
@@ -490,17 +604,16 @@ function ListingDefaults({ channel }: { channel: Channel }) {
 
       <p className="field-hint">
         {declared
-          ? 'Adding stock creates a draft product carrying the above. Nothing becomes buyable ' +
-            'until you publish it — and these apply to every card, so use the list screen for a ' +
-            'mixed batch.'
-          : 'Save what a created product should carry first. Without it the hub would have to ' +
-            'guess a tag, and a guessed tag means a product in no collection.'}
+          ? 'Adding stock creates a draft product tagged by whichever rules match it. Nothing ' +
+            'becomes buyable until you publish it.'
+          : 'Add at least one rule first. Without one the hub would have to guess a tag, and a ' +
+            'guessed tag means a product in no collection.'}
       </p>
 
       {vocabulary.isError && (
         <p className="field-hint">
-          The store&rsquo;s tag list could not be read, so there are no suggestions. Tags can still
-          be typed — spelling must match exactly.
+          The store&rsquo;s tag list could not be read, so there are no suggestions and no picker.
+          Tags can still be typed — spelling must match exactly.
         </p>
       )}
       {update.isError && <FormError error={update.error as Error} />}

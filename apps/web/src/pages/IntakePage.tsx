@@ -12,6 +12,7 @@ import { useChannels, type Channel } from '../api/channels';
 import { describeOutcome, useIntakeAndList } from '../api/listings';
 import { SKU_CONDITIONS } from '../constants';
 import { enlargedImageUrl } from '../cardImage';
+import { previewTags } from '../tagSuggest';
 
 /**
  * Intake: search the catalog, pick a printing, add stock (§7).
@@ -548,9 +549,9 @@ function IntakeForm({
           {listOn ? (
             <>
               Created as a draft
-              {listedChannel && describeDefaults(listedChannel)}. Stock follows on its own, and
-              nothing becomes buyable until you publish it. These apply to every card added this way
-              — for a mixed batch, use the list screen, which chooses per run.
+              {listedChannel && describeDefaults(listedChannel, candidate)}. Stock follows on its
+              own, and nothing becomes buyable until you publish it. These apply to every card added
+              this way — for a mixed batch, use the list screen, which chooses per run.
             </>
           ) : (
             'Stock lands unallocated. You can list it later from the item or the list screen.'
@@ -623,31 +624,48 @@ function IntakeForm({
  * is invisible in the shop and reported by nothing.
  */
 function hasDeclaredDefaults(channel: Channel): boolean {
-  const { tags, metafields, category, vendor } = channel.listingDefaults;
+  const { tags, tagRules, metafields, category, vendor } = channel.listingDefaults;
+  // `tagRules` is the usual way to configure a channel now, so leaving it out
+  // meant a fully configured channel was silently never offered here.
   return (
-    tags !== undefined || metafields !== undefined || category !== undefined || vendor !== undefined
+    tags !== undefined ||
+    tagRules !== undefined ||
+    metafields !== undefined ||
+    category !== undefined ||
+    vendor !== undefined
   );
 }
 
 /**
- * Name what a created product will carry, in the operator's own words.
+ * Name what this *particular* card will carry, in the operator's own words.
+ *
+ * Per card rather than per channel, because that is now what the answer depends
+ * on: the channel's rules decide which tags apply, and a Pokémon card and a
+ * Magic card added in the same session get different ones. Showing the
+ * channel's whole configuration instead would be describing something that is
+ * not about to happen.
  *
  * Counts rather than values for the custom fields: those are opaque platform
- * ids that would tell a reader nothing. Tags are shown in full because they are
- * the ones that decide whether the product appears in the shop at all, and the
- * ones most likely to be wrong for the card in hand.
+ * ids that would tell a reader nothing. Tags are shown in full because they
+ * decide whether the product appears in the shop at all.
  */
-function describeDefaults(channel: Channel): string {
-  const { tags, metafields, vendor } = channel.listingDefaults;
+function describeDefaults(channel: Channel, candidate: CatalogCandidate): string {
+  const { tagRules, tags, metafields, vendor } = channel.listingDefaults;
   const parts: string[] = [];
 
-  // An explicit empty list is an answer, and a different one from "unset" —
-  // saying so out loud is what stops it reading as a bug.
-  if (tags?.length) parts.push(`tagged ${tags.join(', ')}`);
-  else if (tags) parts.push('with no tags');
+  const applied = previewTags(tagRules ?? [], tags ?? [], {
+    name: candidate.name,
+    game: candidate.game,
+    setName: candidate.setName,
+  });
+
+  if (applied.length > 0) parts.push(`tagged ${applied.join(', ')}`);
+  // Not the same as "no rules configured" — this card matched none of them, and
+  // an untagged product is in no collection, which nothing else would report.
+  else parts.push('with no tags — no rule matches this card');
 
   if (vendor) parts.push(`vendor ${vendor}`);
   if (metafields?.length) parts.push(`${metafields.length} custom field(s)`);
 
-  return parts.length > 0 ? `, ${parts.join(' · ')}` : '';
+  return `, ${parts.join(' · ')}`;
 }

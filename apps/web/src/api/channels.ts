@@ -22,8 +22,23 @@ export interface ConnectorSummary {
  * absent one — `tags: []` means "no tags" and is what lets a run say so. The
  * server depends on that distinction, so nothing here may collapse it.
  */
+/**
+ * One "cards like this get this tag" rule.
+ *
+ * The tag is the operator's, chosen from the store's own vocabulary; the rule
+ * only says which cards it applies to, from facts the ledger already holds.
+ */
+export interface TagRule {
+  match: 'game' | 'set' | 'name-contains';
+  value: string;
+  tag: string;
+}
+
 export interface ChannelListingDefaults {
+  /** Applied to every created product whatever it is. Usually empty. */
   tags?: string[];
+  /** Applied when they match the card. This is how a mixed batch is tagged correctly. */
+  tagRules?: TagRule[];
   metafields?: ListingMetafield[];
   category?: string;
   vendor?: string;

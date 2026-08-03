@@ -493,6 +493,64 @@ describeDb('ListingCreationService', () => {
       expect(sent.category).toBeUndefined();
       expect(sent.vendor).toBeUndefined();
     });
+
+    /**
+     * The reason tag rules exist. A flat list per channel is only ever right
+     * for a single-game, single-set batch — two cards from different games in
+     * one run would both get whichever tags the channel happened to hold, and
+     * on a tag-driven store that puts one of them in the wrong collection.
+     */
+    it('gives two cards in one run their own tags', async () => {
+      const pokemon = await seedCard();
+      const magic = await prisma.catalogItem.create({
+        data: {
+          name: 'Lightning Bolt',
+          searchName: 'lightning bolt',
+          game: 'Magic',
+          setName: 'Masters 25',
+          skus: { create: [{ condition: 'NM', printing: 'NORMAL', language: 'EN' }] },
+        },
+        include: { skus: true },
+      });
+      const magicItem = await prisma.inventoryItem.create({
+        data: { skuId: magic.skus[0]!.id, quantityOnHand: 1 },
+      });
+
+      await declare({
+        tagRules: [
+          { match: 'game', value: 'Pokemon', tag: 'Pokémon' },
+          { match: 'game', value: 'Magic', tag: 'Magic: The Gathering' },
+          { match: 'set', value: '30th Celebration', tag: '30th Celebration' },
+        ],
+      });
+
+      await create([pokemon.nm.inventoryItemId, magicItem.id]);
+
+      expect(createListing.mock.calls[0]?.[1].tags).toEqual(['Pokémon', '30th Celebration']);
+      expect(createListing.mock.calls[1]?.[1].tags).toEqual(['Magic: The Gathering']);
+    });
+
+    /**
+     * A run may still say "this whole batch is one set", which is how /list
+     * works when the operator is already scoped to one. It wins outright.
+     */
+    it('lets an explicit run override replace the rules', async () => {
+      const card = await seedCard();
+      await declare({ tagRules: [{ match: 'game', value: 'Pokemon', tag: 'Pokémon' }] });
+
+      await create([card.nm.inventoryItemId], { tags: ['Just This Once'] });
+
+      expect(createListing.mock.calls[0]?.[1].tags).toEqual(['Just This Once']);
+    });
+
+    it('sends no tags when no rule matches, rather than guessing one', async () => {
+      const card = await seedCard();
+      await declare({ tagRules: [{ match: 'game', value: 'Lorcana', tag: 'Disney Lorcana' }] });
+
+      await create([card.nm.inventoryItemId]);
+
+      expect(createListing.mock.calls[0]?.[1].tags).toBeUndefined();
+    });
   });
 
   it('sends a price the allocation already carries, and none when it has one no more', async () => {

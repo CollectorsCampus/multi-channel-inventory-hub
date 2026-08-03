@@ -431,8 +431,39 @@ ul.error {
   overflow-y: auto;
 }
 
+/* The art and the row are separate buttons, so the <li> is what lines them up. */
+.candidate-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.candidate-art {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+
+.candidate-art:hover,
+.candidate-art:focus-visible {
+  border-color: var(--accent);
+}
+
+/* Keeps rows aligned when a candidate has no picture. Matches the art button's
+   footprint: 44px image plus its padding and border. */
+.candidate-art-empty {
+  width: calc(44px + 1rem + 2px);
+  cursor: default;
+}
+
 .candidate {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -449,9 +480,114 @@ ul.error {
   border-color: var(--accent);
 }
 
-.candidate img {
+.candidate img,
+.candidate-art img {
   border-radius: 4px;
   flex-shrink: 0;
+}
+
+/* --- the enlarged card --- */
+
+.viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgb(0 0 0 / 72%);
+}
+
+.viewer {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+  /* Wider than a plain lightbox because the intake form lives beside the card
+     rather than under it — the picture is what you check the fields against. */
+  max-width: min(56rem, 100%);
+  /* The whole point is a big picture, so the image gets the height and the
+     panel scrolls if the window is short rather than shrinking the card. */
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.viewer-art {
+  /* Cards are 5:7. Sizing by height keeps it as large as the window allows
+     while leaving the metadata beside it readable.
+     The 44rem ceiling is set by the source images rather than by taste: the
+     largest variant either CDN publishes is 1000px tall, so going beyond this
+     would upscale — which is the blur this feature exists to avoid. */
+  height: min(78vh, 44rem);
+  width: auto;
+  max-width: 100%;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.viewer-meta {
+  /* Wide enough for the intake form to lay out as label/field pairs rather
+     than fragmenting. Below this the dialog stacks instead. */
+  min-width: 19rem;
+  flex: 1;
+}
+
+.embedded-intake {
+  margin-top: 0.5rem;
+}
+
+/* The intake form inside the dialog. A wrapping row (`.inline-form`) breaks
+   into unreadable fragments in a column this narrow, so label and control are
+   a two-column grid instead. */
+.stacked-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.stacked-form label {
+  justify-self: end;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.stacked-form input,
+.stacked-form select {
+  width: 100%;
+  margin: 0;
+}
+
+.stacked-form .form-actions {
+  grid-column: 1 / -1;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.viewer-meta h3 {
+  margin: 0 0 0.25rem;
+}
+
+/* Stacks on a narrow window: side by side there would be no room for either. */
+@media (max-width: 40rem) {
+  .viewer {
+    flex-direction: column;
+  }
+
+  .viewer-art {
+    height: auto;
+    width: 100%;
+  }
 }
 
 .candidate-body {

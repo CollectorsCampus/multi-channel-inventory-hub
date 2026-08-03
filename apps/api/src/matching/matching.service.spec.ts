@@ -3,6 +3,7 @@ import { PrismaClient } from '@hub/db';
 import type { CatalogCandidate, ChannelListingPage, Connector, Ctx } from '@hub/connector-sdk';
 import { MatchingService } from './matching.service';
 import { IntakeService } from '../inventory/intake.service';
+import { AlertsService } from '../sync/alerts.service';
 import { InventoryService } from '../inventory/inventory.service';
 import type { CatalogService } from '../catalog/catalog.service';
 import type { CatalogSourceRegistry } from '../catalog/catalog-source-registry.service';
@@ -132,7 +133,12 @@ describeDb('MatchingService', () => {
     } as unknown as CatalogService;
 
     const inventory = new InventoryService(prisma as unknown as PrismaService);
-    const intake = new IntakeService(prisma as unknown as PrismaService, catalog, inventory);
+    const intake = new IntakeService(
+      prisma as unknown as PrismaService,
+      catalog,
+      inventory,
+      new AlertsService(prisma as unknown as PrismaService),
+    );
 
     matching = new MatchingService(
       prisma as unknown as PrismaService,

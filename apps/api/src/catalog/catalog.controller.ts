@@ -1,9 +1,24 @@
-import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { RequireRole } from '../auth/decorators';
 import { CatalogService } from './catalog.service';
+import { CatalogMergeService } from './catalog-merge.service';
+
+export class MergeCatalogItemsDto {
+  @ApiProperty({
+    description: 'The item that survives. Its id keeps every SKU already built on it.',
+  })
+  @IsString()
+  @MaxLength(64)
+  winnerId!: string;
+
+  @ApiProperty({ description: 'The duplicate, deleted once its SKUs and ids have moved across.' })
+  @IsString()
+  @MaxLength(64)
+  loserId!: string;
+}
 
 export class CatalogSearchQueryDto {
   @ApiPropertyOptional({ example: 'lightning bolt' })
@@ -74,7 +89,33 @@ export class LocalSearchQueryDto {
 @ApiTags('catalog')
 @Controller('catalog')
 export class CatalogController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly merge: CatalogMergeService,
+  ) {}
+
+  /**
+   * Fold one catalog item into another.
+   *
+   * Admin-only, and destructive in a way nothing else here is: a catalog item
+   * cascades to its SKUs, their inventory, and every stock movement and
+   * allocation beneath. The service therefore validates completely before it
+   * writes, and refuses rather than deciding anything about stock.
+   */
+  @Post('local/merge')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Merge a duplicate catalog item into another.',
+    description:
+      'For when two sources with no id in common created two items for one real product — ' +
+      'the split each source inherits as its own SKUs and its own idea of the stock. The ' +
+      'winner keeps its identity, because its id is what every SKU code already written to a ' +
+      'storefront hangs off. Refused, with the rows named, if a duplicate SKU on the loser ' +
+      'holds stock, allocations or history: merging cannot decide what happens to those.',
+  })
+  mergeItems(@Body() body: MergeCatalogItemsDto) {
+    return this.merge.merge(body.winnerId, body.loserId);
+  }
 
   @Get('sources')
   @RequireRole('viewer')

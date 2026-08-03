@@ -54,7 +54,16 @@ export interface RaiseAlertInput {
 }
 
 export interface RaiseFlagInput extends Omit<RaiseAlertInput, 'title' | 'detail'> {
-  channelInstanceId: string;
+  /**
+   * Null for a condition that is not about a channel at all.
+   *
+   * Every original flag was a sync fact, so this was required. A split catalog
+   * item is the first that is not: it is about the ledger's own data and would
+   * be just as true with no channel connected. The identity below is
+   * `(kind, channelInstanceId, source)` either way, and `null` is a perfectly
+   * good third of a key.
+   */
+  channelInstanceId?: string | null;
 
   /**
    * Discriminator within (kind, channel).
@@ -170,7 +179,7 @@ export class AlertsService {
 
   private async findFlag(
     kind: string,
-    channelInstanceId: string,
+    channelInstanceId: string | null | undefined,
     source: string,
   ): Promise<{ id: string; occurrences: number } | null> {
     // Filtered in memory on `source` because it lives inside the JSON-encoded
@@ -178,7 +187,10 @@ export class AlertsService {
     // bounded by "open alerts of one kind on one channel", which flag semantics
     // keep at a handful.
     const open = await this.prisma.alert.findMany({
-      where: { kind, channelInstanceId, status: 'open' },
+      // `?? null` rather than passing undefined through: Prisma drops an
+      // undefined filter entirely, which would match alerts on *every* channel
+      // and let an unrelated one masquerade as this flag.
+      where: { kind, channelInstanceId: channelInstanceId ?? null, status: 'open' },
       select: { id: true, context: true },
     });
 

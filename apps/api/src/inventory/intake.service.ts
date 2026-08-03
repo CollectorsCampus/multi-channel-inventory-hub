@@ -3,6 +3,7 @@ import type { CatalogCandidate } from '@hub/connector-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { InventoryService, type LedgerSnapshot } from './inventory.service';
+import { AlertsService } from '../sync/alerts.service';
 
 /**
  * Intake: catalog result → stock on the shelf (§7).
@@ -47,6 +48,7 @@ export class IntakeService {
     private readonly prisma: PrismaService,
     private readonly catalog: CatalogService,
     private readonly inventory: InventoryService,
+    private readonly alerts: AlertsService,
   ) {}
 
   async intake(request: IntakeRequest): Promise<IntakeResult> {
@@ -346,22 +348,78 @@ export class IntakeService {
     return { catalogItemId: created.id, createdCatalogItem: true };
   }
 
+  /**
+   * Record every id a source supplied, and report the one case that is a real
+   * problem.
+   *
+   * Two failures land in the same `catch`, and they are not the same thing:
+   *
+   * - **The ref is already on this item.** A concurrent intake won the race.
+   *   Harmless — the row that exists says exactly what this one would have.
+   * - **The ref belongs to a *different* catalog item.** Two items now disagree
+   *   about which product a platform id refers to, which means the catalogue
+   *   has split one real card in two. Everything downstream inherits the split:
+   *   each item gets its own SKUs, its own allocations and its own idea of the
+   *   stock, which is the double-sell this ledger exists to prevent.
+   *
+   * That second case used to be a `debug` line, so nobody would ever see it.
+   * It is a fact about data integrity that persists until somebody merges the
+   * two, so it is a **flag** — one open alert per colliding id, refreshed —
+   * rather than one row per intake that touches it.
+   */
   private async addMissingRefs(catalogItemId: string, refs: Array<[string, string]>) {
     for (const [source, externalId] of refs) {
       try {
-        // The unique index on (source, externalId) is the real guard; a
-        // concurrent intake losing this race is harmless and ignorable.
+        // The unique index on (source, externalId) is the real guard.
         await this.prisma.catalogExternalRef.create({
           data: { catalogItemId, source, externalId },
         });
       } catch {
-        // Already present, or claimed by another catalog item. Neither is worth
-        // failing an intake over, but the second case means two items disagree
-        // about which product an id refers to, which someone should eventually
-        // look at.
-        this.logger.debug(`Could not add external ref ${source}:${externalId} to ${catalogItemId}`);
+        // Ask who actually holds it rather than guessing from the error: the
+        // answer is what separates a lost race from a split catalogue.
+        const owner = await this.prisma.catalogExternalRef.findUnique({
+          where: { source_externalId: { source, externalId } },
+          select: { catalogItemId: true },
+        });
+
+        if (!owner || owner.catalogItemId === catalogItemId) continue;
+
+        await this.reportRefConflict(source, externalId, catalogItemId, owner.catalogItemId);
       }
     }
+  }
+
+  private async reportRefConflict(
+    source: string,
+    externalId: string,
+    claimant: string,
+    holder: string,
+  ): Promise<void> {
+    const [a, b] = await Promise.all([
+      this.prisma.catalogItem.findUnique({ where: { id: holder }, select: { name: true } }),
+      this.prisma.catalogItem.findUnique({ where: { id: claimant }, select: { name: true } }),
+    ]);
+
+    this.logger.warn(
+      `Catalog split: ${source}:${externalId} is held by ${holder} but ${claimant} claims it too.`,
+    );
+
+    await this.alerts.raiseFlag({
+      kind: 'invariant_violation',
+      severity: 'warning',
+      // Per colliding id, so two unrelated splits stay two alerts and neither
+      // hides the other.
+      source: `catalog-ref:${source}:${externalId}`,
+      title: (occurrences) =>
+        `Two catalog items claim ${source} ${externalId}` +
+        (occurrences > 1 ? ` (seen ${occurrences} times)` : ''),
+      detail:
+        `"${a?.name ?? holder}" holds it and "${b?.name ?? claimant}" claims it. One real ` +
+        `product has been split in two, so stock entered against one is invisible to the ` +
+        `other. Merge them from the catalog screen; nothing is corrected automatically ` +
+        `because which item survives decides where existing stock ends up.`,
+      context: { source, externalId, holder, claimant },
+    });
   }
 }
 

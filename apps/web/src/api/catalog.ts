@@ -138,10 +138,21 @@ export interface IngestReport {
   durationMs: number;
 }
 
+/**
+ * The server's default ceiling on sets per run, mirrored here.
+ *
+ * It exists so "ingest everything" cannot cost thousands of requests before
+ * anyone notices, and the server **refuses** rather than truncating — a
+ * half-ingested game that looks complete is worse than a rejected run. So a
+ * deliberately large selection has to raise it, and the screen says what that
+ * costs before it does.
+ */
+export const DEFAULT_MAX_SETS = 50;
+
 export function useRunIngest() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { sourceKey: string; game?: string; setIds?: string[] }) =>
+    mutationFn: (body: { sourceKey: string; game?: string; setIds?: string[]; maxSets?: number }) =>
       apiFetch<IngestReport>('/catalog/ingest', { method: 'POST', body: JSON.stringify(body) }),
     // The local catalog just changed; every local view is stale.
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['catalog', 'local'] }),

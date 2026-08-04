@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
+  DEFAULT_MAX_SETS,
   useCatalogSources,
   useIngestableSets,
   useLocalSearch,
   useLocalSets,
   useRunIngest,
+  type LocalSetSummary,
 } from '../api/catalog';
 import { useCurrentUser } from '../auth';
 
@@ -35,19 +37,27 @@ export function CatalogPage() {
 
   const search = useLocalSearch(debounced, undefined, setName || undefined);
 
-  const games = useMemo(() => {
-    const byGame = new Map<string, { sets: number; items: number }>();
+  /**
+   * Sets grouped under their game.
+   *
+   * A flat list was fine at 48 sets and stops being fine well before a full
+   * game is ingested — Magic alone is 453. Grouping keeps the page a summary by
+   * default, which is the question this panel usually answers ("do I hold any
+   * Lorcana?") rather than the one a flat table answers ("what is set 312?").
+   */
+  const byGame = useMemo(() => {
+    const map = new Map<string, { sets: LocalSetSummary[]; items: number }>();
     for (const set of localSets.data ?? []) {
       const key = set.game ?? '(no game)';
-      const entry = byGame.get(key) ?? { sets: 0, items: 0 };
-      entry.sets += 1;
+      const entry = map.get(key) ?? { sets: [], items: 0 };
+      entry.sets.push(set);
       entry.items += set.items;
-      byGame.set(key, entry);
+      map.set(key, entry);
     }
-    return byGame;
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [localSets.data]);
 
-  const totalItems = [...games.values()].reduce((sum, g) => sum + g.items, 0);
+  const totalItems = byGame.reduce((sum, [, g]) => sum + g.items, 0);
 
   return (
     <section>
@@ -131,40 +141,50 @@ export function CatalogPage() {
         {localSets.data && localSets.data.length > 0 && (
           <>
             <p className="muted">
-              {localSets.data.length} set(s), {totalItems} item(s), across{' '}
-              {[...games.keys()].filter((g) => g !== '(no game)').join(', ')}.
+              {localSets.data.length} set(s), {totalItems} item(s), across {byGame.length} game(s).
             </p>
-            <table className="compact">
-              <thead>
-                <tr>
-                  <th>Game</th>
-                  <th>Set</th>
-                  <th className="num">Items</th>
-                </tr>
-              </thead>
-              <tbody>
-                {localSets.data.map((set) => (
-                  <tr key={`${set.game ?? ''}:${set.setName}`}>
-                    <td>{set.game ?? '—'}</td>
-                    <td>
-                      {/* Set names are case-sensitive downstream, so browsing by
-                          click uses the stored spelling rather than a typed one. */}
-                      <button
-                        type="button"
-                        className="linklike"
-                        onClick={() => {
-                          setSetName(set.setName);
-                          setText('');
-                        }}
-                      >
-                        {set.setName}
-                      </button>
-                    </td>
-                    <td className="num">{set.items}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {byGame.map(([game, entry]) => (
+              // Expanded when it is the only game, because a disclosure hiding
+              // the single thing on the page is just an extra click.
+              <details key={game} className="quiet-details" open={byGame.length === 1}>
+                <summary>
+                  {game === '(no game)' ? 'No game' : game}
+                  <span className="muted">
+                    {' '}
+                    · {entry.sets.length} set(s), {entry.items} item(s)
+                  </span>
+                </summary>
+                <table className="compact">
+                  <thead>
+                    <tr>
+                      <th>Set</th>
+                      <th className="num">Items</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entry.sets.map((set) => (
+                      <tr key={`${set.game ?? ''}:${set.setName}`}>
+                        <td>
+                          {/* Set names are case-sensitive downstream, so browsing
+                              by click uses the stored spelling, never a typed one. */}
+                          <button
+                            type="button"
+                            className="linklike"
+                            onClick={() => {
+                              setSetName(set.setName);
+                              setText('');
+                            }}
+                          >
+                            {set.setName}
+                          </button>
+                        </td>
+                        <td className="num">{set.items}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            ))}
           </>
         )}
       </div>
@@ -267,6 +287,38 @@ function IngestPanel() {
             {available.data.length} set(s) available. Pick the ones to ingest — an unselected run is
             refused server-side rather than ingesting everything.
           </p>
+          <div className="inline-form">
+            <button
+              type="button"
+              onClick={() => setSelected(new Set(sorted.map((s) => s.setId)))}
+              disabled={selected.size === sorted.length}
+            >
+              Select all {sorted.length}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              disabled={selected.size === 0}
+            >
+              Clear
+            </button>
+            {selected.size > 0 && <span className="muted">{selected.size} selected</span>}
+          </div>
+          {/*
+            The server's own guard is a *default* of 50, and it refuses rather
+            than truncating — so a deliberate 217-set run would otherwise be
+            rejected for being what the operator asked for. Raising the ceiling
+            to the selection is honest because the request names every set
+            explicitly: nothing can be silently left out. The cost is real
+            though, so it is stated rather than discovered.
+          */}
+          {selected.size > DEFAULT_MAX_SETS && (
+            <p className="field-hint">
+              That is {selected.size} sets, so this run makes {selected.size} requests to the source
+              and will take a while. Sources are community infrastructure — worth doing once rather
+              than repeatedly.
+            </p>
+          )}
           <div className="ingest-sets">
             {sorted.map((set) => (
               <label key={set.setId} className="inline-check">
@@ -292,6 +344,7 @@ function IngestPanel() {
                 sourceKey,
                 ...(game ? { game } : {}),
                 setIds: [...selected],
+                ...(selected.size > DEFAULT_MAX_SETS ? { maxSets: selected.size } : {}),
               })
             }
           >

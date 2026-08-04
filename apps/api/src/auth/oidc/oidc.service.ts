@@ -392,6 +392,27 @@ export class OidcService {
    * Undefined means "no claim configured", which is different from "configured
    * but matched nothing" — the caller uses the distinction to decide whether to
    * overwrite an existing role.
+   *
+   * ## Why the two failures are logged, and logged differently
+   *
+   * Falling back to the default role is the safe direction — nobody is promoted
+   * by a misconfiguration — but it is **silent**, and that is its own problem:
+   * the operator sees a working login and a quieter account than they intended,
+   * with nothing anywhere saying why. Proving this against Entra, both the
+   * operator and the agent reasoned past it in opposite directions inside two
+   * messages, because "landed as viewer" is what you see whether the claim
+   * mapped to viewer, matched nothing, or never arrived.
+   *
+   * The two causes need different fixes, so they get different messages: an
+   * absent claim is a problem at the identity provider (not configured, not
+   * assigned, wrong claim name), while a present-but-unmapped one is a problem
+   * in `OIDC_ROLE_MAP` — usually spelling or case.
+   *
+   * The unmapped values **are** logged. They are group or role identifiers
+   * rather than personal data, and they are precisely what makes the mismatch
+   * fixable; without them the message would say only that something is wrong.
+   * The absent-claim case logs claim **names** and never their values, because
+   * an ID token carries the subject's name and email.
    */
   private roleFromClaims(claims: JWTPayload): UserRole | undefined {
     const settings = this.settings();
@@ -405,6 +426,22 @@ export class OidcService {
           raw.split(/[\s,]+/).filter(Boolean)
         : [];
 
+    if (values.length === 0) {
+      // Absent and empty are different diagnoses, and saying "no such claim"
+      // for `groups: []` sends the operator to the provider's token
+      // configuration when the real answer is that the subject is in no group.
+      this.logger.warn(
+        raw === undefined
+          ? `OIDC_ROLE_CLAIM is "${settings.roleClaim}", but the ID token carries no such ` +
+              `claim. Falling back to OIDC_DEFAULT_ROLE ("${settings.defaultRole}"). The ` +
+              `token's claims are: ${Object.keys(claims).sort().join(', ')}.`
+          : `OIDC_ROLE_CLAIM "${settings.roleClaim}" is present but empty, so the provider ` +
+              `reports this subject in no group or role. Falling back to OIDC_DEFAULT_ROLE ` +
+              `("${settings.defaultRole}").`,
+      );
+      return settings.defaultRole;
+    }
+
     // Most privileged wins when a user is in several mapped groups. The reverse
     // would mean adding somebody to a second group could demote them.
     const ranked: UserRole[] = ['admin', 'editor', 'viewer'];
@@ -412,6 +449,11 @@ export class OidcService {
       if (values.some((value) => settings.roleMap[value] === role)) return role;
     }
 
+    this.logger.warn(
+      `OIDC_ROLE_CLAIM "${settings.roleClaim}" carried [${values.join(', ')}], none of which ` +
+        `appears in OIDC_ROLE_MAP. Falling back to OIDC_DEFAULT_ROLE ` +
+        `("${settings.defaultRole}"). The map is matched exactly, including case.`,
+    );
     return settings.defaultRole;
   }
 

@@ -69,6 +69,53 @@ export interface LocalSetSummary {
   items: number;
 }
 
+/**
+ * What a clear would remove, or did remove.
+ *
+ * `protectedCount` is shown alongside `clearable` deliberately: the reassuring
+ * fact here is not the number that goes away, it is the number that provably
+ * cannot — because it holds a SKU, at any quantity.
+ */
+export interface CatalogClearPreview {
+  clearable: number;
+  protectedCount: number;
+}
+
+export interface CatalogClearReport extends CatalogClearPreview {
+  externalRefsRemoved: number;
+}
+
+/**
+ * Fetched only when requested, and with no cached staleness window: the
+ * operator asked what a destructive action would do right now, not a few
+ * minutes ago.
+ */
+export function useCatalogClearPreview(game: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['catalog', 'local', 'clear-preview', game],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (game) params.set('game', game);
+      const qs = params.toString();
+      return apiFetch<CatalogClearPreview>(`/catalog/local/clear-preview${qs ? `?${qs}` : ''}`);
+    },
+    enabled,
+    staleTime: 0,
+  });
+}
+
+export function useClearCatalog() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { game?: string }) =>
+      apiFetch<CatalogClearReport>('/catalog/local/clear', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['catalog', 'local'] }),
+  });
+}
+
 export function useLocalSets(game?: string) {
   return useQuery({
     queryKey: ['catalog', 'local', 'sets', game],

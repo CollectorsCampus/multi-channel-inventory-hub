@@ -5,6 +5,13 @@ import { useDevMode } from '../devMode';
 import { useQueryConsoleStatus } from '../api/queryConsole';
 import { useChannels } from '../api/channels';
 import {
+  useOidcSettings,
+  useTestOidcSettings,
+  useUpdateOidcSettings,
+  type OidcField,
+  type OidcSettingsPatch,
+} from '../api/settings';
+import {
   ROLE_DESCRIPTIONS,
   USER_ROLES,
   useCreateUser,
@@ -25,9 +32,15 @@ import {
  * - **Per-channel settings** live on the channel, because that is the thing
  *   they belong to and a channel picker on a settings page is just a worse
  *   version of the channels screen.
- * - **Environment configuration** is reported read-only. `AUTH_PROVIDER` and
- *   the query console are set in the environment and read once at boot, so a
- *   form here could not apply them without lying about when they take effect.
+ * - **Environment configuration** is reported read-only, because a form over a
+ *   value read once at boot would lie about when it takes effect.
+ *
+ * Single sign-on is the one thing that crossed that line, and it kept the rule
+ * rather than breaking it: a field the environment declares is shown **locked**
+ * and the server refuses to write it, so the form still only offers what it
+ * actually controls. It earned the exception because "add an identity provider"
+ * is done once, after the first local admin exists, by someone running a
+ * published image who has no reason to be holding a shell.
  */
 export function SettingsPage() {
   const { data: user } = useCurrentUser();
@@ -43,6 +56,7 @@ export function SettingsPage() {
       </header>
 
       <Deployment />
+      {isAdmin && <SingleSignOn />}
       <Navigation />
 
       {/* Server-enforced; the panel is shown to everyone and explains itself,
@@ -92,6 +106,198 @@ function Deployment() {
         them in <code>.env</code> and restart. Per-channel settings — including what a created
         listing carries — live on <Link to="/channels">Channels</Link>.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Single sign-on, editable — except where the environment owns a field.
+ *
+ * Two things here are guards rather than decoration, and both mirror rules the
+ * server enforces:
+ *
+ * - **A locked field is disabled and says why.** The server refuses to write
+ *   one, so an enabled input would be a control that does nothing.
+ * - **Test before enabling.** Switching SSO on with an unreachable issuer used
+ *   to be impossible — a bad `OIDC_ISSUER_URL` failed at boot. Stored
+ *   configuration moves that failure to somebody's next login, so the server
+ *   fetches discovery before accepting the change and this offers the same
+ *   check up front.
+ */
+function SingleSignOn() {
+  const settings = useOidcSettings(true);
+  const update = useUpdateOidcSettings();
+  const test = useTestOidcSettings();
+
+  const [patch, setPatch] = useState<OidcSettingsPatch>({});
+  const view = settings.data;
+
+  if (settings.isError) {
+    return (
+      <div className="panel">
+        <h2>Single sign-on</h2>
+        <p className="muted">Could not be read. It needs the admin role.</p>
+      </div>
+    );
+  }
+  if (!view) return null;
+
+  const field = (name: OidcField) => view.fields[name];
+  const locked = (name: OidcField) => field(name).managedByEnv;
+  const current = (name: OidcField) => (patch[name] as string | undefined) ?? field(name).value;
+  const set = (name: OidcField, value: string | boolean) =>
+    setPatch((p) => ({ ...p, [name]: value }));
+
+  const enabled = (patch.enabled ?? field('enabled').value === 'true') === true;
+  const dirty = Object.keys(patch).length > 0;
+
+  // `.field` is the stacking class the rest of the app uses. There is no
+  // `.stacked`; inventing one rendered every control on a single run-on line,
+  // which no test could have caught and the accessibility tree reported as
+  // perfectly well-formed.
+  const text = (name: OidcField, label: string, hint?: string, placeholder?: string) => (
+    <label className="field" key={name}>
+      <span>
+        {label}
+        {locked(name) && <span className="chip"> set by the environment</span>}
+      </span>
+      <input
+        value={current(name)}
+        disabled={locked(name)}
+        placeholder={placeholder}
+        onChange={(event) => set(name, event.target.value)}
+      />
+      {hint && <span className="field-hint">{hint}</span>}
+    </label>
+  );
+
+  return (
+    <div className="panel">
+      <h2>Single sign-on</h2>
+      <p className="muted">
+        Any OpenID Connect provider, with PKCE. Applies immediately — no restart. Register{' '}
+        <code>{view.redirectUri}</code> as the redirect URI with your provider.
+      </p>
+
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={locked('enabled')}
+          onChange={(event) => set('enabled', event.target.checked)}
+        />
+        Offer SSO on the login screen
+        {locked('enabled') && <span className="chip">set by the environment</span>}
+      </label>
+
+      {text(
+        'issuer',
+        'Issuer URL',
+        'The base URL; discovery appends /.well-known/openid-configuration. For Entra use your tenant id, never "common".',
+        'https://login.microsoftonline.com/<tenant>/v2.0',
+      )}
+      {text('clientId', 'Client ID')}
+
+      <label className="field">
+        <span>
+          Client secret
+          {locked('clientSecret') && <span className="chip"> set by the environment</span>}
+        </span>
+        <input
+          type="password"
+          value={patch.clientSecret ?? ''}
+          disabled={locked('clientSecret')}
+          placeholder={view.clientSecretSet ? 'Stored — leave blank to keep' : 'Not set'}
+          onChange={(event) => set('clientSecret', event.target.value)}
+        />
+        <span className="field-hint">
+          Stored encrypted and never shown again. Register the app as a <em>Web</em> client, not a
+          single-page application — the code is exchanged here, with this secret.
+        </span>
+      </label>
+
+      {text('scopes', 'Scopes')}
+      {text(
+        'roleClaim',
+        'Role claim',
+        'Set it and the provider becomes authoritative: the mapped role is reapplied on every login. Blank leaves roles managed here.',
+        'roles',
+      )}
+      {text(
+        'roleMap',
+        'Role map',
+        'Matched exactly, including case. An unmapped value falls back to the default role and is logged.',
+        '{"admin":"admin","viewer":"viewer"}',
+      )}
+
+      <label className="field">
+        <span>
+          Role for anyone unmapped
+          {locked('defaultRole') && <span className="chip"> set by the environment</span>}
+        </span>
+        <select
+          value={current('defaultRole')}
+          disabled={locked('defaultRole')}
+          onChange={(event) => set('defaultRole', event.target.value)}
+        >
+          {USER_ROLES.map((role) => (
+            <option key={role} value={role}>
+              {role}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={(patch.allowLocalLogin ?? field('allowLocalLogin').value === 'true') === true}
+          disabled={locked('allowLocalLogin')}
+          onChange={(event) => set('allowLocalLogin', event.target.checked)}
+        />
+        Keep password login working
+        {locked('allowLocalLogin') && <span className="chip">set by the environment</span>}
+      </label>
+      <p className="field-hint">
+        Break-glass. Turning it off is refused until an SSO user has actually signed in, because a
+        mistyped redirect URI would otherwise lock everyone out.
+      </p>
+
+      {text(
+        'allowedEndpointOrigins',
+        'Extra endpoint origins',
+        'Only if the provider serves endpoints off its issuer’s origin. Google does; Entra, Auth0, Keycloak and Okta do not.',
+        'https://oauth2.googleapis.com',
+      )}
+
+      <div className="inline-form">
+        <button
+          type="button"
+          onClick={() => test.mutate(patch)}
+          disabled={test.isPending || current('issuer') === ''}
+        >
+          {test.isPending ? 'Testing…' : 'Test connection'}
+        </button>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+          disabled={!dirty || update.isPending}
+        >
+          {update.isPending ? 'Saving…' : 'Save'}
+        </button>
+        {dirty && <span className="muted">Unsaved changes</span>}
+      </div>
+
+      {test.isSuccess && (
+        <p className="field-hint">
+          Reached <code>{test.data.issuer}</code>. This proves the issuer resolves and its endpoints
+          are allowed — it does <em>not</em> check the client secret, which only a real sign-in
+          exercises.
+        </p>
+      )}
+      {test.isError && <p className="error">{(test.error as Error).message}</p>}
+      {update.isError && <p className="error">{(update.error as Error).message}</p>}
     </div>
   );
 }

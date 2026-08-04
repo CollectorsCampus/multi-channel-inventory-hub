@@ -97,7 +97,36 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+/**
+ * The variables the operator actually declared, captured before defaults exist.
+ *
+ * **`process.env` cannot answer this, and that is not obvious.** NestJS's
+ * `ConfigModule` assigns the *validated* configuration — schema defaults
+ * included — back onto `process.env` once `validateEnv` returns. So by the time
+ * any provider looks, `AUTH_PROVIDER` reads `local` and `OIDC_SCOPES` reads
+ * `openid profile email` on an instance whose operator set neither.
+ *
+ * That matters wherever "did someone declare this" is a different question from
+ * "what is its value" — which is exactly what the settings screen needs, to
+ * decide whether a field is owned by the environment and must be shown locked.
+ * Without this, every field carrying a schema default looked locked on a
+ * deployment that had declared nothing, and the SSO form was almost entirely
+ * read-only for no reason. Found by looking at the rendered page.
+ */
+let declared: Record<string, string> = {};
+
+/** A copy, so a caller cannot mutate what the rest of the app reads. */
+export function declaredEnv(): Record<string, string> {
+  return { ...declared };
+}
+
 export function validateEnv(raw: Record<string, unknown>): Env {
+  declared = Object.fromEntries(
+    Object.entries(raw)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => [key, String(value)]),
+  );
+
   const parsed = envSchema.safeParse(raw);
 
   if (!parsed.success) {

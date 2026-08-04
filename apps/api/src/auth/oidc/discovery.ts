@@ -41,6 +41,46 @@ export function discoveryUrl(issuer: string): string {
 }
 
 /**
+ * Refuse an issuer this server should not be making a request to.
+ *
+ * The issuer is the one URL here the server fetches *before* anything about it
+ * has been validated, so it is the server-side request forgery surface — and it
+ * became a wider one when the issuer stopped being environment-only and could
+ * be set by an admin from a browser. CodeQL flagged exactly that.
+ *
+ * **HTTPS, except on loopback.** The same rule the token endpoint already
+ * enforces below, applied earlier. It is deliberately not an allow-list of
+ * public addresses: this is self-hosted software, and a Keycloak or Authentik
+ * on a private network is a first-class deployment rather than an attack. What
+ * it does remove is the plain-HTTP path to link-local and metadata endpoints —
+ * `http://169.254.169.254/…` is the canonical target, and it does not speak
+ * TLS.
+ *
+ * The residual risk is an **admin** causing one HTTPS GET to a host of their
+ * choosing, whose response must then parse as a discovery document to reveal
+ * anything. That capability is inherent to the feature: configuring an identity
+ * provider means this server will fetch it.
+ */
+export function assertFetchableIssuer(issuer: string): void {
+  let url: URL;
+  try {
+    url = new URL(issuer);
+  } catch {
+    throw new Error(
+      `"${issuer}" is not a URL. The issuer is a base URL, e.g. https://idp.example.com.`,
+    );
+  }
+
+  const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !loopback) {
+    throw new Error(
+      `The issuer must be https (${url.protocol}//${url.host} is not). Only loopback may use ` +
+        `plain HTTP, for a provider running on this machine during development.`,
+    );
+  }
+}
+
+/**
  * Fetch and validate an issuer's discovery document.
  *
  * Throws with an actionable message on anything unusable. There is no partial
@@ -55,6 +95,7 @@ export async function fetchDiscovery(
   /** Extra origins the operator accepts endpoints on. See {@link assertSameOrigin}. */
   allowedOrigins: readonly string[] = [],
 ): Promise<OidcDiscovery> {
+  assertFetchableIssuer(issuer);
   const url = discoveryUrl(issuer);
 
   let response: Response;

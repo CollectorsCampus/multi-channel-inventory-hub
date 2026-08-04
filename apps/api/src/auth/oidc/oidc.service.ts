@@ -15,6 +15,7 @@ import {
 } from 'jose';
 import type { UserRole } from '@hub/db';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuthSettingsService } from '../../settings/auth-settings.service';
 import { parseAllowedOrigins, parseRoleMap } from '../../config/env';
 import { fetchDiscovery, type FetchLike, type OidcDiscovery } from './discovery';
 import { createPkcePair, randomToken, safeEqual } from './pkce';
@@ -92,6 +93,13 @@ export class OidcService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     /**
+     * Where the settings come from: the environment where it declares one, the
+     * database otherwise. Everything here reads through it rather than through
+     * `ConfigService` directly, so there is exactly one answer to "what is in
+     * effect" and the settings screen cannot disagree with the login flow.
+     */
+    private readonly authSettings: AuthSettingsService,
+    /**
      * The single network seam — discovery, the token exchange and the JWKS all
      * go through it, so a test can stand up a whole identity provider.
      *
@@ -104,23 +112,31 @@ export class OidcService {
     @Optional() private readonly doFetch: FetchLike = (url, init) => fetch(url, init),
   ) {}
 
+  /**
+   * Whether SSO is offered at all.
+   *
+   * Configured *and* switched on: a half-filled configuration must not put a
+   * "Sign in with SSO" button in front of anyone, because the failure would
+   * land after the redirect, on the provider's own error page, where it reads
+   * as the provider being broken.
+   */
   get enabled(): boolean {
-    return this.config.get<string>('AUTH_PROVIDER') === 'oidc';
+    const settings = this.authSettings.effective();
+    return settings.enabled && settings.issuer !== '' && settings.clientId !== '';
   }
 
   settings(): OidcSettings {
+    const stored = this.authSettings.effective();
     return {
-      issuer: this.config.getOrThrow<string>('OIDC_ISSUER_URL'),
-      clientId: this.config.getOrThrow<string>('OIDC_CLIENT_ID'),
-      clientSecret: this.config.getOrThrow<string>('OIDC_CLIENT_SECRET'),
-      scopes: this.config.get<string>('OIDC_SCOPES', 'openid profile email'),
-      roleClaim: this.config.get<string>('OIDC_ROLE_CLAIM'),
-      roleMap: parseRoleMap(this.config.get<string>('OIDC_ROLE_MAP')),
-      defaultRole: this.config.get<UserRole>('OIDC_DEFAULT_ROLE', 'viewer'),
-      allowLocalLogin: this.config.get<boolean>('OIDC_ALLOW_LOCAL_LOGIN') !== false,
-      allowedEndpointOrigins: parseAllowedOrigins(
-        this.config.get<string>('OIDC_ALLOWED_ENDPOINT_ORIGINS'),
-      ),
+      issuer: stored.issuer,
+      clientId: stored.clientId,
+      clientSecret: stored.clientSecret,
+      scopes: stored.scopes,
+      ...(stored.roleClaim === '' ? {} : { roleClaim: stored.roleClaim }),
+      roleMap: parseRoleMap(stored.roleMap),
+      defaultRole: stored.defaultRole,
+      allowLocalLogin: stored.allowLocalLogin,
+      allowedEndpointOrigins: parseAllowedOrigins(stored.allowedEndpointOrigins),
     };
   }
 

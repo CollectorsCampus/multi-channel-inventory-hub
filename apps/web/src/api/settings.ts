@@ -1,0 +1,100 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiFetch } from './client';
+
+/**
+ * Single sign-on configuration, editable after first-run.
+ *
+ * Every field carries `managedByEnv`. Where that is true the environment
+ * declared it, the server refuses to change it, and the form disables the
+ * input — so what looks editable is exactly what the endpoint controls. That is
+ * the property the settings screen was kept read-only to protect, preserved
+ * rather than traded away.
+ */
+
+export type OidcField =
+  | 'enabled'
+  | 'issuer'
+  | 'clientId'
+  | 'clientSecret'
+  | 'scopes'
+  | 'roleClaim'
+  | 'roleMap'
+  | 'defaultRole'
+  | 'allowLocalLogin'
+  | 'allowedEndpointOrigins';
+
+export interface OidcFieldView {
+  value: string;
+  managedByEnv: boolean;
+}
+
+export interface OidcSettingsView {
+  fields: Record<OidcField, OidcFieldView>;
+  /** Whether a secret is stored. Never the secret. */
+  clientSecretSet: boolean;
+  redirectUri: string;
+}
+
+export interface OidcSettingsPatch {
+  enabled?: boolean;
+  issuer?: string;
+  clientId?: string;
+  /** Omit to keep the stored one; "" clears it. */
+  clientSecret?: string;
+  scopes?: string;
+  roleClaim?: string;
+  roleMap?: string;
+  defaultRole?: 'viewer' | 'editor' | 'admin';
+  allowLocalLogin?: boolean;
+  allowedEndpointOrigins?: string;
+}
+
+export interface OidcTestResult {
+  ok: true;
+  issuer: string;
+  endpoints: string[];
+}
+
+export function useOidcSettings(enabled: boolean) {
+  return useQuery({
+    queryKey: ['settings', 'oidc'],
+    queryFn: () => apiFetch<OidcSettingsView>('/settings/oidc'),
+    enabled,
+    // Admin-only: a non-admin gets a 403 that retrying cannot fix.
+    retry: false,
+  });
+}
+
+export function useUpdateOidcSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: OidcSettingsPatch) =>
+      apiFetch<OidcSettingsView>('/settings/oidc', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    // Enabling SSO changes what the login screen offers, which `/auth/status`
+    // reports — so that has to be refetched or the change is invisible until a
+    // reload.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['settings', 'oidc'] });
+      void queryClient.invalidateQueries({ queryKey: ['auth', 'status'] });
+    },
+  });
+}
+
+/**
+ * Fetch the issuer's discovery document without saving.
+ *
+ * Worth its own action because the alternative is finding out at the redirect,
+ * on the provider's error page, where it reads as the provider being broken.
+ */
+export function useTestOidcSettings() {
+  return useMutation({
+    mutationFn: (body: OidcSettingsPatch) =>
+      apiFetch<OidcTestResult>('/settings/oidc/test', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  });
+}

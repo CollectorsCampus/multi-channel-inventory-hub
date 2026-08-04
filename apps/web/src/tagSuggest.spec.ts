@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeForMatch, suggestTag } from './tagSuggest';
+import { normalizeForMatch, previewItemKind, previewTags, suggestTag } from './tagSuggest';
 
 /**
  * The values here are real: catalogue spellings from tcgcsv and tags from the
@@ -71,5 +71,36 @@ describe('suggestTag', () => {
 
   it('returns the exact tag when it is already exact', () => {
     expect(suggestTag('Elite Trainer Box', STORE_TAGS)).toBe('Elite Trainer Box');
+  });
+});
+
+/**
+ * These mirror `itemKind` and `resolveTags` on the API, which are
+ * authoritative. The mirror exists so the intake screen can say what will
+ * happen while the card is still on screen; these tests are what stop the two
+ * drifting far enough to be misleading.
+ */
+describe('previewItemKind', () => {
+  it('agrees with the server on all three', () => {
+    expect(previewItemKind('NM')).toBe('single');
+    expect(previewItemKind('SEALED')).toBe('sealed');
+    expect(previewItemKind('NA')).toBe('other');
+  });
+});
+
+describe('previewTags with a kind rule', () => {
+  const rules = [
+    { match: 'kind' as const, value: 'single', tag: 'Singles' },
+    { match: 'game' as const, value: 'Pokemon', tag: 'Pokémon' },
+  ];
+  const card = { name: 'Mega Charizard X ex', game: 'Pokemon', setName: 'ME02' };
+
+  it('previews the singles tag for a card and withholds it for a box', () => {
+    expect(previewTags(rules, [], { ...card, condition: 'NM' })).toEqual(['Singles', 'Pokémon']);
+    expect(previewTags(rules, [], { ...card, condition: 'SEALED' })).toEqual(['Pokémon']);
+  });
+
+  it('withholds it when the condition is unknown, as the server does', () => {
+    expect(previewTags(rules, [], card)).toEqual(['Pokémon']);
   });
 });

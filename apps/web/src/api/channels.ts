@@ -28,8 +28,19 @@ export interface ConnectorSummary {
  * The tag is the operator's, chosen from the store's own vocabulary; the rule
  * only says which cards it applies to, from facts the ledger already holds.
  */
+export type TagRuleMatch = 'game' | 'set' | 'name-contains' | 'kind';
+
+/**
+ * What sort of thing an item is. `kind` rules take one of these as their value.
+ *
+ * Three rather than two: `other` is the `NA` condition — a playmat, a binder, a
+ * Funko Pop — and calling one of those "sealed" would file it with the booster
+ * boxes.
+ */
+export type ItemKind = 'single' | 'sealed' | 'other';
+
 export interface TagRule {
-  match: 'game' | 'set' | 'name-contains';
+  match: TagRuleMatch;
   value: string;
   tag: string;
 }

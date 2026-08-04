@@ -51,14 +51,50 @@ import { decodeJson } from '@hub/db';
  *   model — what kind of product it is. "Elite Trainer Box" and "Booster Pack"
  *   exist only inside the product name, so this matches a substring, and
  *   case-insensitively because it is typed by hand.
+ * - `kind` is the one fact the hub genuinely derives rather than stores: is
+ *   this a single, sealed product, or neither. See {@link itemKind} for why
+ *   that is safe when deriving a *tag* is not.
  */
-export type TagRuleMatch = 'game' | 'set' | 'name-contains';
+export type TagRuleMatch = 'game' | 'set' | 'name-contains' | 'kind';
 
-export const TAG_RULE_MATCHES: readonly TagRuleMatch[] = ['game', 'set', 'name-contains'];
+export const TAG_RULE_MATCHES: readonly TagRuleMatch[] = ['game', 'set', 'name-contains', 'kind'];
+
+/**
+ * What sort of thing an item is, as far as the hub can tell.
+ *
+ * Three values rather than two, because "not a single" is not one fact. `NA`
+ * means *not applicable* — what a binder, a playmat or a Funko Pop has — and
+ * tagging one of those "Sealed" would put it in a collection of booster boxes.
+ */
+export type ItemKind = 'single' | 'sealed' | 'other';
+
+export const ITEM_KINDS: readonly ItemKind[] = ['single', 'sealed', 'other'];
+
+/**
+ * Which of the three an item is, from its SKU condition.
+ *
+ * **This is the one place that decides**, and `ListingCreationService` reads it
+ * rather than keeping its own copy: the same distinction already decides
+ * whether a created product gets a `Condition` variant option and whether its
+ * title carries the set. A second answer to "is this a single" would eventually
+ * disagree with the first, and the symptom would be a product tagged as a
+ * single that has no condition option — visibly incoherent on a storefront and
+ * traceable to neither half.
+ *
+ * Note this derives a *classification*, never a tag. The hub still invents no
+ * tag: the operator maps this fact onto a tag from their own vocabulary, the
+ * same as they do for game and set. That is the distinction the whole rules
+ * system rests on.
+ */
+export function itemKind(condition: string): ItemKind {
+  if (condition === 'SEALED') return 'sealed';
+  if (condition === 'NA') return 'other';
+  return 'single';
+}
 
 export interface TagRule {
   match: TagRuleMatch;
-  /** The catalogue value to look for. */
+  /** The catalogue value to look for. For `kind`, one of {@link ITEM_KINDS}. */
   value: string;
   /** The channel's own tag, applied verbatim. */
   tag: string;
@@ -69,6 +105,12 @@ export interface TaggableItem {
   name: string;
   game?: string | null;
   setName?: string | null;
+  /**
+   * The SKU's condition, for a `kind` rule. Absent means the caller cannot say,
+   * and a `kind` rule then matches nothing rather than guessing `single` —
+   * which would tag every sealed box on a channel whose only rule is "Singles".
+   */
+  condition?: string | null;
 }
 
 export interface ChannelListingDefaults {
@@ -121,6 +163,14 @@ function parseTagRule(raw: unknown): TagRule | null {
   }
   if (typeof value !== 'string' || value.trim() === '') return null;
   if (typeof tag !== 'string' || tag.trim() === '') return null;
+
+  // A `kind` rule's value is a closed vocabulary this code owns, not a
+  // catalogue string, so an unrecognised one is a rule that can never fire.
+  // Dropped like any other unevaluable rule rather than defaulted to `single`,
+  // which would silently tag sealed product as singles.
+  if (match === 'kind' && !(ITEM_KINDS as readonly string[]).includes(value.trim())) {
+    return null;
+  }
 
   return { match: match as TagRuleMatch, value: value.trim(), tag: tag.trim() };
 }
@@ -223,6 +273,12 @@ export function tagRuleMatches(rule: TagRule, item: TaggableItem): boolean {
       return item.setName === rule.value;
     case 'name-contains':
       return item.name.toLowerCase().includes(rule.value.toLowerCase());
+    case 'kind':
+      // No condition means the caller could not say what this is. Matching
+      // nothing is the safe answer: the alternative is assuming `single`, and
+      // a channel whose only rule is "Singles" would then tag every sealed
+      // box it created.
+      return item.condition != null && itemKind(item.condition) === rule.value;
   }
 }
 

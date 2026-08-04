@@ -620,9 +620,10 @@ function IntakeForm({
           {listOn ? (
             <>
               Created as a draft
-              {listedChannel && describeDefaults(listedChannel, candidate)}. Stock follows on its
-              own, and nothing becomes buyable until you publish it. These apply to every card added
-              this way — for a mixed batch, use the list screen, which chooses per run.
+              {listedChannel && describeDefaults(listedChannel, candidate, condition)}. Stock
+              follows on its own, and nothing becomes buyable until you publish it. These apply to
+              every card added this way — for a mixed batch, use the list screen, which chooses per
+              run.
             </>
           ) : (
             'Stock lands unallocated. You can list it later from the item or the list screen.'
@@ -731,14 +732,22 @@ function hasDeclaredDefaults(channel: Channel): boolean {
  * ids that would tell a reader nothing. Tags are shown in full because they
  * decide whether the product appears in the shop at all.
  */
-function describeDefaults(channel: Channel, candidate: CatalogCandidate): string {
+function describeDefaults(
+  channel: Channel,
+  candidate: CatalogCandidate,
+  condition: string,
+): string {
   const { tagRules, tags, metafields, vendor } = channel.listingDefaults;
   const parts: string[] = [];
 
+  // The condition is what a `kind` rule asks about, and it is the one field
+  // here that comes from the form rather than the catalogue — so the hint
+  // updates as the operator changes it, which is the point of showing it.
   const applied = previewTags(tagRules ?? [], tags ?? [], {
     name: candidate.name,
     game: candidate.game,
     setName: candidate.setName,
+    condition,
   });
 
   if (applied.length > 0) parts.push(`tagged ${applied.join(', ')}`);

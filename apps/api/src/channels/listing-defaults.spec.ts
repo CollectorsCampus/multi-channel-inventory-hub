@@ -4,6 +4,7 @@ import {
   applyListingDefaults,
   encodeListingDefaults,
   hasDeclaredDefaults,
+  itemKind,
   parseListingDefaults,
   resolveTags,
   type ChannelListingDefaults,
@@ -267,5 +268,77 @@ describe('tag rules survive storage', () => {
     expect(
       hasDeclaredDefaults({ tagRules: [{ match: 'game', value: 'Pokemon', tag: 'Pokémon' }] }),
     ).toBe(true);
+  });
+});
+
+describe('itemKind', () => {
+  it('calls a real card condition a single', () => {
+    for (const condition of ['NM', 'LP', 'MP', 'HP', 'DMG', 'M']) {
+      expect(itemKind(condition)).toBe('single');
+    }
+  });
+
+  it('separates sealed from "not applicable"', () => {
+    // Two facts, not one. Collapsing them would let a rule tagging sealed
+    // product file a playmat with the booster boxes.
+    expect(itemKind('SEALED')).toBe('sealed');
+    expect(itemKind('NA')).toBe('other');
+  });
+});
+
+describe('kind tag rules', () => {
+  const singles: ChannelListingDefaults = {
+    tagRules: [
+      { match: 'kind', value: 'single', tag: 'Singles' },
+      { match: 'kind', value: 'sealed', tag: 'Sealed Product' },
+    ],
+  };
+
+  const card = { name: 'Mega Charizard X ex', game: 'Pokemon', setName: 'ME02' };
+
+  it('tags a card a single and a box sealed', () => {
+    expect(resolveTags(singles, { ...card, condition: 'NM' })).toEqual(['Singles']);
+    expect(resolveTags(singles, { ...card, condition: 'SEALED' })).toEqual(['Sealed Product']);
+  });
+
+  it('leaves an NA item alone when no rule covers it', () => {
+    // A playmat is neither, and must not fall into either bucket.
+    expect(resolveTags(singles, { name: 'Playmat', condition: 'NA' })).toEqual([]);
+  });
+
+  it('matches nothing when the condition is not known', () => {
+    // The failure that matters: assuming `single` would tag every sealed box
+    // on a channel whose only rule is "Singles".
+    expect(resolveTags(singles, card)).toEqual([]);
+    expect(resolveTags(singles, { ...card, condition: null })).toEqual([]);
+  });
+
+  it('combines with the other rule kinds', () => {
+    const both: ChannelListingDefaults = {
+      tagRules: [
+        { match: 'game', value: 'Pokemon', tag: 'Pokémon' },
+        { match: 'kind', value: 'single', tag: 'Singles' },
+      ],
+    };
+    expect(resolveTags(both, { ...card, condition: 'LP' })).toEqual(['Pokémon', 'Singles']);
+    expect(resolveTags(both, { ...card, condition: 'SEALED' })).toEqual(['Pokémon']);
+  });
+
+  it('drops a rule whose kind is not one this code knows', () => {
+    // Dropped rather than defaulted: a rule that looks saved and silently
+    // never fires is better than one that fires on the wrong things.
+    const parsed = parseListingDefaults(
+      JSON.stringify({
+        tagRules: [
+          { match: 'kind', value: 'singles', tag: 'Singles' },
+          { match: 'kind', value: 'single', tag: 'Singles' },
+        ],
+      }),
+    );
+    expect(parsed.tagRules).toEqual([{ match: 'kind', value: 'single', tag: 'Singles' }]);
+  });
+
+  it('round-trips through storage', () => {
+    expect(parseListingDefaults(encodeListingDefaults(singles))).toEqual(singles);
   });
 });

@@ -153,4 +153,33 @@ describeDb('SettingsService', () => {
       /OIDC_ISSUER_URL/,
     );
   });
+
+  /**
+   * The server-side request forgery surface CodeQL flagged. The issuer is the
+   * one URL fetched before anything about it is validated, and it stopped being
+   * environment-only when this endpoint appeared.
+   *
+   * Loopback stays allowed on purpose: a provider running on the same machine
+   * during development is a real case, and a private-network IdP over HTTPS is
+   * a first-class deployment for self-hosted software rather than an attack.
+   */
+  describe('refuses an issuer it should not fetch', () => {
+    it.each([
+      ['plain http', 'http://internal.example.com'],
+      ['the cloud metadata endpoint', 'http://169.254.169.254/latest/meta-data'],
+      ['a non-URL', 'not a url'],
+    ])('rejects %s', async (_label, issuer) => {
+      const { service } = make();
+      await expect(service.update(asDto({ issuer, clientId: 'abc' }))).rejects.toThrow();
+    });
+
+    it('still allows loopback over http, for a local provider', async () => {
+      const { service } = make();
+      // Nothing is fetched here — only enabling does that — so this proves the
+      // scheme check itself accepts loopback.
+      await expect(
+        service.update(asDto({ issuer: 'http://localhost:8080/realms/hub' })),
+      ).resolves.toBeDefined();
+    });
+  });
 });

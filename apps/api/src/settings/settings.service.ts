@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OidcService } from '../auth/oidc/oidc.service';
-import { fetchDiscovery } from '../auth/oidc/discovery';
+import { assertFetchableIssuer, fetchDiscovery } from '../auth/oidc/discovery';
 import { parseAllowedOrigins, parseRoleMap } from '../config/env';
 import {
   AuthSettingsService,
@@ -102,6 +102,18 @@ export class SettingsService {
         parseRoleMap(patch.roleMap);
       } catch (error) {
         throw new BadRequestException(`Role map: ${(error as Error).message}`, { cause: error });
+      }
+    }
+
+    // Checked on save, not only when enabling. The fetch guard in
+    // `fetchDiscovery` is what makes it safe; this is so an unusable issuer is
+    // refused while the operator is still looking at the field they typed it
+    // into, rather than at whatever they do next.
+    if (patch.issuer !== undefined && patch.issuer.trim() !== '') {
+      try {
+        assertFetchableIssuer(patch.issuer);
+      } catch (error) {
+        throw new BadRequestException((error as Error).message, { cause: error });
       }
     }
 

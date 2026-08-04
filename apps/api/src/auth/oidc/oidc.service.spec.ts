@@ -722,17 +722,41 @@ describeDb('OidcService', () => {
       await expect(service.beginLogin('/')).rejects.toThrow(/jwks_uri points at https:\/\/evil/i);
     });
 
-    it('refuses a plaintext token endpoint outside loopback', async () => {
-      stub.discovery = discoveryDocument({
-        issuer: 'http://idp.example.com',
-        authorization_endpoint: 'http://idp.example.com/authorize',
-        token_endpoint: 'http://idp.example.com/token',
-        jwks_uri: 'http://idp.example.com/jwks',
-      });
+    /**
+     * A document downgrading its own token endpoint to plaintext — the case
+     * that matters, because that endpoint receives the client secret.
+     *
+     * This used to be written with a plaintext *issuer*, which reached
+     * `assertHttps`. Plaintext issuers are now refused before discovery is
+     * fetched at all, and that makes the explicit https check unreachable for
+     * any non-loopback issuer: a scheme is part of an origin, so origin pinning
+     * already refuses `http://idp` against `https://idp`. The rule survives as
+     * defence in depth for loopback; what actually protects the secret here is
+     * the pinning, so that is what this asserts.
+     */
+    it('refuses a token endpoint downgraded to plaintext', async () => {
+      stub.discovery = discoveryDocument({ token_endpoint: 'http://idp.example.com/token' });
 
+      await expect(makeService().beginLogin('/')).rejects.toThrow(
+        /token_endpoint points at http:\/\/idp\.example\.com, but the issuer is/i,
+      );
+    });
+
+    /**
+     * The issuer is fetched before anything about it has been checked, so it is
+     * the server-side request forgery surface — and a wider one now that an
+     * admin can set it from the settings screen rather than only through the
+     * environment. Loopback stays allowed: a provider on the same machine is a
+     * real development case, and a private-network IdP over HTTPS is a
+     * first-class deployment for self-hosted software.
+     */
+    it('refuses to fetch a plaintext issuer at all', async () => {
       await expect(
-        makeService({ OIDC_ISSUER_URL: 'http://idp.example.com' }).beginLogin('/'),
-      ).rejects.toThrow(/not.*HTTPS/i);
+        makeService({ OIDC_ISSUER_URL: 'http://169.254.169.254/latest' }).beginLogin('/'),
+      ).rejects.toThrow(/must be https/i);
+
+      // Nothing was requested — the guard runs before the fetch.
+      expect(stub.calls).toHaveLength(0);
     });
 
     it('says which field is missing rather than failing at login time', async () => {

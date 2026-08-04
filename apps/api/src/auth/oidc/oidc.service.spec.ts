@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Logger } from '@nestjs/common';
 import { PrismaClient } from '@hub/db';
 import { SignJWT, exportJWK, generateKeyPair, type JWK, type KeyObject } from 'jose';
 import { createHash } from 'node:crypto';
@@ -519,6 +520,86 @@ describeDb('OidcService', () => {
         await idToken({ sub: 'spaced', groups: 'other hub-staff' }),
       );
       expect(principal.role).toBe('editor');
+    });
+
+    /**
+     * The fallback is safe — nobody is promoted by a misconfiguration — but it
+     * is silent, and that is its own defect: the operator sees a working login
+     * and a quieter account than they meant, with nothing saying why.
+     *
+     * Proving role mapping against Entra, both the operator and the agent
+     * reasoned past this in opposite directions inside two messages, because
+     * "landed as viewer" looks identical whether the claim mapped to viewer,
+     * matched nothing, or never arrived at all.
+     */
+    describe('warns rather than falling back silently', () => {
+      it('names the claims the token did carry when the configured one is absent', async () => {
+        const service = makeService(mapped);
+        await login(service, await idToken({ sub: 'first' }));
+
+        const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        const { principal } = await login(service, await idToken({ sub: 'noclaim' }));
+
+        expect(principal.role).toBe('viewer');
+        const message = warn.mock.calls.map((c) => String(c[0])).join('\n');
+        expect(message).toContain('carries no such claim');
+        expect(message).toContain('groups');
+        // Claim names, never their values: an ID token carries name and email.
+        expect(message).toContain('sub');
+        expect(message).not.toContain('noclaim');
+        warn.mockRestore();
+      });
+
+      /**
+       * Found by reading the test log rather than the green tick: the first
+       * version said "carries no such claim" while listing `groups` among the
+       * claims present. That sends the operator to the provider's token
+       * configuration when the real answer is that they are in no group.
+       */
+      it('distinguishes an empty claim from an absent one', async () => {
+        const service = makeService(mapped);
+        await login(service, await idToken({ sub: 'first' }));
+
+        const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        const { principal } = await login(service, await idToken({ sub: 'empty', groups: [] }));
+
+        expect(principal.role).toBe('viewer');
+        const message = warn.mock.calls.map((c) => String(c[0])).join('\n');
+        expect(message).toContain('present but empty');
+        expect(message).not.toContain('no such claim');
+        warn.mockRestore();
+      });
+
+      it('reports the unmapped values, which are what make the mismatch fixable', async () => {
+        const service = makeService(mapped);
+        await login(service, await idToken({ sub: 'first' }));
+
+        const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        // The real shape of this mistake: right group, wrong case.
+        const { principal } = await login(
+          service,
+          await idToken({ sub: 'miscased', groups: ['Hub-Admins'] }),
+        );
+
+        expect(principal.role).toBe('viewer');
+        const message = warn.mock.calls.map((c) => String(c[0])).join('\n');
+        expect(message).toContain('Hub-Admins');
+        expect(message).toContain('OIDC_ROLE_MAP');
+        expect(message).toContain('including case');
+        warn.mockRestore();
+      });
+
+      it('says nothing when a value maps cleanly', async () => {
+        const service = makeService(mapped);
+        await login(service, await idToken({ sub: 'first' }));
+
+        const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        await login(service, await idToken({ sub: 'fine', groups: ['hub-staff'] }));
+
+        // A warning on the working path trains people to ignore the log.
+        expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('OIDC_ROLE_MAP');
+        warn.mockRestore();
+      });
     });
 
     /**

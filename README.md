@@ -325,16 +325,15 @@ specific about which parts have met reality.
   path rather than a special one.
 - **Reconciliation against a real disagreement.** A live sweep checked 139 listings and
   caught 23 genuine quantity drifts.
-- **One identity provider.** Google has completed an OIDC login, provisioning a user keyed on
-  its `sub`.
+- **Two identity providers, and role mapping.** Google has completed an OIDC login,
+  provisioning a user keyed on its `sub`. **Microsoft Entra** then drove a real user's role
+  from an app-role claim through `OIDC_ROLE_CLAIM` and `OIDC_ROLE_MAP`, reapplied in place on
+  re-login — the half Google cannot test, since it issues no group or role claims.
 
 **Not yet:**
 
 - **MySQL and SQLite.** The schema is proven dialect-neutral and CI validates it against all
   three, but only Postgres has a migration history. Treat them as unsupported.
-- **Role mapping from a provider.** Google issues no group or role claims, so `OIDC_ROLE_CLAIM`
-  and `OIDC_ROLE_MAP` have only ever been exercised against a fake issuer. Keycloak or Entra
-  would close this.
 - **Reconciliation auto-correction.** Drift has been caught live, but the opt-in re-push has
   never run against a real store.
 - **Catalogue-scale ingest.** 27 sets have been ingested; no full game has (Magic alone is 453

@@ -1818,7 +1818,54 @@ What the live run settled, none of it visible against a fake issuer:
   Normal; click through.
 
 **Not proven by this:** role mapping. Google issues no groups, so `OIDC_ROLE_CLAIM` and
-`OIDC_ROLE_MAP` remain exercised only against the fake issuer.
+`OIDC_ROLE_MAP` remained exercised only against the fake issuer — **until Entra, below.**
+
+### Entra closed the role-mapping gap (2026-08-03)
+
+The last untested part of the OIDC path. A single-tenant app registration with **app roles**
+rather than a groups claim, and the difference matters: a groups claim in a cloud-only
+tenant emits **group object GUIDs**, so `OIDC_ROLE_MAP` would be keyed on
+`{"8f4c…":"admin"}`. An app role's **Value** is a string the operator chooses, so the map
+reads as `{"admin":"admin"}`. Prefer app roles.
+
+Setup facts worth not re-deriving:
+
+- **Single tenant, always.** The multi-tenant `common` discovery document declares its
+  issuer as the literal `https://login.microsoftonline.com/{tenantid}/v2.0`, braces
+  included, and `discovery.ts` compares that against `OIDC_ISSUER_URL` exactly — so
+  `common` fails at boot with a mismatch that reads like a typo.
+- **Register the redirect URI as `Web`, not `Single-page application`.** The hub is a
+  confidential client exchanging the code server-side with a secret; a SPA registration
+  makes Entra refuse the exchange.
+- **No `OIDC_ALLOWED_ENDPOINT_ORIGINS`.** Measured: all four of Entra's endpoints sit on
+  `login.microsoftonline.com`, the issuer's own origin, so the pinning rule passes
+  untouched. Entra is the norm the rule was written for; Google is the exception.
+- **Entra advertises no `code_challenge_methods_supported`.** Harmless — nothing here
+  reads that field and PKCE is always used.
+- **App roles are _defined_ under App registrations and _assigned_ under Enterprise
+  applications.** Two blades, same app. The Overview's "Managed application in local
+  directory" link jumps between them.
+
+**The proof needed a discriminating configuration, and that is the transferable lesson.**
+The operator assigned themselves `Hub Viewer` and logged in as `viewer` — which is also
+`OIDC_DEFAULT_ROLE`, so the result was consistent with the claim mapping correctly, the
+claim matching nothing, _and_ no claim arriving at all. Re-running with
+`OIDC_ROLE_MAP={"viewer":"editor"}` and `OIDC_DEFAULT_ROLE=admin` made the three outcomes
+disjoint: landing as **editor** was reachable only through the map. It did.
+
+That also confirmed the role is reapplied **in place** on re-login — same `external_id`,
+role rewritten — which is what makes revoking access at the IdP take effect here.
+
+**The silent fallback this exposed is now fixed.** An unusable role claim fell back to the
+default with nothing logged anywhere, and in the space of two messages both the operator
+and the agent drew opposite wrong conclusions from it, because "landed as viewer" looks
+identical in all three cases. `roleFromClaims` now warns, and distinguishes **three**
+states: claim absent (lists the claim names present, never their values — an ID token
+carries name and email), claim present but empty (the subject is in no group), and claim
+present but unmapped (logs the values, which are group identifiers rather than personal
+data and are the only thing that makes a case mismatch fixable). The empty-versus-absent
+split came from reading the test log rather than the green tick — the first version
+reported `groups: []` as "no such claim" while listing `groups` among those present.
 
 ## TCGPlayer file formats (verified against a real Pro account, 2026-07-28)
 
@@ -2307,10 +2354,12 @@ Worth stating plainly, because the README is optimistic by nature:
   would have demonstrated nothing that staging did not.
 - **MySQL and SQLite are not supported yet.** Only the schema is proven portable; there is
   no migration history for them (ADR 0001 §4).
-- **A real identity provider has now completed a login** — Google, 2026-08-02, see
-  below. What is still unproven is a provider that issues **group or role claims**:
-  `OIDC_ROLE_CLAIM` and `OIDC_ROLE_MAP` have never been exercised against a real one,
-  because Google issues nothing of the kind. Keycloak or Entra would test that half.
+- **OIDC is proven end to end, with nothing left out.** Google completed a login on
+  2026-08-02, and **Microsoft Entra closed the role-mapping half on 2026-08-03**:
+  `OIDC_ROLE_CLAIM` and `OIDC_ROLE_MAP` have now driven a real user's role from a real
+  provider's app-role claim, reapplied in place on re-login. See the Entra section above
+  for the setup facts and for why proving it needed a _discriminating_ configuration —
+  the obvious test is ambiguous, because the expected role was also the default.
 - **Reconciliation auto-correction has never run live.** The loop itself has now seen a
   real platform disagree and caught it (above), but `reconcileAutoCorrect` is off on the
   live channel, so no drift has ever been corrected by a re-queued push against a real

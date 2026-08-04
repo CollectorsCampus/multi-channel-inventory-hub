@@ -1456,9 +1456,11 @@ Both cleared the same day they appeared; **Dependabot is back to 0 open, 21 fixe
 
 ### Unmerged work
 
-None. Everything through **#69** is on `main` as of 2026-08-03. **v0.4.0** shipped everything
-through #58, so the four commits after it — the intake price (#66), the screenshots (#67) and
-the two dependency fixes — are on `main` and in no released image.
+None. Everything through **#70** is on `main` as of 2026-08-03. **v0.4.0** shipped everything
+through #58, so **eight commits sit on `main` in no released image** — count them with
+`git log v0.4.0..main` rather than trusting a remembered figure, which has already been
+wrong once here. Two are real features (the catalog split alert and merge, #65; the intake
+price, #66), two are security fixes (#68, #69), and the rest are documentation.
 
 v0.4.0 went out as a minor rather than the v0.3.1 first planned: by the time the queue fix
 was released it had a schema migration and five features beside it.
@@ -2143,7 +2145,8 @@ docker run -d --name hub-test-redis -p 6380:6379 redis:7-alpine
 
 ## Open decisions, not open bugs
 
-Six things are deliberately unfinished. Each is a choice someone should make rather than
+Five things are deliberately unfinished — 5 is closed and kept for its constraints. Each is
+a choice someone should make rather than
 a defect to fix, and none blocks anything else.
 
 1. **TCGPlayer quantity sync does not exist.** The export carries price only, because their
@@ -2215,19 +2218,16 @@ a defect to fix, and none blocks anything else.
    extensions, and cannot make an Admin API call. The 24-hour client-credentials token
    machinery in `connector-shopify/src/tokens.ts` stays exactly as it is.
 
-5. **Creating Shopify products for cards the store does not carry yet — built, and open on
-   one thing only.** Requested by the operator 2026-07-30. Their Shopify holds sealed
-   product and a few promos; the ledger will hold singles, and there was no way to get one
-   onto the storefront except creating the product by hand first.
+5. **Creating Shopify products for cards the store does not carry yet — CLOSED
+   2026-08-01.** Requested by the operator 2026-07-30. Their Shopify holds sealed product
+   and a few promos; the ledger will hold singles, and there was no way to get one onto the
+   storefront except creating the product by hand first.
 
    **All of it is on `main`** — the SKU code (#32), `listing.create` (#33), the core
-   service, endpoint and screen (#34), and metafields (#37) — and one draft product has
-   been created on the real store, verified and deleted (above). **This entry stays open
-   for exactly one reason: the add-a-variant path has never met Shopify**, because that
-   fires only for a second condition of a card already listed and the ledger holds no
-   singles at all. Everything else in the shape has run against the real store. The
-   decisions those layers settled, kept because they are the constraints any change must
-   preserve:
+   service, endpoint and screen (#34), and metafields (#37). It stayed open on one thing,
+   the add-a-variant path never having met Shopify; **that was settled on 2026-08-01** by a
+   single run creating one product with three variants, and the entry is kept only for the
+   decisions it settled, which are the constraints any change must preserve:
 
    - **Selected SKUs only, never automatic.** The operator's constraint, verbatim: it
      "probably shouldn't be automatic to create everything that's in say your tcgplayer

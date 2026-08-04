@@ -22,7 +22,18 @@
  * is looking at.
  */
 
-import type { TagRule } from './api/channels';
+import type { ItemKind, TagRule } from './api/channels';
+
+/**
+ * Mirrors `itemKind` on the API. Kept in step by
+ * `tagSuggest.spec.ts`, which pins the same three cases the server's own tests
+ * pin — the vocabulary is closed and two values long, so a mirror is cheap.
+ */
+export function previewItemKind(condition: string): ItemKind {
+  if (condition === 'SEALED') return 'sealed';
+  if (condition === 'NA') return 'other';
+  return 'single';
+}
 
 /**
  * The tags a card would get, for showing the operator before they commit.
@@ -37,7 +48,7 @@ import type { TagRule } from './api/channels';
 export function previewTags(
   rules: readonly TagRule[],
   always: readonly string[],
-  item: { name: string; game?: string | null; setName?: string | null },
+  item: { name: string; game?: string | null; setName?: string | null; condition?: string | null },
 ): string[] {
   const matched = rules
     .filter((rule) => {
@@ -48,6 +59,10 @@ export function previewTags(
           return item.setName === rule.value;
         case 'name-contains':
           return item.name.toLowerCase().includes(rule.value.toLowerCase());
+        case 'kind':
+          // Matches nothing without a condition, exactly as the server does —
+          // assuming `single` would preview a "Singles" tag on a booster box.
+          return item.condition != null && previewItemKind(item.condition) === rule.value;
       }
     })
     .map((rule) => rule.tag);

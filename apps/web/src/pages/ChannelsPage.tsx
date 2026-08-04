@@ -29,7 +29,33 @@ const RULE_LABELS: Record<TagRule['match'], string> = {
   game: 'Game is',
   set: 'Set is',
   'name-contains': 'Name contains',
+  kind: 'Item is a',
 };
+
+/**
+ * The `kind` vocabulary, spelled for a person.
+ *
+ * `other` is the honest word for the `NA` condition — a playmat, a binder, a
+ * Funko Pop — so the label says what it covers rather than making the operator
+ * guess what "other" excludes.
+ */
+const KIND_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'single', label: 'single (a card with a condition)' },
+  { value: 'sealed', label: 'sealed product' },
+  { value: 'other', label: 'other (playmat, binder, accessory)' },
+];
+
+/**
+ * A rule's value as a person reads it.
+ *
+ * Only `kind` differs from its stored form — a game or set value is the
+ * catalogue's own spelling and must be shown verbatim, because that exactness
+ * is what makes the rule predictable.
+ */
+function describeRuleValue(rule: TagRule): string {
+  if (rule.match !== 'kind') return rule.value;
+  return KIND_OPTIONS.find((k) => k.value === rule.value)?.label ?? rule.value;
+}
 
 /**
  * Channel configuration (§7).
@@ -433,13 +459,20 @@ function ListingDefaults({ channel }: { channel: Channel }) {
    * spells two ways produces no suggestion, which is the point.
    */
   const suggestions: TagRule[] = [
-    ...games.map((g) => ({ match: 'game' as const, value: g })),
-    ...sets.map((s) => ({ match: 'set' as const, value: s })),
+    // A `kind` value is this code's vocabulary, not the catalogue's, so it is
+    // matched by the words a store actually uses — `single` does not normalise
+    // to the tag `Singles`. Still only ever resolved against the store's own
+    // tag list, so nothing is invented and a store without one is offered
+    // nothing. Listed first because they are the broadest rules on the page.
+    { match: 'kind' as const, value: 'single', candidates: ['Singles', 'Single'] },
+    { match: 'kind' as const, value: 'sealed', candidates: ['Sealed', 'Sealed Product'] },
+    ...games.map((g) => ({ match: 'game' as const, value: g, candidates: [g] })),
+    ...sets.map((s) => ({ match: 'set' as const, value: s, candidates: [s] })),
   ]
     .filter((s) => !has(s.match, s.value))
-    .flatMap((s) => {
-      const tag = suggestTag(s.value, storeTags);
-      return tag === null ? [] : [{ ...s, tag }];
+    .flatMap(({ candidates, ...rule }) => {
+      const tag = candidates.map((c) => suggestTag(c, storeTags)).find((t) => t != null);
+      return tag == null ? [] : [{ ...rule, tag }];
     })
     .slice(0, 12);
 
@@ -474,7 +507,7 @@ function ListingDefaults({ channel }: { channel: Channel }) {
             {rules.map((rule, index) => (
               <tr key={`${rule.match}:${rule.value}:${rule.tag}`}>
                 <td className="muted">{RULE_LABELS[rule.match]}</td>
-                <td>{rule.value}</td>
+                <td>{describeRuleValue(rule)}</td>
                 <td className="muted">→</td>
                 <td>
                   <span className="chip">{rule.tag}</span>
@@ -519,26 +552,56 @@ function ListingDefaults({ channel }: { channel: Channel }) {
       <div className="inline-form">
         <select
           value={match}
-          onChange={(event) => setMatch(event.target.value as TagRule['match'])}
+          onChange={(event) => {
+            setMatch(event.target.value as TagRule['match']);
+            // The vocabularies do not overlap: a game name left in the box
+            // would be an invalid `kind`, and would be dropped on read rather
+            // than refused here — a rule that looks saved and never fires.
+            setValue('');
+          }}
           aria-label="What the rule looks at"
         >
           <option value="game">Game is</option>
           <option value="set">Set is</option>
           <option value="name-contains">Name contains</option>
+          <option value="kind">Item is a</option>
         </select>
 
-        <input
-          list={`rule-values-${channel.id}-${match}`}
-          value={value}
-          placeholder={match === 'name-contains' ? 'e.g. Elite Trainer Box' : 'Pick…'}
-          onChange={(event) => setValue(event.target.value)}
-          aria-label="Value to match"
-        />
-        <datalist id={`rule-values-${channel.id}-${match}`}>
-          {(match === 'game' ? games : match === 'set' ? sets : []).map((v) => (
-            <option key={v} value={v} />
-          ))}
-        </datalist>
+        {/*
+          A `kind` value is a closed vocabulary this code owns, unlike a game or
+          set name which comes from the catalogue. So it is a select, not a
+          suggested free-text box: a typo would be dropped on read and the rule
+          would silently never fire.
+        */}
+        {match === 'kind' ? (
+          <select
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            aria-label="Value to match"
+          >
+            <option value="">Pick…</option>
+            {KIND_OPTIONS.map((k) => (
+              <option key={k.value} value={k.value}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <>
+            <input
+              list={`rule-values-${channel.id}-${match}`}
+              value={value}
+              placeholder={match === 'name-contains' ? 'e.g. Elite Trainer Box' : 'Pick…'}
+              onChange={(event) => setValue(event.target.value)}
+              aria-label="Value to match"
+            />
+            <datalist id={`rule-values-${channel.id}-${match}`}>
+              {(match === 'game' ? games : match === 'set' ? sets : []).map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
+          </>
+        )}
 
         <span className="muted">→</span>
 

@@ -15,6 +15,7 @@ import { IntakeService, type IntakeRequest, type IntakeResult } from '../invento
 import { encodeSkuCode, HUB_SOURCE_KEY } from '../inventory/sku-code';
 import {
   applyListingDefaults,
+  itemKind,
   parseListingDefaults,
   resolveTags,
   type ChannelListingDefaults,
@@ -78,7 +79,7 @@ export const MAX_ITEMS = 50;
 export const DEFAULT_OPTION_NAME = 'Condition';
 
 /**
- * Conditions that are not a variant axis, so get no option and no sibling.
+ * Is this condition a variant axis — i.e. is the item a single?
  *
  * A `Condition` option is worth showing a customer only where condition is a
  * real choice, which is singles. `SEALED` has one answer — the operator's call,
@@ -91,8 +92,16 @@ export const DEFAULT_OPTION_NAME = 'Condition';
  * store has 69 multi-variant products whose axis is `Promo`, `Deck`, `Colour`,
  * `Scene` or `Type` — none of which the hub models or could invent. Those are
  * mapped by hand through `/match`, which is a different path entirely.
+ *
+ * **Derived from `itemKind`, not from a list kept here.** The same distinction
+ * decides which `kind` tag rules fire, and two copies of "is this a single"
+ * would eventually disagree — showing up as a product tagged `Singles` with no
+ * condition option, which is incoherent on a storefront and traceable to
+ * neither half.
  */
-export const UNVARIED_CONDITIONS: readonly string[] = ['SEALED', 'NA'];
+export function isVariedCondition(condition: string): boolean {
+  return itemKind(condition) === 'single';
+}
 
 export interface CreateListingsRequest {
   channelInstanceId: string;
@@ -330,7 +339,12 @@ export class ListingCreationService {
       }
 
       const name = item.sku.catalogItem.name;
-      const tags = runTags ?? resolveTags(defaults, item.sku.catalogItem);
+      // The condition rides alongside the catalogue fields rather than being
+      // looked up again inside `resolveTags`: a `kind` rule asks about the SKU,
+      // and `CatalogItem` has no condition — one product is every condition.
+      const tags =
+        runTags ??
+        resolveTags(defaults, { ...item.sku.catalogItem, condition: item.sku.condition });
 
       try {
         result.listings.push(
@@ -513,14 +527,14 @@ export class ListingCreationService {
 
     // Sealed product, and anything whose condition is "not applicable", is one
     // product with one variant and no option at all — see
-    // {@link UNVARIED_CONDITIONS}.
+    // {@link isVariedCondition}.
     //
     // It follows that such an item is never a *variant* of something either, so
     // no sibling is looked for. Two sealed SKUs of one catalogue product — an
     // English box and a Japanese one — become two products, which is what a
     // store carrying both wants; the alternative is a second variant on a
     // product that has no option to tell them apart.
-    const unvaried = UNVARIED_CONDITIONS.includes(item.sku.condition);
+    const unvaried = !isVariedCondition(item.sku.condition);
 
     const siblingListingId = unvaried
       ? undefined

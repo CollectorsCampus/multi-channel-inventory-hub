@@ -5,6 +5,8 @@ import { SignJWT, exportJWK, generateKeyPair, type JWK, type KeyObject } from 'j
 import { createHash } from 'node:crypto';
 import { OidcService, safeReturnTo } from './oidc.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import { AuthSettingsService } from '../../settings/auth-settings.service';
+import type { CredentialStore } from '../../connectors/credential-store.service';
 
 /**
  * The OIDC flow against a fake identity provider with real keys.
@@ -85,8 +87,15 @@ const fakeFetch = async (url: string, init?: RequestInit): Promise<Response> => 
   return new Response('not found', { status: 404 });
 };
 
-function config(overrides: Record<string, unknown> = {}) {
-  const values: Record<string, unknown> = {
+/**
+ * Everything the service reads, in environment form.
+ *
+ * One map feeding both `ConfigService` and `AuthSettingsService` is deliberate:
+ * the environment is the winning source in the real merge, so a test that
+ * configures through it exercises the same path production does.
+ */
+function values(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
     AUTH_PROVIDER: 'oidc',
     APP_URL: 'https://hub.example.com',
     OIDC_ISSUER_URL: ISSUER,
@@ -97,19 +106,42 @@ function config(overrides: Record<string, unknown> = {}) {
     OIDC_ALLOW_LOCAL_LOGIN: true,
     ...overrides,
   };
+}
+
+function config(overrides: Record<string, unknown> = {}) {
+  const map = values(overrides);
 
   return {
-    get: (key: string, fallback?: unknown) => values[key] ?? fallback,
+    get: (key: string, fallback?: unknown) => map[key] ?? fallback,
     getOrThrow: (key: string) => {
-      const value = values[key];
+      const value = map[key];
       if (value === undefined) throw new Error(`missing ${key}`);
       return value;
     },
   } as never;
 }
 
+/** No stored secrets in these tests: everything arrives through the environment. */
+const noCredentials = {
+  has: async () => false,
+  get: async () => ({}),
+  put: async () => undefined,
+  delete: async () => undefined,
+} as unknown as CredentialStore;
+
 function makeService(overrides: Record<string, unknown> = {}) {
-  return new OidcService(config(overrides), prisma as unknown as PrismaService, fakeFetch);
+  const settings = new AuthSettingsService(
+    prisma as unknown as PrismaService,
+    noCredentials,
+    values(overrides) as Record<string, string | undefined>,
+  );
+
+  return new OidcService(
+    config(overrides),
+    prisma as unknown as PrismaService,
+    settings,
+    fakeFetch,
+  );
 }
 
 /** Mint an ID token the way the fake provider would. */

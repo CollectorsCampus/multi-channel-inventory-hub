@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { SettingsModule } from './settings/settings.module';
 import { UsersModule } from './users/users.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ConnectorsModule } from './connectors/connectors.module';
@@ -46,6 +47,7 @@ import { HealthController } from './health/health.controller';
     // the route table depend on env, which is far harder to reason about than
     // one endpoint that answers "not enabled".
     QueryConsoleModule,
+    SettingsModule,
   ],
   controllers: [HealthController],
 })

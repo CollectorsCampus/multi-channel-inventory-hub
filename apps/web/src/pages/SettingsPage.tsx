@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useAuthStatus, useCurrentUser } from '../auth';
 import { useDevMode } from '../devMode';
 import { useQueryConsoleStatus } from '../api/queryConsole';
 import { useChannels } from '../api/channels';
+import { useCatalogClearPreview, useClearCatalog, useLocalSets } from '../api/catalog';
 import {
   useOidcSettings,
   useTestOidcSettings,
@@ -57,6 +58,7 @@ export function SettingsPage() {
 
       <Deployment />
       {isAdmin && <SingleSignOn />}
+      {isAdmin && <ClearCatalog />}
       <Navigation />
 
       {/* Server-enforced; the panel is shown to everyone and explains itself,
@@ -298,6 +300,102 @@ function SingleSignOn() {
       )}
       {test.isError && <p className="error">{(test.error as Error).message}</p>}
       {update.isError && <p className="error">{(update.error as Error).message}</p>}
+    </div>
+  );
+}
+
+/**
+ * Clearing catalogue identity data that ingest built.
+ *
+ * The one property this panel exists to show, not just enforce: **an item
+ * with even one SKU is always kept**, whatever its quantity. Ingest only ever
+ * creates a `CatalogItem`, never a `Sku` — those come from adding stock or
+ * creating a listing, both real ledger events — so "no SKU" is exactly "never
+ * touched by anything but ingest", which is what makes a clear safe to run
+ * without asking what it will do to stock.
+ *
+ * Preview-then-clear, the same two-step shape ingest itself uses ("List
+ * sets" then "Ingest N") — appropriate here for the same reason: an operator
+ * should see the count a destructive action would touch before committing to
+ * it, not after.
+ */
+function ClearCatalog() {
+  const localSets = useLocalSets();
+  const [game, setGame] = useState('');
+  const [checked, setChecked] = useState(false);
+  const preview = useCatalogClearPreview(game || undefined, checked);
+  const clear = useClearCatalog();
+
+  const games = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of localSets.data ?? []) if (s.game) set.add(s.game);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [localSets.data]);
+
+  // Changing scope invalidates whatever was checked: a count for "all games"
+  // must never be acted on as though it answered "just Pokemon".
+  const scopedGame = (value: string) => {
+    setGame(value);
+    setChecked(false);
+  };
+
+  return (
+    <div className="panel">
+      <h2>Clear catalog</h2>
+      <p className="muted">
+        Removes catalog identity data an ingest built and nothing has since been added to the ledger
+        against — never a card, set or box you hold, whatever its quantity. Rebuilt by re-running an
+        ingest from <Link to="/catalog">Catalog</Link>.
+      </p>
+
+      <div className="inline-form">
+        <select value={game} onChange={(event) => scopedGame(event.target.value)} aria-label="Game">
+          <option value="">All games</option>
+          {games.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => setChecked(true)}
+          disabled={preview.isFetching && checked}
+        >
+          {preview.isFetching && checked ? 'Checking…' : 'Check what would be cleared'}
+        </button>
+      </div>
+
+      {checked && preview.data && (
+        <>
+          <p className="field-hint">
+            <strong>{preview.data.clearable}</strong> item(s) would be removed
+            {game ? ` for ${game}` : ' across every game'}.{' '}
+            <strong>{preview.data.protectedCount}</strong>{' '}
+            {preview.data.protectedCount === 1 ? 'is' : 'are'} kept — each holds at least one SKU,
+            meaning stock, a listing or history exists against it.
+          </p>
+          <button
+            type="button"
+            className="ghost"
+            disabled={preview.data.clearable === 0 || clear.isPending}
+            onClick={() =>
+              clear.mutate({ ...(game ? { game } : {}) }, { onSuccess: () => setChecked(false) })
+            }
+          >
+            {clear.isPending ? 'Clearing…' : `Clear ${preview.data.clearable} item(s)`}
+          </button>
+        </>
+      )}
+
+      {clear.isSuccess && clear.data && (
+        <p className="field-hint">
+          Cleared {clear.data.clearable} item(s) and {clear.data.externalRefsRemoved} external
+          reference(s). {clear.data.protectedCount} kept.
+        </p>
+      )}
+      {preview.isError && <p className="error">{(preview.error as Error).message}</p>}
+      {clear.isError && <p className="error">{(clear.error as Error).message}</p>}
     </div>
   );
 }

@@ -5,6 +5,20 @@ import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validato
 import { RequireRole } from '../auth/decorators';
 import { CatalogService } from './catalog.service';
 import { CatalogMergeService } from './catalog-merge.service';
+import { CatalogClearService } from './catalog-clear.service';
+
+export class CatalogClearQueryDto {
+  @ApiPropertyOptional({
+    example: 'Pokemon',
+    description: 'Restrict to one game, matched exactly. Omitted covers every game.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  game?: string;
+}
+
+export class ClearCatalogDto extends CatalogClearQueryDto {}
 
 export class MergeCatalogItemsDto {
   @ApiProperty({
@@ -92,7 +106,47 @@ export class CatalogController {
   constructor(
     private readonly catalog: CatalogService,
     private readonly merge: CatalogMergeService,
+    private readonly clear: CatalogClearService,
   ) {}
+
+  /**
+   * What clearing the local catalog would remove, without removing it.
+   *
+   * The same shape ingest already follows — list before you commit — because
+   * this is the destructive counterpart and deserves the same caution.
+   */
+  @Get('local/clear-preview')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'What clearing the local catalog would remove, without removing anything.',
+    description:
+      'Counts only. An item with even one SKU is always kept, whatever its stock — this can ' +
+      'never remove a card, set or box that has ever been added to the ledger.',
+  })
+  clearPreview(@Query() query: CatalogClearQueryDto) {
+    return this.clear.preview({ ...(query.game !== undefined ? { game: query.game } : {}) });
+  }
+
+  /**
+   * Delete catalog items that hold no SKU.
+   *
+   * Admin-only, and named "clear" rather than "delete" deliberately: what this
+   * removes is identity data an ingest rebuilds, never a card or box an
+   * operator holds. `CatalogClearService` is what actually enforces that; this
+   * only shapes the request.
+   */
+  @Post('local/clear')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Clear catalog items ingest built that nothing has ever been added to the ledger for.',
+    description:
+      'Only items with zero SKUs are touched — an item with one, at any quantity, is always ' +
+      'kept. Rebuilt by re-running an ingest. Scope to one game with `game`, or omit it to ' +
+      'clear everything clearable.',
+  })
+  clearCatalog(@Body() body: ClearCatalogDto) {
+    return this.clear.clear({ ...(body.game !== undefined ? { game: body.game } : {}) });
+  }
 
   /**
    * Fold one catalog item into another.

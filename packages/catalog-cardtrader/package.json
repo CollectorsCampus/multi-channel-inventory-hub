@@ -1,0 +1,25 @@
+{
+  "name": "@hub/catalog-cardtrader",
+  "version": "0.4.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@hub/connector-sdk": "workspace:*",
+    "@hub/catalog-tcgcsv": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.6"
+  }
+}

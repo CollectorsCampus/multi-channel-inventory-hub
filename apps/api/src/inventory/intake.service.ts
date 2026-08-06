@@ -245,9 +245,12 @@ export class IntakeService {
    * and that disagreement shows up as duplicate items nobody can merge.
    *
    * `refresh` is the one thing ingest needs and intake must not do. A bulk
-   * ingest is re-reading the authoritative source, so refreshing a name, set or
-   * image is the point of running it; an intake is one operator adding stock and
-   * has no business rewriting an item's identity as a side effect.
+   * ingest backfills descriptive fields an item is missing — a set name or image
+   * a later source supplies — while an intake is one operator adding stock and
+   * has no business touching an item's identity as a side effect.
+   *
+   * **Refresh is fill-empty-only, not overwrite** (see `refreshCatalogItem`). It
+   * completes blank fields and never rewrites a value some source already set.
    */
   async ensureCatalogItem(
     candidate: CatalogCandidate & { sourceKey: string },
@@ -264,11 +267,27 @@ export class IntakeService {
   }
 
   /**
-   * Bring a stored item's descriptive fields back in line with the source.
+   * Fill in descriptive fields an item is **missing**, from the source.
    *
-   * Only writes when something actually differs, so re-ingesting an unchanged
-   * set does not bump `updatedAt` on tens of thousands of rows and make the
-   * table look churned when nothing happened.
+   * **Backfill only — never overwrite.** A field some source already set is
+   * left exactly as it is; only a blank one (null or whitespace) is filled. The
+   * reason is a second ingesting source: while tcgcsv was the only one, refresh
+   * could safely re-read and overwrite, but the day CardTrader ingested over
+   * tcgcsv-created items it silently re-spelled 143 of them — every name to
+   * CardTrader's format and every `setName` from "ME02: Phantasmal Flames" to
+   * "Phantasmal Flames" (2026-08-05, see [[catalog-ingest-refresh-overwrites-names]]).
+   * Set names are case-sensitive and drive matching and the operator's
+   * tag-driven collections, so last-ingest-wins is not acceptable.
+   *
+   * There is no per-field provenance, so "another source set it" cannot be told
+   * from "this source set it": the rule is simply that any non-empty value wins.
+   * That makes `name` immutable after creation (a created item always has one),
+   * which is the point — nothing relabels the catalogue behind the operator.
+   * Backfilling a genuinely empty `game`/`setName`/`imageUrl` is a pure
+   * improvement and still happens.
+   *
+   * Only writes when it actually fills something, so re-ingesting a complete
+   * set does not bump `updatedAt` on tens of thousands of unchanged rows.
    *
    * Deliberately does **not** touch external refs — `resolveCatalogItem` has
    * already backfilled those, and removing one is never right: an id that used
@@ -280,27 +299,21 @@ export class IntakeService {
   ): Promise<boolean> {
     const current = await this.prisma.catalogItem.findUnique({
       where: { id: catalogItemId },
-      select: { name: true, game: true, setName: true, imageUrl: true },
+      select: { game: true, setName: true, imageUrl: true },
     });
     if (!current) return false;
 
-    const name = candidate.name.trim();
-    const next = {
-      name,
-      searchName: name.toLowerCase(),
-      game: candidate.game ?? null,
-      setName: candidate.setName ?? null,
-      imageUrl: candidate.imageUrl ?? null,
-    };
+    // `name`/`searchName` are intentionally absent: a created item always has a
+    // name, so under fill-empty-only there is nothing to fill and nothing to
+    // overwrite.
+    const data: { game?: string; setName?: string; imageUrl?: string } = {};
+    if (isBlank(current.game) && candidate.game) data.game = candidate.game;
+    if (isBlank(current.setName) && candidate.setName) data.setName = candidate.setName;
+    if (isBlank(current.imageUrl) && candidate.imageUrl) data.imageUrl = candidate.imageUrl;
 
-    const unchanged =
-      current.name === next.name &&
-      current.game === next.game &&
-      current.setName === next.setName &&
-      current.imageUrl === next.imageUrl;
-    if (unchanged) return false;
+    if (Object.keys(data).length === 0) return false;
 
-    await this.prisma.catalogItem.update({ where: { id: catalogItemId }, data: next });
+    await this.prisma.catalogItem.update({ where: { id: catalogItemId }, data });
     return true;
   }
 
@@ -426,4 +439,9 @@ export class IntakeService {
 function normalize(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed.toUpperCase() : undefined;
+}
+
+/** A stored descriptive field with no real value — null, or only whitespace. */
+function isBlank(value: string | null): boolean {
+  return value === null || value.trim() === '';
 }

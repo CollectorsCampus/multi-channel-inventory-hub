@@ -9,6 +9,8 @@ export interface CatalogSourceSummary {
   providesExternalIds: string[];
   /** Whether the source can fill the local catalog (bulk ingest). */
   canIngest: boolean;
+  /** Secret field names this source needs, e.g. CardTrader's `["token"]`. Empty for a public source. */
+  secretFields: string[];
 }
 
 export interface CatalogCandidate {
@@ -146,6 +148,38 @@ export function useLocalSearch(text: string, game?: string, setName?: string) {
     // browse case — is a valid query and there is no rate limit to protect.
     enabled: trimmed.length >= 2 || Boolean(set),
     staleTime: 30_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Credentials — for a source that declares secretFields, e.g. CardTrader.
+// Admin only. Never returns a value, only which fields are set.
+// ---------------------------------------------------------------------------
+
+export interface CatalogCredentialStatus {
+  secretFieldsRequired: string[];
+  secretsSet: string[];
+}
+
+export function useCatalogCredentialStatus(sourceKey: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['catalog', 'sources', sourceKey, 'credentials'],
+    queryFn: () => apiFetch<CatalogCredentialStatus>(`/catalog/sources/${sourceKey}/credentials`),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useSetCatalogCredentials(sourceKey: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (secrets: Record<string, string>) =>
+      apiFetch<CatalogCredentialStatus>(`/catalog/sources/${sourceKey}/credentials`, {
+        method: 'PUT',
+        body: JSON.stringify({ secrets }),
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['catalog', 'sources', sourceKey, 'credentials'] }),
   });
 }
 

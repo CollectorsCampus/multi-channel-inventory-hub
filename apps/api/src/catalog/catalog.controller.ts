@@ -1,11 +1,13 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { RequireRole } from '../auth/decorators';
 import { CatalogService } from './catalog.service';
 import { CatalogMergeService } from './catalog-merge.service';
 import { CatalogClearService } from './catalog-clear.service';
+import { CatalogSourceRegistry } from './catalog-source-registry.service';
+import { CatalogCredentialsService } from './catalog-credentials.service';
 
 export class CatalogClearQueryDto {
   @ApiPropertyOptional({
@@ -69,6 +71,15 @@ export class LocalSetsQueryDto {
   game?: string;
 }
 
+export class SetCatalogCredentialsDto {
+  @ApiProperty({
+    description: "Secret values, keyed by the source's declared secretFields. Write-only.",
+    type: Object,
+  })
+  @IsObject()
+  secrets!: Record<string, string>;
+}
+
 export class LocalSearchQueryDto {
   @ApiPropertyOptional({
     example: 'pikachu',
@@ -107,7 +118,38 @@ export class CatalogController {
     private readonly catalog: CatalogService,
     private readonly merge: CatalogMergeService,
     private readonly clear: CatalogClearService,
+    private readonly registry: CatalogSourceRegistry,
+    private readonly credentials: CatalogCredentialsService,
   ) {}
+
+  /**
+   * Which of a source's declared secret fields are set, never their values.
+   *
+   * Mirrors `ChannelsService.toSummary`'s trade for connector credentials — an
+   * operator who has lost a token re-enters it rather than this endpoint ever
+   * being able to leak it back out.
+   */
+  @Get('sources/:key/credentials')
+  @RequireRole('admin')
+  @ApiOperation({ summary: 'Which credential fields a catalog source needs, and which are set.' })
+  credentialStatus(@Param('key') key: string) {
+    return this.credentials.status(this.registry.get(key));
+  }
+
+  /**
+   * Store credentials for a catalog source — CardTrader's bearer token, today.
+   *
+   * Merged with whatever is already stored, so rotating one field does not
+   * require re-entering the others. Refused for a source that declares no
+   * `secretFields`: nothing here would ever be read.
+   */
+  @Put('sources/:key/credentials')
+  @RequireRole('admin')
+  @ApiOperation({ summary: 'Store credentials for a catalog source.' })
+  async setCredentials(@Param('key') key: string, @Body() body: SetCatalogCredentialsDto) {
+    await this.credentials.setSecrets(this.registry.get(key), body.secrets);
+    return this.credentials.status(this.registry.get(key));
+  }
 
   /**
    * What clearing the local catalog would remove, without removing it.

@@ -251,7 +251,55 @@ also a second sale-detection rule beside Shopify's, so it belongs in the connect
 buyer side, and §6's "we never cancel or modify an order" already draws the same line on the
 order endpoints (`ship` and `tracking_code` are writes we would not make either).
 
-**Still open before building:** whether `products/export` returns enough to satisfy
+#### The first live calls, 2026-08-03 — and the catalogue question is settled
+
+**The API answers.** Read-only `GET`s with the operator's own token: `/info`, `/games`,
+`/expansions` and `/blueprints/export`. This is the ADR 0002 standard of evidence — requests
+that returned data — which everything above this heading lacked.
+
+- **14 games**, and the breadth is the point: Magic, Pokémon, Yu-Gi-Oh!, Flesh and Blood,
+  Digimon, Dragon Ball Super, Vanguard, One Piece, Lorcana, Star Wars Unlimited, Union
+  Arena, Riftbound, Gundam, Sorcery. **3,792 expansions**, 849 of them Pokémon and 787
+  Magic. `/expansions` also returns `game_id`s absent from `/games` (2, 3, 7, 11, 12, 14,
+  17, 19) — retired lines, so a consumer must not assume the two agree.
+- **A blueprint publishes its own cross-references**, which is the thing that could not be
+  guessed and the reason this is worth building as a `CatalogSource` first:
+
+  | Field             | Bloomburrow | Phantasmal Flames | Romance Dawn | BLB Art Series |
+  | ----------------- | ----------- | ----------------- | ------------ | -------------- |
+  | `tcg_player_id`   | 95%         | 92%               | 97%          | 100%           |
+  | `card_market_ids` | 96%         | 98%               | 100%         | 100%           |
+  | `scryfall_id`     | 77%         | 0% (Magic only)   | 0%           | 39%            |
+
+  **`tcg_player_id` is the convergence key**, at 92–100% across every game measured — not
+  Magic-only the way Scryfall's is. Verified against the ledger: CardTrader blueprint
+  `353122` "Mega Charizard X ex" carries `tcg_player_id: 662182`, which is exactly the id
+  the hub already holds for that card from tcgcsv. So an ingest converges on existing
+  `CatalogItem`s through `CatalogExternalRef` **by design**, where today it happens by luck
+  — tcgcsv and Scryfall both emitting `tcgplayer` was never a guarantee.
+
+- **`fixed_properties` carries `collector_number`** (`"013"`) and a per-game rarity. That is
+  the field the "collector numbers in a title" work was deferred for — a second source
+  supplies it natively, which changes that calculation.
+- **`editable_properties` declares the condition vocabulary** — Mint, Near Mint, Slightly
+  Played, Moderately Played, Played, Poor — plus `signed`, `altered` and a per-game
+  language list. Six conditions, not TCGPlayer's seven; a mapping is needed and must not
+  guess.
+- **`/blueprints/export?expansion_id=` returns a whole expansion in one response**, no
+  pagination. 433 for Bloomburrow, 156 for Phantasmal Flames. That is `fetchSet` exactly,
+  and `/expansions` is `listSets` — so CardTrader is ingestible, unlike Scryfall.
+- **There is no blueprint search endpoint and no `GET /blueprints/:id`.** So the source is
+  the same shape as tcgcsv — an importer wearing a search interface — and `fetchById` can
+  only resolve products from expansions already read. Ingest-first is the honest design.
+- **`/info` returns the app's `shared_secret`**, the webhook signing key. Treat that
+  response as a credential; it must never reach a tracked file or a log.
+
+**The one thing that must be built before any of it: catalog sources have no credentials.**
+`CatalogService.makeCtx` hardcodes `secrets: {}`, so CardTrader is the first source needing
+authentication. No migration is required — `Credential.ref` is a free unique string, so
+`catalog:<sourceKey>` works with the existing AES-GCM store and its ref-bound AAD.
+
+**Still open before building the _connector_:** whether `products/export` returns enough to satisfy
 `listing.enumerate` on its own, what a real order webhook body looks like, and whether the
 blueprint catalogue can be matched to `CatalogItem` well enough to avoid hand-mapping every
 card. All three are one authenticated call away, using the token already in `private/`.

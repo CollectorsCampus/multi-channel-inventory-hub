@@ -36,6 +36,7 @@ COPY packages/connector-shopify/package.json    packages/connector-shopify/
 COPY packages/connector-tcgplayer/package.json  packages/connector-tcgplayer/
 COPY packages/catalog-scryfall/package.json     packages/catalog-scryfall/
 COPY packages/catalog-tcgcsv/package.json       packages/catalog-tcgcsv/
+COPY packages/catalog-cardtrader/package.json   packages/catalog-cardtrader/
 
 # ---------------------------------------------------------------------------
 # deps — full workspace install, dev dependencies included
@@ -98,6 +99,7 @@ COPY --from=build --chown=node:node /repo/packages/connector-shopify/dist    ./p
 COPY --from=build --chown=node:node /repo/packages/connector-tcgplayer/dist  ./packages/connector-tcgplayer/dist
 COPY --from=build --chown=node:node /repo/packages/catalog-scryfall/dist     ./packages/catalog-scryfall/dist
 COPY --from=build --chown=node:node /repo/packages/catalog-tcgcsv/dist       ./packages/catalog-tcgcsv/dist
+COPY --from=build --chown=node:node /repo/packages/catalog-cardtrader/dist   ./packages/catalog-cardtrader/dist
 
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 

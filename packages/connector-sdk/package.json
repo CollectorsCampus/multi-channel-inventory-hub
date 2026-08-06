@@ -24,7 +24,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "peerDependencies": {
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.10"
   },
   "peerDependenciesMeta": {
     "vitest": {
@@ -34,6 +34,6 @@
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.10"
   }
 }

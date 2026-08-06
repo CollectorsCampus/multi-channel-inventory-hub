@@ -8,5 +8,11 @@
     "outDir": "./dist",
     "rootDir": "./src"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // Keep specs out of the built output, like every other package here. Beyond
+  // being dead weight in a published dist, an emitted `dist/*.spec.js` is a
+  // CommonJS test file that vitest 4 discovers and cannot run — vitest 4 is
+  // ESM-only and rejects being `require()`d. vitest 3 excluded `dist/` by
+  // default and hid this; vitest 4 does not.
+  "exclude": ["src/**/*.spec.ts"]
 }

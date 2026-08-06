@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   DEFAULT_MAX_SETS,
+  useCatalogCredentialStatus,
   useCatalogSources,
   useIngestableSets,
   useLocalSearch,
   useLocalSets,
   useRunIngest,
+  useSetCatalogCredentials,
   type LocalSetSummary,
 } from '../api/catalog';
 import { useCurrentUser } from '../auth';
+import { SecretFields } from '../components/SchemaForm';
 
 /**
  * The local catalog: what has been ingested, browsable without a set name and
@@ -226,6 +229,22 @@ function IngestPanel() {
     setListRequested(false);
   }, [sourceKey, game]);
 
+  const selectedSource = sources.data?.find((s) => s.key === sourceKey);
+  const needsCredentials = (selectedSource?.secretFields.length ?? 0) > 0;
+
+  const [credentialInputs, setCredentialInputs] = useState<Record<string, string>>({});
+  // A typed-but-unsaved token for one source has no business surviving a
+  // switch to another — that would look like it applied to the new one.
+  useEffect(() => setCredentialInputs({}), [sourceKey]);
+
+  const credentialStatus = useCatalogCredentialStatus(sourceKey, needsCredentials);
+  const setCredentials = useSetCatalogCredentials(sourceKey);
+  const configured =
+    credentialStatus.data !== undefined &&
+    credentialStatus.data.secretFieldsRequired.every((f) =>
+      credentialStatus.data!.secretsSet.includes(f),
+    );
+
   const toggle = (setId: string) => {
     setSelected((previous) => {
       const next = new Set(previous);
@@ -272,12 +291,51 @@ function IngestPanel() {
         />
         <button
           type="button"
-          disabled={available.isFetching || sourceKey === ''}
+          disabled={available.isFetching || sourceKey === '' || (needsCredentials && !configured)}
           onClick={() => setListRequested(true)}
         >
           {available.isFetching ? 'Listing…' : 'List sets'}
         </button>
       </div>
+
+      {/*
+        A source declaring secretFields (CardTrader today) needs a token
+        before it can answer anything. Shown right under the picker so setting
+        it is the obvious next step rather than a buried settings screen —
+        the same reasoning that put listing defaults on the channel itself.
+      */}
+      {needsCredentials && selectedSource && (
+        <div>
+          <p className="muted">
+            {configured
+              ? `${selectedSource.displayName} is configured.`
+              : `${selectedSource.displayName} needs a token before it can be searched or ingested.`}
+          </p>
+          <SecretFields
+            fields={selectedSource.secretFields}
+            alreadySet={credentialStatus.data?.secretsSet ?? []}
+            value={credentialInputs}
+            onChange={setCredentialInputs}
+            idPrefix={`catalog-${sourceKey}`}
+          />
+          <div className="inline-form">
+            <button
+              type="button"
+              disabled={Object.keys(credentialInputs).length === 0 || setCredentials.isPending}
+              onClick={() =>
+                setCredentials.mutate(credentialInputs, {
+                  onSuccess: () => setCredentialInputs({}),
+                })
+              }
+            >
+              {setCredentials.isPending ? 'Saving…' : 'Save credentials'}
+            </button>
+          </div>
+          {setCredentials.isError && (
+            <p className="error">{(setCredentials.error as Error).message}</p>
+          )}
+        </div>
+      )}
 
       {available.isError && <p className="error">{(available.error as Error).message}</p>}
 

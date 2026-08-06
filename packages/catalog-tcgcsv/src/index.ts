@@ -16,6 +16,7 @@ export {
   TCGCSV_KEY,
   TCGPLAYER_ID_KEY,
   looseIncludes,
+  matchByName,
   normalizePrinting,
   parseCategories,
   parseGroups,

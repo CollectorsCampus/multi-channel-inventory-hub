@@ -10,6 +10,7 @@ import {
 } from '@hub/connector-sdk';
 import { createScryfallSource } from '@hub/catalog-scryfall';
 import { createTcgcsvSource } from '@hub/catalog-tcgcsv';
+import { createCardTraderSource } from '@hub/catalog-cardtrader';
 import { MinIntervalLimiter, intervalFor } from './rate-limiter';
 
 /**
@@ -33,6 +34,12 @@ export interface CatalogSourceSummary {
    * is the "cannot be ingested" error.
    */
   canIngest: boolean;
+  /**
+   * Secret field names this source needs, e.g. CardTrader's `["token"]`.
+   * Empty for a public source. Exposed so the UI knows to offer a credentials
+   * form at all — never the values, the same trade `ChannelSummary` makes.
+   */
+  secretFields: readonly string[];
 }
 
 /** A candidate plus which source produced it. */
@@ -93,6 +100,7 @@ export class CatalogSourceRegistry implements OnModuleInit {
       games: s.games,
       providesExternalIds: s.providesExternalIds ?? [],
       canIngest: supportsBulkIngest(s),
+      secretFields: s.secretFields ?? [],
     }));
   }
 
@@ -123,7 +131,7 @@ export class CatalogSourceRegistry implements OnModuleInit {
    * returned alongside the results so the UI can say so.
    */
   async search(
-    makeCtx: (source: CatalogSource) => CatalogCtx,
+    makeCtx: (source: CatalogSource) => CatalogCtx | Promise<CatalogCtx>,
     query: CatalogSearchQuery,
   ): Promise<{
     candidates: AttributedCandidate[];
@@ -136,8 +144,8 @@ export class CatalogSourceRegistry implements OnModuleInit {
         source,
         // Declared limits are enforced here rather than inside sources, so
         // every plugin is throttled identically and none can forget to be.
-        results: await this.limiter.run(source.key, intervalFor(source.rateLimit), () =>
-          source.search(makeCtx(source), query),
+        results: await this.limiter.run(source.key, intervalFor(source.rateLimit), async () =>
+          source.search(await makeCtx(source), query),
         ),
       })),
     );
@@ -171,11 +179,6 @@ export class CatalogSourceRegistry implements OnModuleInit {
 /**
  * Bundled catalog sources.
  *
- * tcgcsv is deliberately absent: ADR 0002 records it as an unofficial
- * redistribution of someone else's API output, fine as an opt-in importer but
- * not something to enable for every self-hoster by default.
- */
-/**
  * Scryfall covers Magic. tcgcsv covers the other twenty product lines a real card
  * inventory contains — One Piece, Lorcana, Flesh & Blood, Union Arena, Gundam,
  * sleeves, deck boxes, playmats — and supplies the product-level `tcgplayer` id
@@ -187,5 +190,18 @@ export class CatalogSourceRegistry implements OnModuleInit {
  * and the registry surfaces per-source failures alongside the results — so an
  * unscoped search still returns Scryfall's answers and explains what tcgcsv
  * needed. Both search forms carry a set field for exactly that reason.
+ *
+ * CardTrader is the first source needing credentials — it is registered and
+ * searchable with no token configured, and fails with a clear "requires a
+ * token" error the moment it is actually asked to call the API, rather than
+ * being absent from this list until an operator sets one up. Its value is the
+ * same convergence tcgcsv and Scryfall already give each other: a blueprint
+ * publishes `tcg_player_id`, `scryfall_id` and `card_market_ids` at high
+ * coverage across every game, so `IntakeService.resolveCatalogItem` finds the
+ * existing `CatalogItem` rather than creating a duplicate.
  */
-const BUNDLED_CATALOG_SOURCES: CatalogSource[] = [createScryfallSource(), createTcgcsvSource()];
+const BUNDLED_CATALOG_SOURCES: CatalogSource[] = [
+  createScryfallSource(),
+  createTcgcsvSource(),
+  createCardTraderSource(),
+];

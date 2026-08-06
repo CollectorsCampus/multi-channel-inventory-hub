@@ -1,8 +1,14 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { supportsBulkIngest, type CatalogCtx, type CatalogSetRef } from '@hub/connector-sdk';
+import {
+  supportsBulkIngest,
+  type CatalogCtx,
+  type CatalogSetRef,
+  type CatalogSource,
+} from '@hub/connector-sdk';
 import { CatalogSourceRegistry } from './catalog-source-registry.service';
 import { MinIntervalLimiter, intervalFor } from './rate-limiter';
 import { IntakeService } from '../inventory/intake.service';
+import { CatalogCredentialsService } from './catalog-credentials.service';
 
 /**
  * Filling the local catalog from a source, set by set.
@@ -83,6 +89,7 @@ export class CatalogIngestService {
   constructor(
     private readonly registry: CatalogSourceRegistry,
     private readonly intake: IntakeService,
+    private readonly credentials: CatalogCredentialsService,
   ) {}
 
   /** Sets a source can offer, so a caller can choose before committing to a run. */
@@ -94,8 +101,9 @@ export class CatalogIngestService {
       );
     }
 
+    const ctx = await this.makeCtx(source, signal);
     return this.limiter.run(source.key, intervalFor(source.rateLimit), () =>
-      source.listSets!(this.makeCtx(sourceKey, signal), game),
+      source.listSets!(ctx, game),
     );
   }
 
@@ -109,7 +117,7 @@ export class CatalogIngestService {
       );
     }
 
-    const ctx = this.makeCtx(source.key, request.signal);
+    const ctx = await this.makeCtx(source, request.signal);
     const interval = intervalFor(source.rateLimit);
 
     const available = await this.limiter.run(source.key, interval, () =>
@@ -183,10 +191,10 @@ export class CatalogIngestService {
     return report;
   }
 
-  private makeCtx(sourceKey: string, signal?: AbortSignal): CatalogCtx {
-    const context = `ingest:${sourceKey}`;
+  private async makeCtx(source: CatalogSource, signal?: AbortSignal): Promise<CatalogCtx> {
+    const context = `ingest:${source.key}`;
     return {
-      secrets: {},
+      secrets: await this.credentials.loadSecrets(source),
       ...(signal ? { signal } : {}),
       logger: {
         debug: (m) => this.logger.debug(m, context),

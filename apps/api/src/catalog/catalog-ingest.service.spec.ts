@@ -7,7 +7,11 @@ import { AlertsService } from '../sync/alerts.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { CatalogService } from './catalog.service';
 import type { CatalogSourceRegistry } from './catalog-source-registry.service';
+import type { CatalogCredentialsService } from './catalog-credentials.service';
 import type { PrismaService } from '../prisma/prisma.service';
+
+/** None of these sources declare `secretFields`, so this never touches CredentialStore. */
+const noCredentials = { loadSecrets: async () => ({}) } as unknown as CatalogCredentialsService;
 
 /**
  * Ingest against a real database.
@@ -89,7 +93,7 @@ describeDb('CatalogIngestService', () => {
       new AlertsService(prisma as unknown as PrismaService),
     );
 
-    ingest = new CatalogIngestService(registry, intake);
+    ingest = new CatalogIngestService(registry, intake, noCredentials);
   });
 
   it('creates a catalog item per product, with its external ids', async () => {
@@ -117,7 +121,12 @@ describeDb('CatalogIngestService', () => {
     expect(await prisma.catalogItem.count()).toBe(3);
   });
 
-  it('refreshes an item whose name changed at the source', async () => {
+  /**
+   * Fill-empty-only: refresh never rewrites a value some source already set. A
+   * second ingesting source that spells names differently — CardTrader vs
+   * tcgcsv — must not relabel the catalogue, so a changed name is ignored.
+   */
+  it('does not overwrite a name that changed at the source', async () => {
     await ingest.ingest({ sourceKey: 'tcgcsv' });
 
     fetchSet.mockImplementation(async (_ctx: unknown, setId: string) =>
@@ -126,13 +135,40 @@ describeDb('CatalogIngestService', () => {
 
     const again = await ingest.ingest({ sourceKey: 'tcgcsv' });
 
-    expect(again.refreshed).toBe(1);
+    // Nothing to fill — the name was already set — so nothing is written.
+    expect(again.refreshed).toBe(0);
     const item = await prisma.catalogItem.findFirstOrThrow({
-      where: { searchName: { contains: 'full art' } },
+      where: { externalRefs: { some: { source: 'tcgcsv', externalId: '100' } } },
     });
-    expect(item.name).toBe('Pikachu ex (Full Art)');
-    // searchName is what the browser filters on, so it must move with the name.
-    expect(item.searchName).toBe('pikachu ex (full art)');
+    expect(item.name).toBe('Pikachu ex');
+    expect(item.searchName).toBe('pikachu ex');
+  });
+
+  /**
+   * The other half of fill-empty-only: a genuinely blank field is a pure
+   * improvement to complete, so a later source that supplies one still fills it.
+   */
+  it('backfills a descriptive field that was previously empty', async () => {
+    // Create the item carrying no set name.
+    fetchSet.mockImplementation(async (_ctx: unknown, setId: string) =>
+      setId === '3:1' ? [card({ setName: undefined })] : [],
+    );
+    await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+    const before = await prisma.catalogItem.findFirstOrThrow({
+      where: { externalRefs: { some: { source: 'tcgcsv', externalId: '100' } } },
+    });
+    expect(before.setName).toBeNull();
+
+    // A later run supplies the set name.
+    fetchSet.mockImplementation(async (_ctx: unknown, setId: string) =>
+      setId === '3:1' ? [card({ setName: 'Surging Sparks' })] : [],
+    );
+    const again = await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+    expect(again.refreshed).toBe(1);
+    const after = await prisma.catalogItem.findFirstOrThrow({ where: { id: before.id } });
+    expect(after.setName).toBe('Surging Sparks');
   });
 
   /**
@@ -186,7 +222,7 @@ describeDb('CatalogIngestService', () => {
       new AlertsService(prisma as unknown as PrismaService),
     );
 
-    const limited = new CatalogIngestService(registry, intake);
+    const limited = new CatalogIngestService(registry, intake, noCredentials);
 
     await expect(limited.ingest({ sourceKey: 'scryfall' })).rejects.toThrow(/does not enumerate/i);
   });
@@ -213,6 +249,7 @@ describeDb('CatalogIngestService', () => {
       const catalog = new CatalogService(
         { get: vi.fn(() => source) } as unknown as CatalogSourceRegistry,
         prisma as unknown as PrismaService,
+        noCredentials,
       );
 
       const found = await catalog.fetchCandidate('tcgcsv', '100');
@@ -242,6 +279,7 @@ describeDb('CatalogIngestService', () => {
       const catalog = new CatalogService(
         { get: vi.fn(() => source) } as unknown as CatalogSourceRegistry,
         prisma as unknown as PrismaService,
+        noCredentials,
       );
 
       const found = await catalog.fetchCandidate('tcgcsv', '999');
@@ -263,6 +301,7 @@ describeDb('CatalogIngestService', () => {
           get: vi.fn(() => ({ key: 'tcgcsv', displayName: 'tcgcsv', games: [], search: vi.fn() })),
         } as unknown as CatalogSourceRegistry,
         prisma as unknown as PrismaService,
+        noCredentials,
       );
 
     it('lists the sets held, with counts, needing no set name', async () => {

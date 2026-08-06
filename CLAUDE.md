@@ -1454,10 +1454,105 @@ Both cleared the same day they appeared; **Dependabot is back to 0 open, 21 fixe
   parent's declared range before reaching for an override; one that was never needed still
   has to be carried forever.
 
+### CardTrader as a catalog source — pull-only, built and proven live (2026-08-05)
+
+`packages/catalog-cardtrader` — CardTrader's catalogue as a `CatalogSource`, the pull
+side only. **No `Connector`**: selling through CardTrader is still gated on the three
+questions in `docs/CONNECTOR_ROADMAP.md` (does `products/export` satisfy
+`listing.enumerate`, the real order-webhook body, blueprint→`CatalogItem` match quality),
+and none is touched here. On branch `cardtrader-catalog`, not yet a PR.
+
+**The point of building it, proven end to end against the operator's real DB.** A CardTrader
+blueprint publishes its own `tcg_player_id`, `scryfall_id` and `card_market_ids`, so an
+ingest converges on the existing local catalog through `CatalogExternalRef` **by design**
+rather than by the luck of two sources both happening to emit `tcgplayer`. Measured live:
+ingesting Phantasmal Flames (CardTrader expansion 4318, 156 blueprints) reported **13
+created, 143 refreshed, 0 problems** — the 143 matched existing tcgcsv-created items by
+`tcgplayer` id, and `catalog_items` grew by exactly 13, not 156. The Mega Charizard X ex
+item (keyed on `tcgplayer:662182` from tcgcsv) ended with **four refs on one row** —
+`cardmarket`, `cardtrader`, `tcgcsv`, `tcgplayer` — no duplicate. tcgplayer coverage on that
+set was 92%, exactly the doc-commit figure.
+
+**The first catalog source needing credentials, and the plumbing that unblocked it.**
+`CatalogService.makeCtx` and `CatalogIngestService.makeCtx` hardcoded `secrets: {}` from the
+day `CatalogCtx.secrets` was written. `CatalogCredentialsService` now loads them, keyed on
+`catalog:<sourceKey>` in the existing AES-GCM `CredentialStore` — **no migration**, because
+`Credential.ref` is a free unique string and the ref is bound in as AEAD associated data, so
+CardTrader gets the same "can't move one source's ciphertext onto another" protection
+channels get. `makeCtx` became async on both services (the registry's `search` callback now
+accepts a `Promise<CatalogCtx>`); the ingest and catalog service constructors gained the
+credentials service as a third arg — the only reason the DB-backed specs needed touching.
+Admin endpoints `GET`/`PUT /catalog/sources/:key/credentials` report which fields are set
+(never values) and store merged, mirroring `ChannelsService`. `CatalogSourceSummary` gained
+`secretFields` so the `/catalog` ingest panel shows a token box for a source that declares
+one; it is registered and searchable with no token and fails with a clear "requires a token"
+the moment it actually calls the API.
+
+Facts worth not re-deriving:
+
+- **Envelope shapes differ by endpoint, measured not assumed.** `/games` and `/categories`
+  wrap in `{ array: [...] }`; `/expansions` and `/blueprints/export` are bare arrays. Handled
+  explicitly per endpoint so a real shape change fails loudly rather than silently finding
+  nothing.
+- **Same "importer wearing a search interface" shape as tcgcsv.** No blueprint search
+  endpoint and no `GET /blueprints/:id`, so `search()` narrows to ≤4 expansions and
+  downloads them, an unscoped query throws, and `fetchById` only resolves a blueprint from
+  an expansion already read (an in-memory `blueprintIndex`, like tcgcsv's `productIndex`).
+- **No price, ever, and no `printings`.** `/blueprints/export` carries no price — pricing is
+  on `/marketplace/products`, a listing endpoint, not a catalogue one. Finish is a set of
+  independent per-game booleans (`mtg_foil`, `first_edition`) with no shared vocabulary to
+  normalise, so nothing is guessed. `version` (e.g. "Holo Rare | 1/102") is folded into the
+  name the way tcgcsv folds a collector number in.
+- **No User-Agent gating** — unlike tcgcsv, a bare `fetch` is not 401'd, so no UA dance.
+- **CardTrader spells sets without the tcgcsv prefix** — "Phantasmal Flames" vs tcgcsv's
+  "ME02: Phantasmal Flames". Harmless for convergence (that runs on `tcgplayer` id), but it
+  drives the finding below.
+- **`/info` returns the app's `shared_secret`** (webhook signing key). Treat that response
+  as a credential if the connector half is ever built; it must never reach a log or a
+  tracked file. The token lives only in `private/cardtrader/`.
+
+**The finding a second ingesting source exposed, now fixed: refresh was overwrite, it is
+now fill-empty-only.** Ingest calls `ensureCatalogItem(candidate, { refresh: true })`, and
+`refreshCatalogItem` used to rewrite `name`/`game`/`setName`/`imageUrl` whenever they
+differed. That was invisible while tcgcsv was the _only_ ingesting source (scryfall has no
+`listSets`/`fetchSet`). CardTrader is the first second one, and in the live run below its
+ingest silently rewrote all 143 converged items' names to CardTrader's spelling **and their
+`setName` from "ME02: Phantasmal Flames" to "Phantasmal Flames"** — including 10 with live
+SKUs. Set names are case-sensitive and drive matching and the operator's tag collections, so
+last-ingest-wins is not acceptable. **The operator chose fill-empty-only**, now implemented:
+`refreshCatalogItem` fills a `game`/`setName`/`imageUrl` only where the stored value is blank
+and never overwrites a non-empty one. There is no per-field provenance, so the rule is simply
+"any non-empty value wins" — which makes `name` immutable after creation (a created item
+always has one), so nothing relabels the catalogue behind the operator, while a genuinely
+empty field is still backfilled as a pure improvement. Pinned by two DB tests (a changed name
+is not applied; a previously-null `setName` is filled).
+
+**The live run was fully rolled back.** The operator's compose DB (`inventory-hub-postgres-1`)
+is the real business data, so after proving convergence the verification restored baseline
+exactly: re-ingested tcgcsv Phantasmal Flames to put the 143 names/set-names back, deleted
+the 13 created items and all 156 cardtrader + 153 cardmarket + 1 tcgplayer refs it added
+(identified by `created_at`, cross-checked against a pre-run snapshot: `catalog_items` 8998,
+`tcgplayer` refs 8997, `cardmarket` 1), removed the `catalog:cardtrader` credential and the
+throwaway admin session, and restored `hub-app-032` from the `main`-built `inventory-hub:local`
+image. **Verified back to 8998 items, 0 cardtrader refs, only the Shopify credential.** The
+throwaway test DB on 5433 could not host this check — it lacks the 8998 catalog items the
+convergence demo needs — which is why it ran against the live DB and had to be undone.
+
+Full suite green: **catalog-cardtrader 34 tests** (blueprints 11, source 23), the 8 new
+`CatalogCredentialsService` tests, and the whole `apps/api` suite run **against the real test
+DB — 35 files, 658 tests, 0 skipped** — so the fill-empty-only refresh and the DB-backed
+ingest paths are actually exercised, not just typechecked. lint/format/typecheck/build clean
+across the workspace. The `cardtrader-catalog` branch also still carries the earlier doc-only
+commit recording the first API probe (`docs/CONNECTOR_ROADMAP.md`); fold it into this
+branch's history or PR them together.
+
 ### Unmerged work
 
-None. Everything through **#70** is on `main` as of 2026-08-03. **v0.4.0** shipped everything
-through #58, so **eight commits sit on `main` in no released image** — count them with
+The `cardtrader-catalog` branch (above) is unmerged and has no PR: a docs-only commit
+recording the first CardTrader probe, plus the pull-only catalog source and its credential
+plumbing. Everything else through **#70** is on `main` as of 2026-08-03. **v0.4.0** shipped
+everything through #58, so **eight commits sit on `main` in no released image** — count them
+with
 `git log v0.4.0..main` rather than trusting a remembered figure, which has already been
 wrong once here. Two are real features (the catalog split alert and merge, #65; the intake
 price, #66), two are security fixes (#68, #69), and the rest are documentation.

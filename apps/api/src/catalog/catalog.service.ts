@@ -10,6 +10,7 @@ import { MinIntervalLimiter, intervalFor } from './rate-limiter';
 // Not `import type` — Nest injects this, and a type-only import degrades
 // `design:paramtypes` to Object and fails DI at runtime (rule 7).
 import { PrismaService } from '../prisma/prisma.service';
+import { CatalogCredentialsService } from './catalog-credentials.service';
 
 /**
  * Catalog search for the intake flow (§7).
@@ -26,6 +27,7 @@ export class CatalogService {
   constructor(
     private readonly registry: CatalogSourceRegistry,
     private readonly prisma: PrismaService,
+    private readonly credentials: CatalogCredentialsService,
   ) {}
 
   async search(query: CatalogSearchQuery) {
@@ -169,8 +171,9 @@ export class CatalogService {
       return null;
     }
 
+    const ctx = await this.makeCtx(source);
     const candidate = await this.limiter.run(source.key, intervalFor(source.rateLimit), () =>
-      source.fetchById!(this.makeCtx(source), sourceId),
+      source.fetchById!(ctx, sourceId),
     );
 
     return candidate ? { ...candidate, sourceKey: source.key } : null;
@@ -241,12 +244,10 @@ export class CatalogService {
     return this.registry.list();
   }
 
-  private makeCtx(source: CatalogSource): CatalogCtx {
+  private async makeCtx(source: CatalogSource): Promise<CatalogCtx> {
     const context = `catalog:${source.key}`;
     return {
-      // Public sources need nothing. Sources declaring secretFields will read
-      // from the credential store once any of them exist.
-      secrets: {},
+      secrets: await this.credentials.loadSecrets(source),
       logger: {
         debug: (m) => this.logger.debug(m, context),
         info: (m) => this.logger.log(m, context),

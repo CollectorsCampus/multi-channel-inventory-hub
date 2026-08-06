@@ -8,7 +8,7 @@ import { RECONCILE_QUEUE, RECONCILE_SWEEP_JOB, type ReconcileJob } from './outbo
 /**
  * The reconciliation schedule (§6: "scheduled, default nightly + on-demand").
  *
- * BullMQ's repeatable jobs rather than a scheduler dependency: the queue is
+ * BullMQ's job schedulers rather than a scheduler dependency: the queue is
  * already here, and putting the schedule in Redis means several API replicas
  * produce one sweep between them instead of one each. A node-local timer would
  * fire on every replica and hammer the platform N times a night.
@@ -16,6 +16,18 @@ import { RECONCILE_QUEUE, RECONCILE_SWEEP_JOB, type ReconcileJob } from './outbo
  * The on-demand path in the UI does **not** come through here — an operator
  * pressing "reconcile now" gets the report back in the response, not a job id.
  * This queue exists for the unattended run.
+ *
+ * **BullMQ 6 migration note.** v6 removed the legacy repeatable-jobs API
+ * (`getRepeatableJobs`, `removeRepeatableByKey`, and the `repeat` option on
+ * `add`) in favour of job schedulers. A repeatable registered by a v5 build
+ * (0.4.0 and earlier) lives under different Redis keys that v6 cannot see or
+ * remove — so on the first boot after the upgrade the old sweep's pending
+ * delayed job may fire **once** more, then fail to reschedule itself (the
+ * worker logs one "failed" warning) and is gone. The sweep is idempotent —
+ * it reads drift and, only where auto-correct is on, re-queues a quantity — so
+ * one extra run is harmless. To avoid even that, delete the old repeatable in
+ * Redis before deploying: `DEL` the `bull:reconcile:repeat:*` keys, or run the
+ * v5→v6 migration while still on v5.
  */
 @Injectable()
 export class ReconcileQueue implements OnModuleDestroy {
@@ -42,29 +54,22 @@ export class ReconcileQueue implements OnModuleDestroy {
   }
 
   /**
-   * Install (or move) the nightly repeatable.
+   * Install (or move) the nightly sweep.
    *
-   * Called at boot. Registering under a fixed job id means a changed
-   * `RECONCILE_CRON` replaces the existing schedule instead of accumulating a
-   * second one beside it — stale repeatables are otherwise invisible until two
-   * sweeps run on the same night.
+   * Called at boot. `upsertJobScheduler` is keyed by a fixed scheduler id, so a
+   * changed `RECONCILE_CRON` updates the one schedule in place rather than
+   * accumulating a second one beside it — which is what the old remove-then-add
+   * dance existed to prevent, and which the upsert now gives for free. The
+   * template carries empty `data`, because the worker tells a sweep from a
+   * per-channel run by the absence of `channelInstanceId`.
    */
   async scheduleSweep(): Promise<string> {
     const pattern = this.config.get<string>('RECONCILE_CRON', '0 3 * * *');
 
-    // Remove whatever was registered before, whatever its pattern. Matching on
-    // the current pattern would leave an old one behind precisely when the
-    // operator has just changed it.
-    for (const existing of await this.queue.getRepeatableJobs()) {
-      if (existing.name === RECONCILE_SWEEP_JOB) {
-        await this.queue.removeRepeatableByKey(existing.key);
-      }
-    }
-
-    await this.queue.add(
+    await this.queue.upsertJobScheduler(
       RECONCILE_SWEEP_JOB,
-      {},
-      { repeat: { pattern }, jobId: RECONCILE_SWEEP_JOB },
+      { pattern },
+      { name: RECONCILE_SWEEP_JOB, data: {} },
     );
 
     this.logger.log(`Reconciliation scheduled: ${pattern}`);

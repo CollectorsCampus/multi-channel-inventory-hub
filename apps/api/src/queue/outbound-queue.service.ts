@@ -53,7 +53,7 @@ export interface InboundJob {
  */
 export const RECONCILE_QUEUE = 'reconcile';
 
-/** The repeatable's fixed id, so re-registering it replaces rather than adds. */
+/** The job scheduler's fixed id, so re-registering it replaces rather than adds. */
 export const RECONCILE_SWEEP_JOB = 'nightly-sweep';
 
 export interface ReconcileJob {

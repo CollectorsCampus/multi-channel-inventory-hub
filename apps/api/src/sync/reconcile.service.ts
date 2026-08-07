@@ -228,12 +228,18 @@ export class ReconcileService {
       .filter((listing) => listing.externalListingId !== null)
       .map((listing) => ({
         id: listing.allocationId,
+        inventoryItemId: listing.inventoryItemId,
         externalListingId: listing.externalListingId!,
         listedQuantity: listing.listedQuantity,
         desiredListedQuantity: listing.quantity,
         price: listing.price,
         currency: listing.currency,
         status: listing.status,
+        // Carried only for the report's display, so a finding can name the
+        // product rather than showing a bare platform id.
+        name: listing.sku.name,
+        ...(listing.sku.setName ? { setName: listing.sku.setName } : {}),
+        condition: listing.sku.condition,
       }));
   }
 

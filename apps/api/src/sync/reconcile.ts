@@ -41,6 +41,13 @@
 /** The subset of a ChannelAllocation drift detection depends on. */
 export interface ReconcilableAllocation {
   id: string;
+  /**
+   * The inventory item behind this allocation, carried onto each finding so the
+   * operator can correct the ledger from the report — set the item's on-hand to
+   * the channel's figure when the channel is the one that is right. Optional so
+   * pure-function tests need not supply it; always populated in practice.
+   */
+  inventoryItemId?: string;
   externalListingId: string;
   /** What we believe the channel is advertising: written only after a successful push. */
   listedQuantity: number;
@@ -50,6 +57,24 @@ export interface ReconcilableAllocation {
   price: number | null;
   currency: string;
   status: string;
+  /**
+   * The product's name, set and condition, purely for display. Carried onto
+   * every finding so the report can name what a listing is rather than showing
+   * only its platform id — a `gid://…` tells an operator nothing. Optional so
+   * the pure-function tests need not supply it; always populated in practice,
+   * because a managed allocation always resolves to a catalog item.
+   */
+  name?: string;
+  setName?: string;
+  condition?: string;
+}
+
+/** The display identity carried onto a finding, so the UI can name the product. */
+export interface ListingIdentity {
+  /** Catalog item name, e.g. "Chaos Rising Booster Box". */
+  name?: string;
+  setName?: string;
+  condition?: string;
 }
 
 /** What the platform says, as reported by the connector. */
@@ -72,8 +97,10 @@ export type DriftKind =
   /** The channel did not report this listing at all. */
   | 'missing';
 
-export interface Drift {
+export interface Drift extends ListingIdentity {
   allocationId: string;
+  /** The item to correct when adopting the channel's figure. See ReconcilableAllocation. */
+  inventoryItemId?: string;
   externalListingId: string;
   kind: DriftKind;
   /** Our value. Null for `missing`, where there is nothing to compare. */
@@ -84,8 +111,9 @@ export interface Drift {
 }
 
 /** An allocation whose last push never landed. Not drift; see the header. */
-export interface PendingPush {
+export interface PendingPush extends ListingIdentity {
   allocationId: string;
+  inventoryItemId?: string;
   externalListingId: string;
   listedQuantity: number;
   desiredListedQuantity: number;
@@ -131,8 +159,21 @@ export function diffLiveState(
   const pending: PendingPush[] = [];
 
   for (const allocation of allocations) {
+    // What each finding for this allocation carries beyond the drift itself:
+    // the product's identity, so the report can name it, and the item id, so
+    // the operator can correct the ledger from the report. Built with
+    // conditional spread so an allocation supplying none of these adds no keys
+    // — which keeps findings byte-identical to before for callers (and tests)
+    // that do not supply them.
+    const identity: ListingIdentity & { inventoryItemId?: string } = {};
+    if (allocation.name) identity.name = allocation.name;
+    if (allocation.setName) identity.setName = allocation.setName;
+    if (allocation.condition) identity.condition = allocation.condition;
+    if (allocation.inventoryItemId) identity.inventoryItemId = allocation.inventoryItemId;
+
     if (allocation.listedQuantity !== allocation.desiredListedQuantity) {
       pending.push({
+        ...identity,
         allocationId: allocation.id,
         externalListingId: allocation.externalListingId,
         listedQuantity: allocation.listedQuantity,
@@ -147,6 +188,7 @@ export function diffLiveState(
       // this means the platform gave no answer — most often a listing the
       // seller deleted on the platform, which is theirs to do.
       drifts.push({
+        ...identity,
         allocationId: allocation.id,
         externalListingId: allocation.externalListingId,
         kind: 'missing',
@@ -161,6 +203,7 @@ export function diffLiveState(
 
     if (live.quantity !== allocation.listedQuantity) {
       drifts.push({
+        ...identity,
         allocationId: allocation.id,
         externalListingId: allocation.externalListingId,
         kind: 'quantity',
@@ -174,6 +217,7 @@ export function diffLiveState(
     // allocation reported inactive is agreement, not drift.
     if (!live.active && allocation.status !== 'delisted') {
       drifts.push({
+        ...identity,
         allocationId: allocation.id,
         externalListingId: allocation.externalListingId,
         kind: 'inactive',
@@ -190,6 +234,7 @@ export function diffLiveState(
       live.price !== allocation.price
     ) {
       drifts.push({
+        ...identity,
         allocationId: allocation.id,
         externalListingId: allocation.externalListingId,
         kind: 'price',

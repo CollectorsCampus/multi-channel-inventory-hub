@@ -151,11 +151,17 @@ export type DriftKind = 'quantity' | 'price' | 'inactive' | 'missing';
 
 export interface Drift {
   allocationId: string;
+  /** The item to correct when the channel is right and the ledger is not. */
+  inventoryItemId?: string;
   externalListingId: string;
   kind: DriftKind;
   ours: number | null;
   theirs: number | null;
   detail: string;
+  /** Product identity for display, so a finding names what a listing is. */
+  name?: string;
+  setName?: string;
+  condition?: string;
 }
 
 export interface ReconcileOutcome {
@@ -172,6 +178,9 @@ export interface ReconcileOutcome {
       externalListingId: string;
       listedQuantity: number;
       desiredListedQuantity: number;
+      name?: string;
+      setName?: string;
+      condition?: string;
     }>;
     unmanaged: string[];
   };

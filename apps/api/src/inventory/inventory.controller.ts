@@ -17,6 +17,7 @@ import { InventoryService } from './inventory.service';
 import { IntakeService } from './intake.service';
 import {
   AdjustQuantityDto,
+  SetQuantityDto,
   AllocationWriteDto,
   CreateInventoryItemDto,
   IntakeDto,
@@ -122,6 +123,27 @@ export class InventoryController {
   ) {
     return this.inventory.adjustQuantityOnHand(id, body.delta, {
       reason: body.reason,
+      note: body.note,
+      actorUserId: user.userId,
+    });
+  }
+
+  @Put(':id/quantity')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'Set physical stock to an absolute count, recording the delta as a movement.',
+    description:
+      'A stock count. Used to correct the ledger from the reconcile report when the channel ' +
+      'is the side that is right. Goes through the ledger like any stock change, so a pooled ' +
+      'item may then push the new figure to its channels.',
+  })
+  setQuantity(
+    @Param('id') id: string,
+    @Body() body: SetQuantityDto,
+    @CurrentUser() user: AuthenticatedPrincipal,
+  ) {
+    return this.inventory.setQuantityOnHand(id, body.quantityOnHand, {
+      reason: body.reason ?? 'reconcile',
       note: body.note,
       actorUserId: user.userId,
     });

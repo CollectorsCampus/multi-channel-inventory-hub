@@ -202,6 +202,31 @@ export class SetReserveDto {
   reserveQuantity!: number;
 }
 
+export class SetQuantityDto {
+  @ApiProperty({
+    minimum: 0,
+    description: 'Absolute on-hand count. Records the delta as a movement.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  quantityOnHand!: number;
+
+  @ApiPropertyOptional({
+    enum: STOCK_MOVEMENT_REASONS,
+    description: "Why. Defaults to 'reconcile' — the usual reason for setting an absolute count.",
+  })
+  @IsOptional()
+  @IsIn(STOCK_MOVEMENT_REASONS as unknown as string[])
+  reason?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
 export class AllocationWriteDto {
   @ApiProperty()
   @IsString()

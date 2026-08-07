@@ -107,6 +107,27 @@ describeDb('InventoryService', () => {
       await service.adjustQuantityOnHand(item.id, 1, { reason: 'intake' });
       expect((await service.getLedger(item.id)).version).toBe(1);
     });
+
+    it('sets an absolute count, recording the delta as a movement', async () => {
+      // The reconcile "correct the ledger" path: the operator names the true
+      // figure and the service records how far it moved to get there.
+      const item = await seedItem(3);
+
+      await service.setQuantityOnHand(item.id, 10, { reason: 'reconcile' });
+
+      expect((await service.getLedger(item.id)).quantityOnHand).toBe(10);
+      const movement = await prisma.stockMovement.findFirst({
+        where: { inventoryItemId: item.id, reason: 'reconcile' },
+      });
+      expect(movement?.delta).toBe(7);
+      expect(movement?.resultingOnHand).toBe(10);
+    });
+
+    it('records no movement when the absolute count is unchanged', async () => {
+      const item = await seedItem(4);
+      await service.setQuantityOnHand(item.id, 4, { reason: 'reconcile' });
+      expect(await prisma.stockMovement.count({ where: { inventoryItemId: item.id } })).toBe(0);
+    });
   });
 
   describe('allocations', () => {

@@ -13,6 +13,7 @@ import {
   useUpdateChannel,
   type Channel,
   type ConnectorSummary,
+  type Drift,
   type ImportKind,
   type ImportSummary,
   type ReconcileOutcome,
@@ -20,6 +21,7 @@ import {
 import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
 import { useChannelTags } from '../api/listings';
+import { useSetLedgerQuantity } from '../api/inventory';
 import { useLocalSets } from '../api/catalog';
 import { suggestTag } from '../tagSuggest';
 import type { TagRule } from '../api/channels';
@@ -782,6 +784,10 @@ function ReconcileResult({ outcome }: { outcome: ReconcileOutcome }) {
       {report.drifts.length > 0 && (
         <details open>
           <summary>What differs</summary>
+          <p className="field-hint">
+            Where the channel is the one that is right, set the ledger to its figure — it records a
+            stock movement and, for a pooled item, pushes the corrected number to its channels.
+          </p>
           <table className="compact">
             <thead>
               <tr>
@@ -789,18 +795,16 @@ function ReconcileResult({ outcome }: { outcome: ReconcileOutcome }) {
                 <th>Finding</th>
                 <th>We pushed</th>
                 <th>Channel shows</th>
+                <th>Correct the ledger</th>
               </tr>
             </thead>
             <tbody>
               {report.drifts.slice(0, 50).map((drift) => (
-                <tr key={`${drift.allocationId}-${drift.kind}`}>
-                  <td>
-                    <code>{drift.externalListingId}</code>
-                  </td>
-                  <td>{describeDriftKind(drift.kind)}</td>
-                  <td>{drift.ours ?? '—'}</td>
-                  <td>{drift.theirs ?? '—'}</td>
-                </tr>
+                <DriftRow
+                  key={`${drift.allocationId}-${drift.kind}`}
+                  drift={drift}
+                  channelName={outcome.channelName}
+                />
               ))}
             </tbody>
           </table>
@@ -827,6 +831,77 @@ function ReconcileResult({ outcome }: { outcome: ReconcileOutcome }) {
         </details>
       )}
     </div>
+  );
+}
+
+/**
+ * One drift row, with the control to correct the ledger from it.
+ *
+ * The correction is offered only for a `quantity` drift that carries an item
+ * id: a `missing`, `inactive` or `price` finding has no channel quantity to
+ * adopt. The input defaults to what the channel shows, so the common case —
+ * "the channel is right" — is one click, while still allowing a different count
+ * to be typed. Setting it writes the ledger through the same path any stock
+ * edit uses, records a `reconcile` movement, and leaves the row marked done;
+ * the drift clears on the next run.
+ */
+function DriftRow({ drift, channelName }: { drift: Drift; channelName: string }) {
+  const setLedger = useSetLedgerQuantity();
+  const [value, setValue] = useState(drift.theirs != null ? String(drift.theirs) : '');
+
+  const canCorrect = drift.kind === 'quantity' && Boolean(drift.inventoryItemId);
+  const parsed = Number(value);
+  const valid = value !== '' && Number.isInteger(parsed) && parsed >= 0;
+
+  return (
+    <tr>
+      <td>
+        {/* Lead with the product, not its platform id: a `gid://…` tells an
+            operator nothing. The id stays, de-emphasised, because it is still
+            what support and the platform key on. */}
+        <span className="cell-title">{drift.name ?? drift.externalListingId}</span>
+        <span className="cell-sub">
+          {[drift.setName, drift.condition].filter(Boolean).join(' · ')}
+          {drift.name && <code className="muted"> {drift.externalListingId}</code>}
+        </span>
+      </td>
+      <td>{describeDriftKind(drift.kind)}</td>
+      <td>{drift.ours ?? '—'}</td>
+      <td>{drift.theirs ?? '—'}</td>
+      <td>
+        {!canCorrect ? (
+          <span className="muted">—</span>
+        ) : setLedger.isSuccess ? (
+          <span className="muted">✓ Ledger set to {setLedger.variables?.quantityOnHand}</span>
+        ) : (
+          <div className="inline-form">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              aria-label={`On-hand for ${drift.name ?? drift.externalListingId}`}
+              style={{ width: '5rem' }}
+            />
+            <button
+              type="button"
+              disabled={!valid || setLedger.isPending}
+              onClick={() =>
+                setLedger.mutate({
+                  id: drift.inventoryItemId!,
+                  quantityOnHand: parsed,
+                  note: `Set to match ${channelName} during reconcile`,
+                })
+              }
+            >
+              {setLedger.isPending ? 'Saving…' : 'Set ledger'}
+            </button>
+          </div>
+        )}
+        {setLedger.isError && <span className="error">{(setLedger.error as Error).message}</span>}
+      </td>
+    </tr>
   );
 }
 

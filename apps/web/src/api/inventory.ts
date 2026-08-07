@@ -200,6 +200,38 @@ export function useSetReserve(id: string) {
   );
 }
 
+/**
+ * Set an item's on-hand to an absolute count, from anywhere that holds the item
+ * id rather than an open detail view — the reconcile report, today.
+ *
+ * Unlike the detail-page mutations this is keyed on the id at call time, not at
+ * hook time, so one instance serves a whole table of drifts. It invalidates the
+ * browse list and the item's own detail, since both show a derived quantity the
+ * write just changed.
+ */
+export function useSetLedgerQuantity() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      quantityOnHand,
+      note,
+    }: {
+      id: string;
+      quantityOnHand: number;
+      note?: string;
+    }) =>
+      apiFetch<MutationOutcome>(`/inventory/${id}/quantity`, {
+        method: 'PUT',
+        body: JSON.stringify({ quantityOnHand, ...(note ? { note } : {}) }),
+      }),
+    onSuccess: (_outcome, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: inventoryKeys.detail(id) });
+    },
+  });
+}
+
 export function useUpsertAllocation(id: string) {
   return useLedgerMutation(
     id,

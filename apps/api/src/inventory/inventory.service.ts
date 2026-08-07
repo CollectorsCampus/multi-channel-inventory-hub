@@ -181,6 +181,7 @@ export interface InventoryPage {
  */
 export interface ChannelListing {
   allocationId: string;
+  inventoryItemId: string;
   externalListingId: string | null;
   quantity: number;
   listedQuantity: number;
@@ -488,6 +489,7 @@ export class InventoryService {
 
       listings.push({
         allocationId: allocation.id,
+        inventoryItemId: row.id,
         externalListingId: allocation.externalListingId,
         quantity: allocation.desiredListedQuantity,
         listedQuantity: allocation.listedQuantity,

@@ -74,6 +74,45 @@ describe('diffLiveState', () => {
     ]);
   });
 
+  /**
+   * The report has to name what a listing is. A platform id like a Shopify
+   * `gid://…` identifies the row but tells an operator nothing, so the
+   * product's name, set and condition ride along onto every finding.
+   */
+  it('carries the product identity and item id onto drifts and pending pushes', () => {
+    const identified = allocation({
+      inventoryItemId: 'item-42',
+      listedQuantity: 5,
+      desiredListedQuantity: 9,
+      name: 'Chaos Rising Booster Box',
+      setName: 'ME04: Chaos Rising',
+      condition: 'SEALED',
+    });
+
+    const report = diffLiveState([identified], [observed({ quantity: 2 })]);
+
+    expect(report.drifts[0]).toMatchObject({
+      kind: 'quantity',
+      inventoryItemId: 'item-42',
+      name: 'Chaos Rising Booster Box',
+      setName: 'ME04: Chaos Rising',
+      condition: 'SEALED',
+    });
+    expect(report.pending[0]).toMatchObject({
+      inventoryItemId: 'item-42',
+      name: 'Chaos Rising Booster Box',
+    });
+  });
+
+  it('omits identity and item-id fields entirely when an allocation carries none', () => {
+    // An allocation with no name must add no keys — callers and the audit log
+    // depend on findings staying byte-identical when there is nothing to name.
+    const report = diffLiveState([allocation({ listedQuantity: 5 })], [observed({ quantity: 2 })]);
+    expect('name' in report.drifts[0]!).toBe(false);
+    expect('setName' in report.drifts[0]!).toBe(false);
+    expect('inventoryItemId' in report.drifts[0]!).toBe(false);
+  });
+
   it('separates a push that never landed from a channel that disagrees', () => {
     // Both at once: the ledger wants 9, we last pushed 5, the channel shows 2.
     const report = diffLiveState(

@@ -21,7 +21,7 @@ parts of it turned out to be wrong or unimplementable; those are recorded in
 | 2     | Connector SDK, catalog sources, Scryfall, intake flow                   | Done                                  |
 | 3     | Shopify connector, BullMQ queue, webhook ingress, channel + activity UI | Done                                  |
 | 4     | TCGPlayer file-based connector                                          | Done                                  |
-| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.4.0 released 2026-08-03** |
+| 5     | Reconciliation, alerting polish, query console, OIDC, release           | Done — **v0.5.0 released 2026-08-07** |
 
 Everything in "After v0.1.1" below shipped in **v0.2.0**: the container-start fix, the
 tcgcsv catalog source, and the match-proposal workflow. The section keeps that heading
@@ -1625,12 +1625,12 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#81** is on `main` as of 2026-08-07 — the CardTrader source (#77),
-the three dependency majors (#78, #79, #80) and the reconcile report changes (#81). **No
-release has been cut since v0.4.0**, so everything from #59 onward — CardTrader, the whole
-dependency backlog, and the reconcile work — sits on `main` in no released image. Cutting the
-next tag is an open call; count what it would carry with `git log v0.4.0..main` rather than a
-remembered figure.
+None. Everything through **#81** is on `main`, and **v0.5.0 is being cut on it** (2026-08-07)
+— the CardTrader source (#77), the three dependency majors (#78, #79, #80) and the reconcile
+report changes (#81), plus the #63–#70 work already on `main` before this window. The
+published digest and the inside-the-artifact verification are recorded in the v0.5.0 section
+below once the tag's image build lands. **No schema migration since v0.4.0**, so it is a
+clean upgrade.
 
 v0.4.0 went out as a minor rather than the v0.3.1 first planned: by the time the queue fix
 was released it had a schema migration and five features beside it.

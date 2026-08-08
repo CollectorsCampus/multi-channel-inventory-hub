@@ -3,6 +3,70 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.5.0] — 2026-08-07
+
+Wider catalogue reach, and a reconciliation report you can act on. CardTrader joins as a
+third catalogue source — the first that needs a credential — and its products converge on
+the catalogue you already hold rather than duplicating it. The nightly sweep's report now
+names each product instead of showing a bare platform id, and where the channel is the one
+that is right, you can correct the ledger from the row. No schema change: a clean upgrade
+from 0.4.x.
+
+### Added
+
+- **CardTrader as a catalogue source.** Pull-only (no selling yet), behind an API token set
+  on the catalogue screen. Its blueprints publish TCGPlayer, Scryfall and Cardmarket ids at
+  high coverage across every game, so an ingest converges on existing catalogue items through
+  their shared ids **by design** rather than by the luck of two sources agreeing. The first
+  catalogue source that needs authentication; credentials are stored in the same encrypted,
+  ref-bound store channel secrets use.
+- **The reconciliation report names each listing** — product, set and condition — rather than
+  identifying a difference only by its platform id (a Shopify `gid://…` says nothing about
+  what the product is). The id stays, de-emphasised.
+- **Correct the ledger from a reconciliation difference.** Where the channel is the side that
+  is right, a quantity difference offers a field — defaulted to the channel's figure, so the
+  common case is one click — that sets the item's on-hand and records a `reconcile` stock
+  movement. Operator-initiated per row, never automatic; a pooled item then pushes the
+  corrected number to its channels through the normal path.
+- **A market price when you add a card**, seeding the listing's price from the catalogue at
+  intake — a per-_product_ starting point, not an answer.
+- **A split catalogue is reported, with a way back.** When two sources with no id in common
+  create two items for one real product, the catalogue surfaces the split and offers a merge
+  that moves the loser's SKUs and ids onto the winner — refused, with the rows named, if a
+  duplicate holds stock or history.
+- **Single sign-on is configurable from Settings**, no restart. The catalogue screen groups
+  sets by game and can take every listed set in one ingest, and an admin can clear the local
+  catalogue (only items no SKU was ever built on) from Settings.
+- **A tag rule that matches an item's kind** — single, sealed or other — so singles can be
+  tagged as singles.
+
+### Changed
+
+- **`bullmq` to 6.** Its legacy repeatable-jobs API was removed; the nightly reconciliation
+  sweep now uses a **job scheduler**. A repeatable registered by a 0.4.x build lives under
+  Redis keys v6 cannot see, so the first sweep after upgrade may run once from the old
+  schedule before it self-clears — harmless, because the sweep is idempotent. To avoid even
+  that, delete the `bull:reconcile:repeat:*` keys before deploying.
+- **Catalogue ingest no longer overwrites a name or set another source has already set** — a
+  refresh now only fills a blank field. Adding a second ingesting source (CardTrader) would
+  otherwise silently re-spell the catalogue in the new source's conventions.
+- **`vitest` to 4** and **`eslint-config-prettier` to 10** (development tooling only).
+- A role claim from an identity provider that maps to nothing now **says why** — claim
+  absent, empty, or unmapped — instead of quietly seating the user as a viewer.
+
+### Fixed
+
+- **Two dependency security advisories**, both refreshed onto patched versions: `fast-uri`
+  (backslash host confusion — reachable through Fastify's JSON tooling, though the one
+  host-based check here was already safe) and `brace-expansion` (denial of service via
+  unbounded expansion — build-time only).
+
+### Notes
+
+- **No schema migration** — a clean upgrade from 0.4.x.
+- CardTrader is the only new thing that needs configuring, and only to use it; the two
+  bundled catalogue sources are unchanged.
+
 ## [0.4.0] — 2026-08-03
 
 The release that makes the daily loop usable: **add a card and put it on the storefront in
@@ -369,6 +433,7 @@ verified against real accounts rather than only against mocks.
 - **A wrong credential is not distinguishable from a transient failure** in the alert
   inbox; both surface as `sync_failure`.
 
+[0.5.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.5.0
 [0.4.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.3.0
 [0.2.0]: https://github.com/CollectorsCampus/multi-channel-inventory-hub/releases/tag/v0.2.0

@@ -1648,6 +1648,35 @@ back.
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.
 
+### v0.5.0 (2026-08-07)
+
+Tagged at `4da349f` (the "Prepare v0.5.0" merge, #83). Multi-arch image at
+`ghcr.io/collectorscampus/multi-channel-inventory-hub`, tagged `0.5.0`, `0.5` and `latest` —
+all three at digest `sha256:7eb1b26a…`, replacing v0.4.0's `sha256:d6a040cd…`. Everything
+from #63 to #82: the CardTrader catalogue source (#77), the reconcile report's product names
+and correct-the-ledger control (#81), the three dependency majors (bullmq 6, vitest 4,
+eslint-config-prettier 10) and two security advisories, plus the catalogue tooling (SSO from
+Settings, catalogue clear, grouped ingest) and the intake price. **No schema migration since
+v0.4.0** — a clean upgrade, and the release notes and CHANGELOG both say so.
+
+Verified the established way — anonymous registry token first, then inside the pulled
+artifact, never trusting the workflow's green tick:
+
+- **Anonymously**, `0.5.0`, `0.5` and `latest` resolve to the **one** digest above, and the
+  `0.5.0` index carries real `linux/amd64` and `linux/arm64` children (plus the two
+  attestation manifests, which is why a naive `platform.architecture` filter finds two
+  `unknown/unknown`).
+- **Inside the image**: `apps/api/package.json` reads `0.5.0`; `packages/catalog-cardtrader/dist`
+  is present and the built API carries the new `/inventory/:id/quantity` route — so the two
+  headline features genuinely shipped in the artifact rather than only living on `main`.
+  `bullmq@6.0.8` is the single copy in `node_modules/.pnpm`, proving the major reached the
+  runtime tree. And `--prod` held: zero `vite`, `vitest` or `esbuild` in the image.
+
+Two things not re-derived from earlier releases: `gh release create --notes-file` handles the
+CHANGELOG's em dashes correctly (only `gh --title` from bash mangles non-ASCII, so the
+release **title** uses a plain hyphen), and pushing the `v*.*.*` tag is the sole trigger for
+`release.yml` — the "Prepare" PR merging does nothing on its own.
+
 ### What Phase 4 actually shipped
 
 `packages/connector-tcgplayer` is registered in `BUNDLED_CONNECTORS` and declares

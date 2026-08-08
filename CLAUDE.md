@@ -28,11 +28,16 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **978 tests** (api 590, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
-scryfall 26, web 22, db 7), lint/typecheck/format/build clean. `apps/web` has tests now —
-the first are the card-image and tag-suggestion grammars. **Count these rather than
-trusting a remembered total**: several commits in this range say "990", which was simply
-added up wrong. **Five jobs run on a push** —
+`main` is green: **1087 tests** (api 662, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
+cardtrader 34, scryfall 26, web 25, db 7), lint/typecheck/format/build clean —
+on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
+tests — the card-image and tag-suggestion grammars. **Count these rather than
+trusting a remembered total**: several older commits say "990", which was simply
+added up wrong, and the api total in particular moves every feature. Note that the
+DB-backed api suites **skip** without `TEST_DATABASE_URL`/`TEST_REDIS_URL`, and a recursive
+`pnpm -r test` does not propagate those to child processes (the pnpm-shim quirk under
+Environment notes) — so a plain `pnpm -r test` under-counts; count with the env set, per
+package. **Five jobs run on a push** —
 `ci.yml`'s build, schema-portability, test and docker, plus CodeQL's analyze in its own
 workflow. `release.yml`'s image job is the sixth and fires only on a `v*.*.*` tag.
 
@@ -1460,7 +1465,8 @@ Both cleared the same day they appeared; **Dependabot is back to 0 open, 21 fixe
 side only. **No `Connector`**: selling through CardTrader is still gated on the three
 questions in `docs/CONNECTOR_ROADMAP.md` (does `products/export` satisfy
 `listing.enumerate`, the real order-webhook body, blueprint→`CatalogItem` match quality),
-and none is touched here. On branch `cardtrader-catalog`, not yet a PR.
+and none is touched here. **Merged as #77** (2026-08-05), together with the earlier doc-only
+commit recording the first API probe.
 
 **The point of building it, proven end to end against the operator's real DB.** A CardTrader
 blueprint publishes its own `tcg_player_id`, `scryfall_id` and `card_market_ids`, so an
@@ -1542,20 +1548,89 @@ Full suite green: **catalog-cardtrader 34 tests** (blueprints 11, source 23), th
 `CatalogCredentialsService` tests, and the whole `apps/api` suite run **against the real test
 DB — 35 files, 658 tests, 0 skipped** — so the fill-empty-only refresh and the DB-backed
 ingest paths are actually exercised, not just typechecked. lint/format/typecheck/build clean
-across the workspace. The `cardtrader-catalog` branch also still carries the earlier doc-only
-commit recording the first API probe (`docs/CONNECTOR_ROADMAP.md`); fold it into this
-branch's history or PR them together.
+across the workspace.
+
+### The Dependabot backlog, cleared — three majors, each real work (2026-08-06/07)
+
+bullmq 5→6 (#78), eslint-config-prettier 9→10 (#79), vitest 3→4 (#80). None was a
+rubber-stamp; two needed code changes and the third exposed a latent packaging bug. Each was
+**redone on current `main` rather than merging Dependabot's own branch** — those branches'
+lockfiles predated the CardTrader merge, so a fresh branch (the bump plus the fix, with a
+regenerated lockfile) superseded each Dependabot PR, which was then closed. (Watch the
+`@dependabot ignore` commands when closing: one slipped into a close comment and had to be
+reversed with `@dependabot unignore this dependency` — it would otherwise have suppressed
+future bullmq updates.)
+
+**bullmq 6 removed the legacy repeatable-jobs API** — `getRepeatableJobs`,
+`removeRepeatableByKey`, and the `repeat` option on `add` — in favour of **job schedulers**.
+`ReconcileQueue.scheduleSweep` (the nightly reconciliation) was the sole user; it now calls
+`upsertJobScheduler(id, { pattern }, { name, data })`. The upsert is keyed by a stable
+scheduler id, so a changed `RECONCILE_CRON` updates the one schedule in place — exactly what
+the old remove-then-add loop guaranteed, now free, so that loop is gone. Two things checked
+rather than assumed: ioredis is already a direct dependency (v6 makes it optional), and
+nothing uses the other removed surfaces (`Queue#client`, `waitUntilReady`'s return,
+`debounce`, `Job#discard`, `Worker#resume`) — the outbound burst-collapse fix is
+jobId+`removeOnComplete`, not `debounce`, so it is untouched. **One-time Redis transition**:
+a repeatable registered by a v5 build lives under keys v6 cannot see or remove, so the first
+boot after upgrade may fire the old sweep once before it self-clears (one "failed" warning);
+the sweep is idempotent, so it is harmless — the `bull:reconcile:repeat:*` keys can be
+`DEL`eted first to avoid even that. Verified with a live smoke test: re-upserting with a
+different pattern leaves one scheduler, not two.
+
+**vitest 4 dropped `dist/` from its default test-discovery exclude.** Every package excludes
+specs from its build except `@hub/db`, which was emitting `dist/enums.spec.js`; vitest 4 then
+discovered that compiled CommonJS spec and failed trying to `require()` the now ESM-only
+vitest — surfacing under the "Tests (postgres)" CI job, which runs the whole recursive suite
+(so the failure was really in `packages/db`, not `apps/api`, despite the job name). Fixed at
+the root by excluding specs from db's build, matching every other package. **The reusable
+rule: keep specs out of every package's built `dist/` — vitest 4 will otherwise find and
+choke on them.** The vitest configs themselves needed nothing (`globals`, `environment`,
+`include`, `setupFiles`, `fileParallelism`, `resolve.alias` all survive v4).
+
+**eslint-config-prettier 10** was a clean dev-config bump: v10 removed the deprecated CLI
+helper and the `eslint-config-prettier/prettier` special-case, neither used here — the flat
+config imports the default export and spreads it, unchanged in v10.
+
+**GitHub Actions had a day-long partial outage in this window**, which stranded #80's CI as
+`queued` for over a day ("The job was not acquired by Runner of type hosted"). This looks
+exactly like a hang; check `githubstatus.com` before assuming a stuck or failed CI run is
+your code. The fix once runners returned was to rebase and force-push for a genuinely fresh
+run — a re-run of a stuck-`queued` run is refused as "already running".
+
+### Reconcile report: name each listing, and correct the ledger from a drift (#81, 2026-08-06)
+
+The reconcile report identified a differing listing only by its platform id — a `gid://…`
+that names nothing. Two operator-requested changes.
+
+**Every finding now carries the product's name, set and condition**, threaded through
+`diffLiveState` from the catalog item behind the allocation (`ChannelListing` gained an
+`inventoryItemId` too), and each drift row leads with the name while the gid stays as muted
+secondary text. It rides on drifts and pending pushes via a **conditional spread**, so a
+finding with nothing to name stays byte-identical to before — which is what keeps the
+existing exact-equality tests honest and is worth preserving in any change here.
+
+**A quantity-drift row can correct the ledger** when the channel is the side that is right:
+a number input defaulted to the channel's figure (so the common case is one click) plus a
+"Set ledger" button, going through a new `PUT /inventory/:id/quantity` →
+`InventoryService.setQuantityOnHand`, recording a **`reconcile`** stock movement. This is the
+deliberate human-driven counterpart to the standing rule that reconciliation never pulls from
+the channel automatically ("picking a policy silently would be reconciliation by accident",
+under the inventory-import note) — the operator decides per line. Offered only for `quantity`
+findings, the only ones with a channel quantity to adopt. A **pooled** item then pushes the
+corrected number to its channels through the normal path (a no-op on the channel that was
+already right). Verified end-to-end against the running container on a **no-allocation** item
+(movements recorded, then reverted — zero store impact); deliberately **not** clicked on a
+live store-linked drift, because that adjusts real stock and pushes to the live store, which
+is the operator's call, not a verification step.
 
 ### Unmerged work
 
-The `cardtrader-catalog` branch (above) is unmerged and has no PR: a docs-only commit
-recording the first CardTrader probe, plus the pull-only catalog source and its credential
-plumbing. Everything else through **#70** is on `main` as of 2026-08-03. **v0.4.0** shipped
-everything through #58, so **eight commits sit on `main` in no released image** — count them
-with
-`git log v0.4.0..main` rather than trusting a remembered figure, which has already been
-wrong once here. Two are real features (the catalog split alert and merge, #65; the intake
-price, #66), two are security fixes (#68, #69), and the rest are documentation.
+None. Everything through **#81** is on `main` as of 2026-08-07 — the CardTrader source (#77),
+the three dependency majors (#78, #79, #80) and the reconcile report changes (#81). **No
+release has been cut since v0.4.0**, so everything from #59 onward — CardTrader, the whole
+dependency backlog, and the reconcile work — sits on `main` in no released image. Cutting the
+next tag is an open call; count what it would carry with `git log v0.4.0..main` rather than a
+remembered figure.
 
 v0.4.0 went out as a minor rather than the v0.3.1 first planned: by the time the queue fix
 was released it had a schema migration and five features beside it.

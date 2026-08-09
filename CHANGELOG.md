@@ -3,6 +3,23 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.6.1] — 2026-08-09
+
+Two fixes from the first production deployment, both found live. No schema change.
+
+### Fixed
+
+- **The app was a blank white page over plain HTTP on a LAN address.** The API's
+  Content-Security-Policy carried helmet's default `upgrade-insecure-requests`, which
+  browsers exempt on localhost but honour everywhere else — so the first deployment reached
+  at `http://192.168.x.x` had its scripts force-upgraded to https against a server speaking
+  http, and nothing rendered. The directive is removed; the CSP is `'self'`-only, so an
+  https deployment loses nothing.
+- **A created product's category is normalised to a taxonomy GID.** A category stored as the
+  bare handle a metafield constraint yields (`ae-2-2-3-2`) was sent to `productCreate`
+  verbatim and rejected as an invalid global id, failing the whole creation. Both spellings
+  now work.
+
 ## [0.6.0] — 2026-08-08
 
 Listing rules grow up. Where a created product used to get only its tags and category from a

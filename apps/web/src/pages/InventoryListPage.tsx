@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import {
   formatPrice,
+  useApplyStockUpdates,
   useCreateInventoryItem,
   useInventoryGames,
   useInventoryList,
   type InventoryRow,
+  type StockUpdateResult,
 } from '../api/inventory';
 import { useChannels } from '../api/channels';
 import { SKU_CONDITIONS } from '../constants';
@@ -33,10 +35,22 @@ import { NO_CHANNEL, NO_GAME, PAGE_SIZES, type InventorySearch } from '../router
  */
 const SHOW_IMAGES_KEY = 'hub.inventory.showImages';
 
-function useShowImages(): [boolean, (next: boolean) => void] {
-  const [showImages, setShowImages] = useState(() => {
+/**
+ * Whether to show only items physically held, remembered across sessions.
+ *
+ * This one changes *which rows* the table shows, so it lived in the URL for a
+ * while — a shared link would then carry it. The operator asked for it to be
+ * remembered instead, and for a single-operator tool a persistent default is
+ * worth more than a shareable link: it is the view they want every time they
+ * open the page. So it is a `localStorage` preference like "Show images", and
+ * the trade is that a shared URL no longer carries this one filter.
+ */
+const IN_STOCK_KEY = 'hub.inventory.inStock';
+
+function usePersistedFlag(key: string): [boolean, (next: boolean) => void] {
+  const [value, setValue] = useState(() => {
     try {
-      return localStorage.getItem(SHOW_IMAGES_KEY) === 'true';
+      return localStorage.getItem(key) === 'true';
     } catch {
       // Storage can be unavailable — private mode, a locked-down browser. The
       // preference is not worth failing a page render over.
@@ -45,16 +59,42 @@ function useShowImages(): [boolean, (next: boolean) => void] {
   });
 
   return [
-    showImages,
+    value,
     (next: boolean) => {
-      setShowImages(next);
+      setValue(next);
       try {
-        localStorage.setItem(SHOW_IMAGES_KEY, String(next));
+        localStorage.setItem(key, String(next));
       } catch {
         /* Preference is lost at reload, which is survivable. */
       }
     },
   ];
+}
+
+const useShowImages = () => usePersistedFlag(SHOW_IMAGES_KEY);
+const useInStockOnly = () => usePersistedFlag(IN_STOCK_KEY);
+
+/** One on-hand edit awaiting confirmation. */
+interface StagedChange {
+  id: string;
+  name: string;
+  setName?: string;
+  condition: string;
+  from: number;
+  to: number;
+  /** Allocations on this item — each is a channel the new number gets pushed to. */
+  channels: number;
+}
+
+/**
+ * Passed to the On-hand cell through the table, so the whole table shares one
+ * staged-edit map rather than every cell holding its own draft — which is what
+ * lets several edits be applied together.
+ */
+interface InventoryTableMeta {
+  staged: Record<string, string>;
+  setStaged: (id: string, value: string) => void;
+  requestApply: (ids: string[]) => void;
 }
 
 function buildColumns(showImages: boolean): ColumnDef<InventoryRow>[] {
@@ -87,7 +127,38 @@ function buildColumns(showImages: boolean): ColumnDef<InventoryRow>[] {
       ),
     },
     { accessorKey: 'condition', header: 'Cond.' },
-    { accessorKey: 'quantityOnHand', header: 'On hand' },
+    {
+      accessorKey: 'quantityOnHand',
+      header: 'On hand',
+      cell: ({ row, table }) => {
+        const meta = table.options.meta as InventoryTableMeta;
+        const id = row.original.inventoryItemId;
+        const current = row.original.quantityOnHand;
+        const raw = meta.staged[id];
+        const value = raw ?? String(current);
+        const parsed = Number(value);
+        const valid = value !== '' && Number.isInteger(parsed) && parsed >= 0;
+        const changed = raw !== undefined && valid && parsed !== current;
+        const invalid = raw !== undefined && !valid;
+        return (
+          <input
+            type="number"
+            min={0}
+            step={1}
+            className={`qty-edit${changed ? ' qty-changed' : ''}${invalid ? ' qty-invalid' : ''}`}
+            value={value}
+            onChange={(e) => meta.setStaged(id, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                meta.requestApply([id]);
+              }
+            }}
+            aria-label={`On hand for ${row.original.name}`}
+          />
+        );
+      },
+    },
     {
       accessorKey: 'reserveQuantity',
       header: 'Reserved',
@@ -137,6 +208,7 @@ export function InventoryListPage() {
   }, [searchDraft, search.search, navigate]);
 
   const [showImages, setShowImages] = useShowImages();
+  const [inStockOnly, setInStockOnly] = useInStockOnly();
   const channels = useChannels();
   const games = useInventoryGames();
   const pageSize = search.pageSize ?? 25;
@@ -156,7 +228,7 @@ export function InventoryListPage() {
         : {}),
     // Sent only when on: `inStock: false` would be a different query key and a
     // needless refetch for the same rows.
-    ...(search.inStock ? { inStock: true } : {}),
+    ...(inStockOnly ? { inStock: true } : {}),
     page: search.page ?? 1,
     pageSize,
     sortBy: search.sortBy ?? 'name',
@@ -165,14 +237,76 @@ export function InventoryListPage() {
 
   const columns = useMemo(() => buildColumns(showImages), [showImages]);
 
+  // -- On-hand editing -------------------------------------------------------
+  // A draft value per item id, lifted here so several rows can be edited and
+  // then applied together. Empty until someone types.
+  const [staged, setStaged] = useState<Record<string, string>>({});
+  const [confirming, setConfirming] = useState<StagedChange[] | null>(null);
+
+  const items = useMemo(() => query.data?.items ?? [], [query.data?.items]);
+  const itemById = useMemo(
+    () => new Map(items.map((item) => [item.inventoryItemId, item])),
+    [items],
+  );
+
+  // The staged drafts that are a real, valid, different number — the only ones
+  // worth confirming. A draft equal to the current count, or not a whole number
+  // ≥ 0, is ignored rather than offered.
+  const stagedChanges = useMemo<StagedChange[]>(() => {
+    const out: StagedChange[] = [];
+    for (const [id, raw] of Object.entries(staged)) {
+      const item = itemById.get(id);
+      if (!item) continue; // a row that has since scrolled off the page
+      const parsed = Number(raw);
+      if (raw === '' || !Number.isInteger(parsed) || parsed < 0 || parsed === item.quantityOnHand) {
+        continue;
+      }
+      out.push({
+        id,
+        name: item.name,
+        ...(item.setName ? { setName: item.setName } : {}),
+        condition: item.condition,
+        from: item.quantityOnHand,
+        to: parsed,
+        channels: item.allocations.length,
+      });
+    }
+    return out;
+  }, [staged, itemById]);
+
+  const setStagedValue = useCallback((id: string, value: string) => {
+    setStaged((prev) => ({ ...prev, [id]: value }));
+  }, []);
+
+  const requestApply = useCallback(
+    (ids: string[]) => {
+      const changes = stagedChanges.filter((change) => ids.includes(change.id));
+      if (changes.length > 0) setConfirming(changes);
+    },
+    [stagedChanges],
+  );
+
+  // Drafts belong to the rows on screen. Changing the page, a filter or the sort
+  // brings different rows up, so any unapplied drafts are dropped — applying a
+  // number typed against a row you can no longer see would be a nasty surprise.
+  const searchKey = JSON.stringify(search);
+  useEffect(() => {
+    setStaged({});
+  }, [searchKey, inStockOnly]);
+
   const table = useReactTable({
-    data: query.data?.items ?? [],
+    data: items,
     columns,
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
     pageCount: query.data?.pageCount ?? 0,
+    meta: {
+      staged,
+      setStaged: setStagedValue,
+      requestApply,
+    } satisfies InventoryTableMeta,
   });
 
   const page = search.page ?? 1;
@@ -287,24 +421,17 @@ export function InventoryListPage() {
           ))}
         </select>
 
-        {/* In the URL, unlike "Show images" below it: this changes *which rows*
-            the table shows, so a shared or bookmarked link must carry it.
-            Card art is a preference about reading the table and must not. */}
+        {/* A remembered preference now (see useInStockOnly). It still resets to
+            page 1 on change, because filtering 400 rows down to 30 leaves page 6
+            off the end, and an empty table reads as a broken filter. */}
         <label className="inline-check">
           <input
             type="checkbox"
-            checked={search.inStock ?? false}
-            onChange={(e) =>
-              void navigate({
-                search: (prev) => ({
-                  ...prev,
-                  inStock: e.target.checked ? true : undefined,
-                  // Page 1: filtering down from 400 rows to 30 leaves page 6
-                  // off the end, and an empty table reads as a broken filter.
-                  page: 1,
-                }),
-              })
-            }
+            checked={inStockOnly}
+            onChange={(e) => {
+              setInStockOnly(e.target.checked);
+              void navigate({ search: (prev) => ({ ...prev, page: 1 }) });
+            }}
           />
           In stock only
         </label>
@@ -320,6 +447,20 @@ export function InventoryListPage() {
       </div>
 
       {query.isError && <p className="error">{(query.error as Error).message}</p>}
+
+      {stagedChanges.length > 0 && (
+        <div className="staged-bar">
+          <span>
+            {stagedChanges.length} row{stagedChanges.length === 1 ? '' : 's'} changed
+          </span>
+          <button type="button" onClick={() => setConfirming(stagedChanges)}>
+            Review &amp; apply
+          </button>
+          <button type="button" className="ghost" onClick={() => setStaged({})}>
+            Discard
+          </button>
+        </div>
+      )}
 
       <div className="table-wrap">
         <table>
@@ -403,7 +544,150 @@ export function InventoryListPage() {
           </button>
         </nav>
       )}
+
+      {confirming && (
+        <ConfirmStockUpdates
+          changes={confirming}
+          onClose={(appliedOkIds) => {
+            if (appliedOkIds.length > 0) {
+              setStaged((prev) => {
+                const next = { ...prev };
+                for (const id of appliedOkIds) delete next[id];
+                return next;
+              });
+            }
+            setConfirming(null);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * Confirm one or several on-hand changes before they touch the ledger.
+ *
+ * A deliberate stop, because setting on-hand here is not just bookkeeping: for
+ * an item listed on a channel the new number is pushed to that channel, so an
+ * inventory edit can change what a customer sees. The dialog names every change
+ * and flags the ones that push. After applying it shows the outcome — the batch
+ * is fault-tolerant, so a row that fails is reported while the rest still land.
+ */
+function ConfirmStockUpdates({
+  changes,
+  onClose,
+}: {
+  changes: StagedChange[];
+  onClose: (appliedOkIds: string[]) => void;
+}) {
+  const apply = useApplyStockUpdates();
+  const [results, setResults] = useState<StockUpdateResult[] | null>(null);
+
+  const okIds = results ? results.filter((r) => r.ok).map((r) => r.id) : [];
+  const failed = results ? results.filter((r) => !r.ok) : [];
+  const pushes = changes.filter((c) => c.channels > 0).length;
+  const byId = new Map(changes.map((c) => [c.id, c]));
+
+  return (
+    <div className="modal-overlay" onClick={() => !apply.isPending && onClose(okIds)}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Confirm stock update"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {results === null ? (
+          <>
+            <h2>{changes.length === 1 ? 'Update stock' : `Update ${changes.length} items`}</h2>
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="num">On hand</th>
+                  <th>Channel</th>
+                </tr>
+              </thead>
+              <tbody>
+                {changes.map((c) => (
+                  <tr key={c.id}>
+                    <td>
+                      <span className="cell-title">{c.name}</span>
+                      <span className="cell-sub">
+                        {[c.setName, c.condition].filter(Boolean).join(' · ')}
+                      </span>
+                    </td>
+                    <td className="num">
+                      {c.from} → <strong>{c.to}</strong>
+                    </td>
+                    <td>
+                      {c.channels > 0 ? (
+                        <span className="chip">
+                          pushes to {c.channels} channel{c.channels === 1 ? '' : 's'}
+                        </span>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {pushes > 0 && (
+              <p className="field-hint">
+                {pushes} of these {pushes === 1 ? 'is' : 'are'} listed on a channel — the new
+                quantity will be pushed there, changing what buyers see.
+              </p>
+            )}
+            {apply.isError && <p className="error">{(apply.error as Error).message}</p>}
+            <div className="inline-form">
+              <button
+                type="button"
+                disabled={apply.isPending}
+                onClick={() =>
+                  apply.mutate(
+                    {
+                      updates: changes.map((c) => ({ id: c.id, quantityOnHand: c.to })),
+                      note: 'Set from inventory table',
+                    },
+                    { onSuccess: setResults },
+                  )
+                }
+              >
+                {apply.isPending
+                  ? 'Applying…'
+                  : `Apply ${changes.length === 1 ? '' : `${changes.length} `}change${changes.length === 1 ? '' : 's'}`}
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={apply.isPending}
+                onClick={() => onClose([])}
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2>Done</h2>
+            <p className="muted">
+              {okIds.length} applied{failed.length > 0 ? `, ${failed.length} failed` : ''}.
+            </p>
+            {failed.map((f) => (
+              <p key={f.id} className="error">
+                {byId.get(f.id)?.name ?? f.id}: {f.error}
+              </p>
+            ))}
+            <div className="inline-form">
+              <button type="button" onClick={() => onClose(okIds)}>
+                Close
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

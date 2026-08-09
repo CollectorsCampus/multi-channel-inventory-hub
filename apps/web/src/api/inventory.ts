@@ -232,6 +232,62 @@ export function useSetLedgerQuantity() {
   });
 }
 
+export interface StockUpdate {
+  id: string;
+  quantityOnHand: number;
+}
+
+export interface StockUpdateResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Apply several absolute on-hand counts in one action — the inventory table's
+ * batch edit.
+ *
+ * Sequential and per-item fault-tolerant, the same shape as reconcile's
+ * confirm: a row that fails reports its error and the rest still land, rather
+ * than one bad id aborting the batch. The mutation therefore always *resolves*
+ * with a result per row; the caller reads those rather than a thrown error.
+ * Recorded as an `adjustment` movement — this is a stock count, not a
+ * channel-driven correction. The list is invalidated once, at the end.
+ */
+export function useApplyStockUpdates() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      updates,
+      note,
+    }: {
+      updates: StockUpdate[];
+      note?: string;
+    }): Promise<StockUpdateResult[]> => {
+      const results: StockUpdateResult[] = [];
+      for (const update of updates) {
+        try {
+          await apiFetch<MutationOutcome>(`/inventory/${update.id}/quantity`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              quantityOnHand: update.quantityOnHand,
+              reason: 'adjustment',
+              ...(note ? { note } : {}),
+            }),
+          });
+          results.push({ id: update.id, ok: true });
+        } catch (error) {
+          results.push({ id: update.id, ok: false, error: (error as Error).message });
+        }
+      }
+      return results;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] });
+    },
+  });
+}
+
 export function useUpsertAllocation(id: string) {
   return useLedgerMutation(
     id,

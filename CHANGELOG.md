@@ -3,6 +3,44 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.6.0] — 2026-08-08
+
+Listing rules grow up. Where a created product used to get only its tags and category from a
+channel's rules, it now gets its **vendor**, its **custom fields** and its **sales channels**
+the same way — mapped once from facts the ledger already holds, never guessed. Card images
+pushed to a storefront are sharper, and the inventory list is easier to drive. No schema
+change: a clean upgrade from 0.5.x.
+
+### Added
+
+- **Vendor by rule.** A channel can set a product's vendor from its game (or set, name or
+  kind), not just one value for the whole channel — so a store whose publishers differ by game
+  (Pokémon vs. Bandai vs. Wizards) comes out right in a mixed batch. The first matching rule
+  wins; a flat default covers the rest.
+- **Custom fields by rule.** The metafield counterpart of tag rules: `custom.game` follows the
+  game, `custom.set` follows the set, each value one **you** picked from the store's own
+  vocabulary. A mixed batch gets the right metaobject per card.
+- **Publish to sales channels on creation.** A channel can declare which sales channels every
+  product it creates is published to (read back from the platform, chosen by you). On Shopify
+  this needs the `read_publications` and `write_publications` scopes, and it only ever touches
+  a **newly created** product — adding a variant to a product you already curated never
+  restamps its channels. A draft stays invisible until you make it active; this only decides
+  where it appears then.
+- **Higher-resolution catalogue images** from all three sources — Scryfall's `large` over
+  `normal`, tcgcsv's full-size over the `_200w` thumbnail, CardTrader's full image over the
+  `preview_` crop — so a created product's image is sharper.
+- **An editable On Hand column** on the inventory list: type a number, and stage the change;
+  stage several rows and apply them together behind a confirmation, through the same path the
+  reconciliation control uses. The "in stock only" filter is now remembered across sessions.
+
+### Changed
+
+- **The connector contract gains `listing.publications`** (read the channel's sales channels)
+  and `CreateListingRequest.publications`. Existing connectors are unaffected — a connector
+  that does not declare it simply is not asked to publish.
+
+No migration. The four migrations are unchanged since 0.4.0.
+
 ## [0.5.0] — 2026-08-07
 
 Wider catalogue reach, and a reconciliation report you can act on. CardTrader joins as a

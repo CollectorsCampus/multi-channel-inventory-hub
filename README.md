@@ -14,7 +14,7 @@ channel, so the same card is not sold twice.
 > Shopify is the only continuous-sync channel in v1. See
 > [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md).
 
-> **Status: v0.5.0.** All five phases are built and the sync loop runs end to end: a sale on
+> **Status: v0.6.0.** All five phases are built and the sync loop runs end to end: a sale on
 > Shopify decrements the ledger and pushes recomputed quantities back out, with oversells and
 > failures in an alert inbox, and a nightly reconciliation catching what the loop missed. The
 > Shopify path — authentication, reads, both write mutations, signed webhook delivery and a
@@ -32,7 +32,10 @@ channel, so the same card is not sold twice.
 > credentialed source whose blueprints carry TCGPlayer, Scryfall and Cardmarket ids, so its
 > products converge on the catalogue you already hold rather than duplicating it — and makes
 > the reconciliation report actionable: each difference names the product, and where the
-> channel is the one that is right, you can correct the ledger from the row.
+> channel is the one that is right, you can correct the ledger from the row. 0.6.0 grows the
+> listing rules: a created product now gets its **vendor**, its **custom fields** and its
+> **sales channels** from rules you set once — mapped from the game and set the ledger already
+> holds, never guessed — beside sharper card images.
 >
 > It is a `0.x` for honest reasons: MySQL and SQLite are not supported yet, only one identity
 > provider has ever completed a login, and it has one store's worth of production evidence.
@@ -142,15 +145,15 @@ default credentials ship with the image.
 To skip the build, pull the released image rather than compiling from source:
 
 ```bash
-docker pull ghcr.io/collectorscampus/multi-channel-inventory-hub:0.5.0
+docker pull ghcr.io/collectorscampus/multi-channel-inventory-hub:0.6.0
 ```
 
-Multi-arch (`linux/amd64`, `linux/arm64`), also tagged `0.5` and `latest`. Point
+Multi-arch (`linux/amd64`, `linux/arm64`), also tagged `0.6` and `latest`. Point
 `docker-compose.yml`'s `app` service at it — replace the `build:` block with
-`image: ghcr.io/collectorscampus/multi-channel-inventory-hub:0.5.0`.
+`image: ghcr.io/collectorscampus/multi-channel-inventory-hub:0.6.0`.
 
 Pin the exact version rather than `latest` for anything you rely on. While this is `0.x`, a
-minor bump may carry breaking changes; `0.5` tracks patches within the current minor.
+minor bump may carry breaking changes; `0.6` tracks patches within the current minor.
 
 ## Connecting Shopify
 

@@ -142,6 +142,52 @@ describe('HTTP application', () => {
   });
 
   /**
+   * The production CSP, on its own app because the main one boots with CSP off.
+   *
+   * `upgrade-insecure-requests` is the directive helmet merges in by default,
+   * and it is the one that made the first LAN deployment a blank white page:
+   * browsers exempt localhost, so every http://localhost run looked fine, while
+   * on http://192.168.x.x the JS and CSS were force-upgraded to https against a
+   * server speaking http and failed with ERR_SSL_PROTOCOL_ERROR. The app's CSP
+   * is 'self'-only, so the directive protects nothing an https deployment does
+   * not already have — subresources inherit the page's scheme.
+   */
+  describe('production security headers', () => {
+    let prodApp: NestFastifyApplication;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+        .overrideProvider(PrismaService)
+        .useValue(prismaStub)
+        .compile();
+
+      prodApp = moduleRef.createNestApplication<NestFastifyApplication>(
+        new FastifyAdapter(),
+        NEST_APP_OPTIONS,
+      );
+      await configureApp(prodApp, {
+        sessionSecret: Buffer.alloc(32, 3).toString('base64'),
+        isProduction: true,
+      });
+      await prodApp.init();
+      await prodApp.getHttpAdapter().getInstance().ready();
+    });
+
+    afterAll(async () => {
+      await prodApp?.close();
+    });
+
+    it('sends a CSP, without upgrade-insecure-requests', async () => {
+      const res = await prodApp.inject({ method: 'GET', url: '/health/live' });
+      const csp = res.headers['content-security-policy'] as string;
+
+      expect(csp).toContain("default-src 'self'");
+      // The regression that blanked the first plain-http LAN deployment.
+      expect(csp).not.toContain('upgrade-insecure-requests');
+    });
+  });
+
+  /**
    * Everything above this point passes with `@fastify/static` absent or inert:
    * the fallback route serves index.html from a string this file read itself, so
    * it proves `useStaticAssets` did not *throw*, not that the plugin actually

@@ -28,8 +28,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1087 tests** (api 662, shopify 125, tcgplayer 102, sdk 61, tcgcsv 45,
-cardtrader 34, scryfall 26, web 25, db 7), lint/typecheck/format/build clean —
+`main` is green: **1124 tests** (api 685, shopify 132, tcgplayer 102, sdk 61, tcgcsv 48,
+cardtrader 37, scryfall 27, web 25, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
 trusting a remembered total**: several older commits say "990", which was simply
@@ -1625,12 +1625,18 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#81** is on `main`, and **v0.5.0 is being cut on it** (2026-08-07)
-— the CardTrader source (#77), the three dependency majors (#78, #79, #80) and the reconcile
-report changes (#81), plus the #63–#70 work already on `main` before this window. The
-published digest and the inside-the-artifact verification are recorded in the v0.5.0 section
-below once the tag's image build lands. **No schema migration since v0.4.0**, so it is a
-clean upgrade.
+None. Everything through **#86** is on `main` and shipped in **v0.6.0** (2026-08-08) — the
+listing rules engine, the higher-resolution catalogue images and the inventory-list usability
+work (all #85), then the version bump (#86). **No schema migration since v0.4.0**, so every
+release since has been a clean upgrade.
+
+**The operator's live Shopify channel is already seeded with the full rule set** (3
+`vendorRules`, 6 `metafieldRules` for `custom.game`/`custom.set`, 2 `publications`, beside the
+11 `tagRules` + category) — written straight to the channel's `listingDefaults` column. It is
+**dormant until they `docker pull …:0.6.0` and redeploy**, because the 0.5.0 image they run
+today only parses tags+category. **While still on 0.5.0, do not re-save listing defaults from
+its UI**: the old `save()` omits the new keys and the PATCH replaces wholesale, so it would
+drop the seeded vendor/metafield/publication rules.
 
 v0.4.0 went out as a minor rather than the v0.3.1 first planned: by the time the queue fix
 was released it had a schema migration and five features beside it.
@@ -1647,6 +1653,49 @@ back.
 
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.
+
+### v0.6.0 (2026-08-08)
+
+Tagged at `7d2a8c6` (the "Prepare v0.6.0" merge, #86). Multi-arch image at
+`ghcr.io/collectorscampus/multi-channel-inventory-hub`, tagged `0.6.0`, `0.6` and `latest` —
+all three at digest `sha256:6446ac38…`, replacing v0.5.0's `sha256:7eb1b26a…`. Everything from
+#85: the **listing rules engine** (a created product's vendor, `custom.game`/`custom.set` and
+sales channels now come from per-card rules the same way tags do — `vendorRules`,
+`metafieldRules`, `publications`, plus the SDK `listing.publications` capability and Shopify
+publish-on-create), **higher-resolution catalogue images** from all three sources, and
+**inventory-list usability** (editable On Hand with staged apply, a persisted in-stock filter).
+**No schema migration since v0.4.0** — a clean upgrade.
+
+Verified the established way — anonymous registry token first, then inside the pulled artifact:
+
+- **Anonymously**, `0.6.0`, `0.6` and `latest` resolve to the one digest above, and the index
+  carries real `linux/amd64` and `linux/arm64` children (plus the two attestation manifests, so
+  a naive `platform.architecture` filter still finds two `unknown/unknown`).
+- **Inside the image**: `apps/api/package.json` reads `0.6.0`; `listing.publications` /
+  `listPublications` is present in **both** `apps/api/dist` and `packages/connector-shopify/dist`
+  (so the capability genuinely shipped, not only `main`), and `resolveVendor`/`resolveMetafields`
+  are in the built `listing-defaults.js`. `--prod` held: zero `vite`, `vitest` or `esbuild`.
+
+Three things worth not re-deriving, all specific to this release:
+
+- **The local Docker build was broken this session** and CI was the way out. After the operator
+  updated Docker Desktop, `docker build` **core-dumped three times at three different stages**
+  (`prisma generate` SIGSEGV/exit 139 and SIGILL/exit 132, `nest build` SIGTRAP/exit 133) — an
+  unstable build VM emitting "Illegal instruction", not a code fault. The identical build passed
+  in CI (the `Docker image builds` job, ~1 min), which is the proof it was environmental. **When
+  the local build VM is unstable, push a branch and let CI build** rather than fighting retries.
+- **Host-run is the fallback for live verification when no image will build.** The new API was
+  run straight from the host (`node apps/api/dist/main.js`, `RUN_WORKERS_IN_PROCESS=false`)
+  against the **real compose DB** reached over two throwaway `socat` port-forward containers
+  (`alpine/socat tcp-listen:5432,fork tcp-connect:postgres:5432`, and 6379). Native modules work
+  on the host — the 685-test api suite already runs there — so the whole server boots. Through it,
+  `listPublications` returned all four store sales channels using the hub's own client-credentials
+  token, which is the **proof the operator's `read_publications`/`write_publications` scope add +
+  reinstall took** (the same "releasing is not installing" gate as `read_metaobjects`).
+- **`Publication.name` is deprecated** in the `2026-07` schema (the Catalog interface's `title`
+  is the replacement), but `title` is not queryable on `Publication` directly and `name` is still
+  valid in the pinned version, so the connector keeps `name` with a note. `publishablePublish`
+  needs `write_publications`; the `publications` read needs `read_publications`.
 
 ### v0.5.0 (2026-08-07)
 

@@ -47,6 +47,16 @@ export async function configureApp(
             styleSrc: ["'self'", "'unsafe-inline'"],
             imgSrc: ["'self'", 'data:', 'https:'],
             scriptSrc: ["'self'"],
+            // Helmet merges its default directives in, and the default set
+            // includes `upgrade-insecure-requests` — which force-upgrades every
+            // subresource fetch to https. Browsers exempt localhost, so this
+            // was invisible until the first LAN deployment: on
+            // http://192.168.x.x the JS and CSS were requested over https
+            // against a server speaking http, failed with ERR_SSL_PROTOCOL_ERROR,
+            // and the app was a blank page. The directive buys nothing here —
+            // every source above is 'self', so subresources inherit the page's
+            // scheme and an https deployment cannot have mixed content anyway.
+            upgradeInsecureRequests: null,
           },
         }
       : false,

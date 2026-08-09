@@ -6,7 +6,9 @@ import {
   hasDeclaredDefaults,
   itemKind,
   parseListingDefaults,
+  resolveMetafields,
   resolveTags,
+  resolveVendor,
   type ChannelListingDefaults,
 } from './listing-defaults';
 
@@ -20,19 +22,18 @@ const gameField: ListingMetafield = {
 
 describe('parseListingDefaults', () => {
   it('reads a full declaration back unchanged', () => {
-    const stored = encodeListingDefaults({
+    const full: ChannelListingDefaults = {
       tags: ['Pokémon', 'SV04 Paradox Rift'],
+      tagRules: [{ match: 'kind', value: 'single', tag: 'Singles' }],
       metafields: [gameField],
+      metafieldRules: [{ match: 'game', value: 'Pokemon', metafield: gameField }],
       category: 'ae-2-2-3-2',
       vendor: 'The Pokémon Company',
-    });
+      vendorRules: [{ match: 'game', value: 'Gundam Card Game', vendor: 'Bandai Card Games' }],
+      publications: ['gid://shopify/Publication/150470950965'],
+    };
 
-    expect(parseListingDefaults(stored)).toEqual({
-      tags: ['Pokémon', 'SV04 Paradox Rift'],
-      metafields: [gameField],
-      category: 'ae-2-2-3-2',
-      vendor: 'The Pokémon Company',
-    });
+    expect(parseListingDefaults(encodeListingDefaults(full))).toEqual(full);
   });
 
   it('treats an empty column, malformed JSON and a non-object alike', () => {
@@ -101,49 +102,146 @@ describe('hasDeclaredDefaults', () => {
 
 describe('applyListingDefaults', () => {
   const defaults: ChannelListingDefaults = {
-    metafields: [gameField],
     category: 'ae-2-2-3-2',
-    vendor: 'The Pokémon Company',
+    publications: ['gid://shopify/Publication/1', 'gid://shopify/Publication/2'],
   };
 
-  it('fills in every field the caller omitted', () => {
+  it('fills in the run-level fields the caller omitted', () => {
     expect(applyListingDefaults({}, defaults)).toEqual(defaults);
   });
 
   it('never overrides what the caller asked for', () => {
-    const request = { metafields: [], category: 'other', vendor: 'Wizards of the Coast' };
+    const request = { category: 'other', publications: ['gid://shopify/Publication/9'] };
     expect(applyListingDefaults(request, defaults)).toEqual(request);
   });
 
   /**
-   * An override, not a gap. A run that says "no custom fields" must reach the
+   * An override, not a gap. A run that says "publish nowhere" must reach the
    * channel saying none — silently refilling would make the per-run choice
    * unexpressible.
    */
-  it('treats an explicitly empty list as an answer, not an omission', () => {
-    expect(applyListingDefaults({ metafields: [] }, defaults).metafields).toEqual([]);
+  it('treats an explicitly empty publications list as an answer, not an omission', () => {
+    expect(applyListingDefaults({ publications: [] }, defaults).publications).toEqual([]);
   });
 
   it('leaves unrelated request fields alone', () => {
-    const request = { inventoryItemIds: ['a', 'b'], vendor: undefined };
-    expect(applyListingDefaults(request, { vendor: 'The Pokémon Company' })).toEqual({
+    const request = { inventoryItemIds: ['a', 'b'], category: undefined };
+    expect(applyListingDefaults(request, { category: 'ae-2-2-3-2' })).toEqual({
       inventoryItemIds: ['a', 'b'],
-      vendor: 'The Pokémon Company',
+      category: 'ae-2-2-3-2',
     });
   });
 
   it('changes nothing when the channel has declared nothing', () => {
-    const request = { vendor: 'The Pokémon Company' };
+    const request = { category: 'ae-2-2-3-2' };
     expect(applyListingDefaults(request, {})).toEqual(request);
   });
 
   /**
-   * Tags depend on which card is being created, so they are resolved per item
-   * rather than once per run. Filling them in here would pick one answer for a
-   * whole batch, which is the bug this design replaced.
+   * The per-card fields depend on which card is being created, so they are
+   * resolved per item rather than once per run. Filling them in here would pick
+   * one answer for a whole batch, which is the bug this design replaced.
    */
-  it('does not touch tags at all', () => {
-    expect(applyListingDefaults({}, { tags: ['Pokémon'] })).toEqual({});
+  it('does not touch the per-card fields (tags, vendor, metafields)', () => {
+    expect(
+      applyListingDefaults(
+        {},
+        { tags: ['Pokémon'], vendor: 'The Pokémon Company', metafields: [gameField] },
+      ),
+    ).toEqual({});
+  });
+});
+
+/**
+ * Vendor by game — Pokémon is "The Pokémon Company", Gundam and One Piece are
+ * "Bandai Card Games". First match wins because a product has one vendor.
+ */
+describe('resolveVendor', () => {
+  const defaults: ChannelListingDefaults = {
+    vendor: 'House Vendor',
+    vendorRules: [
+      { match: 'game', value: 'Pokemon', vendor: 'The Pokémon Company' },
+      { match: 'game', value: 'One Piece Card Game', vendor: 'Bandai Card Games' },
+    ],
+  };
+
+  it('takes the matching rule over the flat vendor', () => {
+    expect(resolveVendor(defaults, { name: 'x', game: 'Pokemon' })).toBe('The Pokémon Company');
+    expect(resolveVendor(defaults, { name: 'x', game: 'One Piece Card Game' })).toBe(
+      'Bandai Card Games',
+    );
+  });
+
+  it('falls back to the flat vendor when no rule matches', () => {
+    expect(resolveVendor(defaults, { name: 'x', game: 'Magic' })).toBe('House Vendor');
+  });
+
+  it('is undefined when neither a rule nor a flat vendor is set', () => {
+    expect(resolveVendor({ vendorRules: [] }, { name: 'x', game: 'Magic' })).toBeUndefined();
+    expect(resolveVendor({}, { name: 'x' })).toBeUndefined();
+  });
+
+  it('takes the first matching rule, in operator order', () => {
+    const two: ChannelListingDefaults = {
+      vendorRules: [
+        { match: 'game', value: 'Pokemon', vendor: 'First' },
+        { match: 'name-contains', value: 'Charizard', vendor: 'Second' },
+      ],
+    };
+    expect(resolveVendor(two, { name: 'Charizard ex', game: 'Pokemon' })).toBe('First');
+  });
+});
+
+/**
+ * `custom.game` varies by game, `custom.set` by set — the metafield counterpart
+ * of the tag design, so a mixed batch gets the right metaobject per card.
+ */
+describe('resolveMetafields', () => {
+  const setField: ListingMetafield = {
+    owner: 'product',
+    namespace: 'custom',
+    key: 'set',
+    type: 'metaobject_reference',
+    value: 'gid://shopify/Metaobject/140043780149',
+  };
+
+  const defaults: ChannelListingDefaults = {
+    metafieldRules: [
+      { match: 'game', value: 'Pokemon', metafield: gameField },
+      { match: 'set', value: 'ME02: Phantasmal Flames', metafield: setField },
+    ],
+  };
+
+  it('accumulates every matching rule', () => {
+    expect(
+      resolveMetafields(defaults, {
+        name: 'Charizard ex',
+        game: 'Pokemon',
+        setName: 'ME02: Phantasmal Flames',
+      }),
+    ).toEqual([gameField, setField]);
+  });
+
+  it('gives a different set a different metaobject, and no game field off-game', () => {
+    expect(
+      resolveMetafields(defaults, { name: 'Lightning Bolt', game: 'Magic', setName: 'Masters 25' }),
+    ).toEqual([]);
+  });
+
+  it('applies unconditional metafields to everything, before the matched ones', () => {
+    const withAlways: ChannelListingDefaults = { ...defaults, metafields: [setField] };
+    // Deduped on (owner,namespace,key): the ME02 rule overrides the
+    // unconditional custom.set rather than sending two values for one field.
+    const resolved = resolveMetafields(withAlways, {
+      name: 'x',
+      game: 'Pokemon',
+      setName: 'ME02: Phantasmal Flames',
+    });
+    expect(resolved).toEqual([setField, gameField]);
+  });
+
+  it('is empty when nothing matches or is configured', () => {
+    expect(resolveMetafields({}, { name: 'x', game: 'Pokemon' })).toEqual([]);
   });
 });
 
@@ -340,5 +438,77 @@ describe('kind tag rules', () => {
 
   it('round-trips through storage', () => {
     expect(parseListingDefaults(encodeListingDefaults(singles))).toEqual(singles);
+  });
+});
+
+describe('vendor rules survive storage', () => {
+  it('round-trips', () => {
+    const rules: ChannelListingDefaults = {
+      vendorRules: [{ match: 'game', value: 'Pokemon', vendor: 'The Pokémon Company' }],
+    };
+    expect(parseListingDefaults(encodeListingDefaults(rules))).toEqual(rules);
+  });
+
+  it.each([
+    ['an unknown match kind', { match: 'rarity', value: 'Rare', vendor: 'X' }],
+    ['no value', { match: 'game', value: '  ', vendor: 'X' }],
+    ['no vendor', { match: 'game', value: 'Pokemon', vendor: '' }],
+    ['not an object', 'game=Pokemon'],
+  ])('drops a vendor rule with %s', (_label, bad) => {
+    const good = { match: 'game', value: 'Pokemon', vendor: 'The Pokémon Company' };
+    const raw = JSON.stringify({ vendorRules: [bad, good] });
+    expect(parseListingDefaults(raw).vendorRules).toEqual([good]);
+  });
+
+  it('counts as having declared defaults', () => {
+    expect(
+      hasDeclaredDefaults({ vendorRules: [{ match: 'game', value: 'Pokemon', vendor: 'X' }] }),
+    ).toBe(true);
+  });
+});
+
+describe('metafield rules survive storage', () => {
+  const gameRule = { match: 'game' as const, value: 'Pokemon', metafield: gameField };
+
+  it('round-trips', () => {
+    const rules: ChannelListingDefaults = { metafieldRules: [gameRule] };
+    expect(parseListingDefaults(encodeListingDefaults(rules))).toEqual(rules);
+  });
+
+  it.each([
+    ['an unknown match kind', { match: 'rarity', value: 'Rare', metafield: gameField }],
+    ['no value', { match: 'game', value: '  ', metafield: gameField }],
+    ['a malformed metafield', { match: 'game', value: 'Pokemon', metafield: { key: 'game' } }],
+    ['no metafield', { match: 'game', value: 'Pokemon' }],
+  ])('drops a metafield rule with %s', (_label, bad) => {
+    const raw = JSON.stringify({ metafieldRules: [bad, gameRule] });
+    expect(parseListingDefaults(raw).metafieldRules).toEqual([gameRule]);
+  });
+
+  it('counts as having declared defaults', () => {
+    expect(hasDeclaredDefaults({ metafieldRules: [gameRule] })).toBe(true);
+  });
+});
+
+describe('publications survive storage', () => {
+  it('round-trips and drops blank or non-string entries', () => {
+    const raw =
+      '{"publications":["gid://shopify/Publication/1","",7,null,"gid://shopify/Publication/2"]}';
+    expect(parseListingDefaults(raw).publications).toEqual([
+      'gid://shopify/Publication/1',
+      'gid://shopify/Publication/2',
+    ]);
+  });
+
+  /** "Publish nowhere" is an answer, and must survive storage distinct from absent. */
+  it('keeps an explicitly empty list distinct from an absent one', () => {
+    expect(parseListingDefaults(encodeListingDefaults({ publications: [] })).publications).toEqual(
+      [],
+    );
+    expect(parseListingDefaults(encodeListingDefaults({})).publications).toBeUndefined();
+  });
+
+  it('counts as having declared defaults', () => {
+    expect(hasDeclaredDefaults({ publications: [] })).toBe(true);
   });
 });

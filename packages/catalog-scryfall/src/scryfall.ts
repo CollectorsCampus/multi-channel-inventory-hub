@@ -44,8 +44,8 @@ interface ScryfallCard {
   tcgplayer_id?: number;
   cardmarket_id?: number;
   finishes?: string[];
-  image_uris?: { normal?: string; small?: string };
-  card_faces?: Array<{ image_uris?: { normal?: string; small?: string } }>;
+  image_uris?: { large?: string; normal?: string; small?: string };
+  card_faces?: Array<{ image_uris?: { large?: string; normal?: string; small?: string } }>;
   prices?: { usd?: string | null; usd_foil?: string | null };
 }
 
@@ -150,10 +150,15 @@ function toCandidate(card: ScryfallCard): CatalogCandidate {
     externalIds.cardmarket = String(card.cardmarket_id);
   }
 
-  // Double-faced cards carry images per face rather than at the top level.
+  // Prefer `large` (672×936) over `normal` (488×680): these images end up as a
+  // product photo on a storefront, where the thumbnail Scryfall calls `normal`
+  // reads as low quality. `large` is still a modest JPG, not the ~10× heavier
+  // `png`. Double-faced cards carry images per face rather than at the top level.
   const imageUrl =
+    card.image_uris?.large ??
     card.image_uris?.normal ??
     card.image_uris?.small ??
+    card.card_faces?.[0]?.image_uris?.large ??
     card.card_faces?.[0]?.image_uris?.normal ??
     card.card_faces?.[0]?.image_uris?.small;
 

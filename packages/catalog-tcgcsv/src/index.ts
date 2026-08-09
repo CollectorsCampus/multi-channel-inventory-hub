@@ -22,6 +22,7 @@ export {
   parseGroups,
   parseProductsAndPrices,
   toCandidates,
+  upgradeTcgplayerImage,
   type TcgcsvCategory,
   type TcgcsvGroup,
   type TcgcsvProductRow,

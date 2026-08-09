@@ -142,6 +142,20 @@ describe('Scryfall catalog source', () => {
     expect(Object.keys(candidate!.externalIds)).not.toContain('tcgplayer');
   });
 
+  it('prefers the large image over normal when both are offered', async () => {
+    const withLarge = {
+      ...LIGHTNING_BOLT,
+      image_uris: {
+        large: 'https://cards.scryfall.io/large/bolt.jpg',
+        normal: 'https://cards.scryfall.io/normal/bolt.jpg',
+      },
+    };
+    const source = createScryfallSource({ fetch: searchReturning([withLarge]) });
+    const [candidate] = await source.search(ctx(), { text: 'bolt' });
+
+    expect(candidate!.imageUrl).toBe('https://cards.scryfall.io/large/bolt.jpg');
+  });
+
   it('omits marketPrice when no price is published', async () => {
     const source = createScryfallSource({ fetch: searchReturning([BLACK_LOTUS]) });
     const [candidate] = await source.search(ctx(), { text: 'lotus' });

@@ -17,6 +17,7 @@ export {
   CARDTRADER_KEY,
   toCandidate,
   toCandidates,
+  upgradeCardTraderImage,
   type BlueprintLookup,
   type CtBlueprint,
   type CtEditableProperty,

@@ -109,6 +109,26 @@ export function useChannelMetafields(channelInstanceId: string, enabled: boolean
   });
 }
 
+/**
+ * The sales channels the channel can publish a created product to.
+ *
+ * Cached like the tag and metafield vocabularies. A connector without
+ * `listing.publications` answers with an error, so `retry: false` and the caller
+ * treats a failure as "not available here".
+ */
+export function useChannelPublications(channelInstanceId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['channels', channelInstanceId, 'publications'],
+    queryFn: () =>
+      apiFetch<{ id: string; name: string }[]>(
+        `/channels/${channelInstanceId}/listings/publications`,
+      ),
+    enabled: enabled && channelInstanceId !== '',
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
 /** Most items one run may create. Mirrors `MAX_ITEMS` on the server. */
 export const MAX_ITEMS = 50;
 

@@ -95,6 +95,21 @@ export function normalizePrinting(subTypeName: string | undefined): {
   return { printing: raw.toUpperCase().replace(/[^A-Z0-9]+/g, '_'), unrecognised: raw };
 }
 
+/**
+ * Rewrite a TCGPlayer product image URL to a larger size.
+ *
+ * tcgcsv publishes the `_200w` thumbnail — 200 pixels wide, which reads as low
+ * quality once it becomes a product photo on a storefront. The CDN serves the
+ * same image at `_in_1000x1000` (~1000px, roughly 12× the bytes and far
+ * sharper). This swaps the size token and leaves everything else alone; a URL
+ * that does not match the `_<width>w` shape is returned untouched, so an
+ * unfamiliar URL is never mangled. Exported so a one-off backfill can upgrade
+ * URLs already stored.
+ */
+export function upgradeTcgplayerImage(url: string): string {
+  return url.replace(/_\d+w(\.(?:jpg|jpeg|png|webp))$/i, '_in_1000x1000$1');
+}
+
 export function parseCategories(csv: string): TcgcsvCategory[] {
   const table = parseCsv(csv);
   return table.rows
@@ -168,7 +183,7 @@ export function parseProductsAndPrices(csv: string): TcgcsvProductRow[] {
         extended,
       };
 
-      if (row.imageUrl) parsed.imageUrl = row.imageUrl;
+      if (row.imageUrl) parsed.imageUrl = upgradeTcgplayerImage(row.imageUrl);
       if (row.subTypeName) parsed.subTypeName = row.subTypeName;
 
       // Prices are read from their decimal text straight to integer cents. The

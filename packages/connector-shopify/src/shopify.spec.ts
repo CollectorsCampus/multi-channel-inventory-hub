@@ -1009,6 +1009,35 @@ describe('creating a listing', () => {
     expect((noTags?.variables?.product as Record<string, unknown>).tags).toBeUndefined();
   });
 
+  it('normalises a bare taxonomy handle to the gid productCreate needs', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req({ category: 'ae-2-2-3-2' }));
+
+    const create = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    // A bare handle is what a metafield constraint yields; productCreate rejects
+    // it as "Invalid global id" unless it is expanded to the GID first.
+    expect((create?.variables?.product as { category: string }).category).toBe(
+      'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+    );
+  });
+
+  it('passes a category that is already a gid through unchanged', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(
+      ctx(),
+      req({ category: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2' }),
+    );
+
+    const create = calls.find((c) => c.query.includes('CreateDraftProduct'));
+    expect((create?.variables?.product as { category: string }).category).toBe(
+      'gid://shopify/TaxonomyCategory/ae-2-2-3-2',
+    );
+  });
+
   it('publishes a newly created product to the requested sales channels', async () => {
     const { client, calls } = mockClient();
     const connector = createShopifyConnector({ client });

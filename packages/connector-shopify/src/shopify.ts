@@ -836,7 +836,12 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     // Set before the metafields below, because most of them depend on it: a
     // conditional definition applies only to certain categories, and a product
     // with none satisfies no constraint.
-    if (req.category) product.category = req.category;
+    //
+    // Normalised through `toTaxonomyGid`: `ProductCreateInput.category` wants a
+    // GID, but the value can arrive as the bare handle a constraint yields
+    // (`ae-2-2-3-2`) — which `productCreate` rejects as an "Invalid global id".
+    // `toTaxonomyGid` is idempotent, so a value already a GID passes through.
+    if (req.category) product.category = toTaxonomyGid(req.category);
 
     if (req.description) product.descriptionHtml = req.description;
     if (req.vendor) product.vendor = req.vendor;

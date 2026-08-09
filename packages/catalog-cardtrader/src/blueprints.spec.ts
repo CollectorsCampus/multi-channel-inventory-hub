@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toCandidate, toCandidates, type CtBlueprint } from './blueprints';
+import { toCandidate, toCandidates, upgradeCardTraderImage, type CtBlueprint } from './blueprints';
 
 /**
  * Modelled on real `/blueprints/export` responses read 2026-08-03 (Core Set
@@ -97,6 +97,12 @@ describe('toCandidate', () => {
     expect(toCandidate(magicSingle).marketPrice).toBeUndefined();
   });
 
+  it('upgrades the image from the preview thumbnail to the full size', () => {
+    expect(toCandidate(magicSingle).imageUrl).toBe(
+      'https://cardtrader.com/uploads/blueprints/image/57957/chandra.jpg',
+    );
+  });
+
   it('never sets printings: there is no shared finish vocabulary to guess from', () => {
     expect(toCandidate(magicSingle).printings).toBeUndefined();
   });
@@ -109,6 +115,19 @@ describe('toCandidate', () => {
   it('handles a blueprint with no cardmarket ids at all', () => {
     const none: CtBlueprint = { ...magicSingle, card_market_ids: null };
     expect('cardmarket' in toCandidate(none).externalIds).toBe(false);
+  });
+});
+
+describe('upgradeCardTraderImage', () => {
+  it('drops the preview_ prefix from the filename', () => {
+    expect(
+      upgradeCardTraderImage('https://cardtrader.com/uploads/blueprints/image/57957/preview_x.jpg'),
+    ).toBe('https://cardtrader.com/uploads/blueprints/image/57957/x.jpg');
+  });
+
+  it('leaves a URL without the preview_ prefix untouched', () => {
+    const full = 'https://cardtrader.com/uploads/blueprints/image/57957/x.jpg';
+    expect(upgradeCardTraderImage(full)).toBe(full);
   });
 });
 

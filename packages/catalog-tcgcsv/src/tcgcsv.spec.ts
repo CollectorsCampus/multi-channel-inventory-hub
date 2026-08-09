@@ -9,6 +9,7 @@ import {
   parseGroups,
   parseProductsAndPrices,
   toCandidates,
+  upgradeTcgplayerImage,
 } from './rows';
 
 /**
@@ -185,6 +186,26 @@ describe('normalizePrinting', () => {
     for (const input of ['', ' ', undefined, 'Foil', '???']) {
       expect(normalizePrinting(input).printing).not.toBe('');
     }
+  });
+});
+
+describe('upgradeTcgplayerImage', () => {
+  it('swaps the _200w thumbnail for the ~1000px size', () => {
+    expect(
+      upgradeTcgplayerImage('https://tcgplayer-cdn.tcgplayer.com/product/706132_200w.jpg'),
+    ).toBe('https://tcgplayer-cdn.tcgplayer.com/product/706132_in_1000x1000.jpg');
+  });
+
+  it('leaves a URL that does not match the size token alone', () => {
+    const url = 'https://example.com/some/other/image.png';
+    expect(upgradeTcgplayerImage(url)).toBe(url);
+  });
+
+  it('is applied by the parser, so parsed rows already carry the larger image', () => {
+    const rows = parseProductsAndPrices(MAGIC_PRODUCTS);
+    const withImage = rows.find((r) => r.imageUrl);
+    expect(withImage?.imageUrl).toContain('_in_1000x1000');
+    expect(withImage?.imageUrl).not.toContain('_200w');
   });
 });
 

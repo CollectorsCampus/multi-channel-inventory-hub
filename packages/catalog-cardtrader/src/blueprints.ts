@@ -126,9 +126,21 @@ export function toCandidate(
   const setName = lookup.expansionName?.(blueprint.expansion_id);
   if (setName) candidate.setName = setName;
 
-  if (blueprint.image_url) candidate.imageUrl = blueprint.image_url;
+  if (blueprint.image_url) candidate.imageUrl = upgradeCardTraderImage(blueprint.image_url);
 
   return candidate;
+}
+
+/**
+ * Rewrite a CardTrader blueprint image URL from its thumbnail to the full size.
+ *
+ * `image_url` is the `preview_…` thumbnail (~20 KB); the full image (the
+ * blueprint's own `image.url`, ~200 KB and far sharper) lives at the same path
+ * with that prefix dropped from the filename. Only a leading `preview_` on the
+ * final path segment is removed, so a URL of any other shape is left untouched.
+ */
+export function upgradeCardTraderImage(url: string): string {
+  return url.replace(/\/preview_([^/]+)$/, '/$1');
 }
 
 export function toCandidates(

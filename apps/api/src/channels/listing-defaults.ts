@@ -100,6 +100,43 @@ export interface TagRule {
   tag: string;
 }
 
+/**
+ * One "cards like this get this vendor" rule.
+ *
+ * The same shape and the same matching as {@link TagRule}, for the same reason
+ * a flat `vendor` was not enough: this store's publishers vary by game — Pokémon
+ * is "The Pokémon Company", Gundam and One Piece are "Bandai Card Games" — so one
+ * value per channel is only ever right for a single-publisher channel. The
+ * vendor is still the operator's, applied verbatim; the rule only says which
+ * cards it applies to.
+ *
+ * Unlike tags, a product has exactly one vendor, so {@link resolveVendor} takes
+ * the **first** matching rule rather than accumulating.
+ */
+export interface VendorRule {
+  match: TagRuleMatch;
+  value: string;
+  /** The channel's own vendor, applied verbatim. */
+  vendor: string;
+}
+
+/**
+ * One "cards like this get this custom field" rule.
+ *
+ * The metafield analogue of {@link TagRule}. `custom.game` on this store is a
+ * metaobject reference whose value depends on the game, and `custom.set` on the
+ * set, so — exactly as with tags — a single fixed set of metafields per channel
+ * can only be right for a single-game, single-set batch. The value is opaque and
+ * applied verbatim; the rule maps a fact the ledger holds onto the metaobject id
+ * the operator picked.
+ */
+export interface MetafieldRule {
+  match: TagRuleMatch;
+  value: string;
+  /** The custom field to set, applied verbatim. */
+  metafield: ListingMetafield;
+}
+
 /** The facts a rule may be evaluated against. */
 export interface TaggableItem {
   name: string;
@@ -139,30 +176,66 @@ export interface ChannelListingDefaults {
    */
   tagRules?: TagRule[];
   metafields?: ListingMetafield[];
+  /**
+   * Custom fields applied to a created product when they match it — the
+   * metafield counterpart of {@link tagRules}, for the fields that vary per card
+   * (`custom.game` by game, `custom.set` by set). Accumulated with the
+   * unconditional {@link metafields} by {@link resolveMetafields}.
+   */
+  metafieldRules?: MetafieldRule[];
   category?: string;
   vendor?: string;
+  /**
+   * Vendor applied to a created product when a rule matches it, falling back to
+   * the flat {@link vendor}. The first matching rule wins, since a product has
+   * one vendor. See {@link resolveVendor}.
+   */
+  vendorRules?: VendorRule[];
+  /**
+   * Sales channels (publication ids) to publish every created product to.
+   *
+   * Channel-level rather than per-card: the operator's rule is "everything I
+   * create goes on these channels", not one that varies by game. Applied only
+   * when the connector declares `listing.publications`, and only when a product
+   * is created. An explicit empty array is a real answer — "publish nowhere" —
+   * distinct from the key being absent.
+   */
+  publications?: string[];
 }
 
 /** Fields a stored default may carry. Anything else is dropped on read. */
-const KNOWN_KEYS = ['tags', 'tagRules', 'metafields', 'category', 'vendor'] as const;
+const KNOWN_KEYS = [
+  'tags',
+  'tagRules',
+  'metafields',
+  'metafieldRules',
+  'category',
+  'vendor',
+  'vendorRules',
+  'publications',
+] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseTagRule(raw: unknown): TagRule | null {
+/**
+ * The `match` and `value` half every rule shares.
+ *
+ * A rule missing either part cannot be evaluated and is dropped rather than
+ * repaired — there is no sensible repair. Extracted so tag, vendor and metafield
+ * rules validate their common half identically; a second copy of the `kind`
+ * vocabulary check is exactly how the three would drift apart.
+ */
+function parseRuleMatch(raw: unknown): { match: TagRuleMatch; value: string } | null {
   if (!isPlainObject(raw)) return null;
 
-  const { match, value, tag } = raw;
+  const { match, value } = raw;
 
-  // A rule missing any part cannot be evaluated, and a blank tag would put a
-  // product in no collection while looking configured. Dropped rather than
-  // repaired: there is no sensible repair.
   if (typeof match !== 'string' || !(TAG_RULE_MATCHES as readonly string[]).includes(match)) {
     return null;
   }
   if (typeof value !== 'string' || value.trim() === '') return null;
-  if (typeof tag !== 'string' || tag.trim() === '') return null;
 
   // A `kind` rule's value is a closed vocabulary this code owns, not a
   // catalogue string, so an unrecognised one is a rule that can never fire.
@@ -172,7 +245,41 @@ function parseTagRule(raw: unknown): TagRule | null {
     return null;
   }
 
-  return { match: match as TagRuleMatch, value: value.trim(), tag: tag.trim() };
+  return { match: match as TagRuleMatch, value: value.trim() };
+}
+
+function parseTagRule(raw: unknown): TagRule | null {
+  const base = parseRuleMatch(raw);
+  if (!base) return null;
+
+  // A blank tag would put a product in no collection while looking configured.
+  const tag = (raw as Record<string, unknown>).tag;
+  if (typeof tag !== 'string' || tag.trim() === '') return null;
+
+  return { ...base, tag: tag.trim() };
+}
+
+function parseVendorRule(raw: unknown): VendorRule | null {
+  const base = parseRuleMatch(raw);
+  if (!base) return null;
+
+  const vendor = (raw as Record<string, unknown>).vendor;
+  if (typeof vendor !== 'string' || vendor.trim() === '') return null;
+
+  return { ...base, vendor: vendor.trim() };
+}
+
+function parseMetafieldRule(raw: unknown): MetafieldRule | null {
+  const base = parseRuleMatch(raw);
+  if (!base) return null;
+
+  // The same strict field-by-field check the unconditional metafields get: this
+  // is sent to a live storefront, so a malformed one is dropped rather than
+  // sent to be rejected with a message naming neither the field nor the cause.
+  const metafield = parseMetafield((raw as Record<string, unknown>).metafield);
+  if (!metafield) return null;
+
+  return { ...base, metafield };
 }
 
 function parseMetafield(raw: unknown): ListingMetafield | null {
@@ -222,12 +329,30 @@ export function parseListingDefaults(raw: string | null | undefined): ChannelLis
       .filter((m): m is ListingMetafield => m !== null);
   }
 
+  if (Array.isArray(decoded.metafieldRules)) {
+    defaults.metafieldRules = decoded.metafieldRules
+      .map(parseMetafieldRule)
+      .filter((r): r is MetafieldRule => r !== null);
+  }
+
   if (typeof decoded.category === 'string' && decoded.category !== '') {
     defaults.category = decoded.category;
   }
 
   if (typeof decoded.vendor === 'string' && decoded.vendor !== '') {
     defaults.vendor = decoded.vendor;
+  }
+
+  if (Array.isArray(decoded.vendorRules)) {
+    defaults.vendorRules = decoded.vendorRules
+      .map(parseVendorRule)
+      .filter((r): r is VendorRule => r !== null);
+  }
+
+  if (Array.isArray(decoded.publications)) {
+    defaults.publications = decoded.publications.filter(
+      (p): p is string => typeof p === 'string' && p !== '',
+    );
   }
 
   return defaults;
@@ -263,23 +388,34 @@ export function hasDeclaredDefaults(defaults: ChannelListingDefaults): boolean {
   return KNOWN_KEYS.some((key) => defaults[key] !== undefined);
 }
 
-/** Does this rule apply to this card? */
-export function tagRuleMatches(rule: TagRule, item: TaggableItem): boolean {
-  switch (rule.match) {
+/**
+ * Does a rule's `match`/`value` apply to this card?
+ *
+ * Shared by every rule kind — tag, vendor, metafield — so all three decide "does
+ * this card match" identically. A second copy of this switch is how a vendor
+ * rule and a tag rule would one day disagree about what a card is.
+ */
+export function ruleMatches(match: TagRuleMatch, value: string, item: TaggableItem): boolean {
+  switch (match) {
     case 'game':
       // Exact: the value came from the catalogue, not from typing.
-      return item.game === rule.value;
+      return item.game === value;
     case 'set':
-      return item.setName === rule.value;
+      return item.setName === value;
     case 'name-contains':
-      return item.name.toLowerCase().includes(rule.value.toLowerCase());
+      return item.name.toLowerCase().includes(value.toLowerCase());
     case 'kind':
       // No condition means the caller could not say what this is. Matching
       // nothing is the safe answer: the alternative is assuming `single`, and
       // a channel whose only rule is "Singles" would then tag every sealed
       // box it created.
-      return item.condition != null && itemKind(item.condition) === rule.value;
+      return item.condition != null && itemKind(item.condition) === value;
   }
+}
+
+/** Does this tag rule apply to this card? */
+export function tagRuleMatches(rule: TagRule, item: TaggableItem): boolean {
+  return ruleMatches(rule.match, rule.value, item);
 }
 
 /**
@@ -302,6 +438,49 @@ export function resolveTags(defaults: ChannelListingDefaults, item: TaggableItem
 }
 
 /**
+ * The vendor a created product should carry, for this card.
+ *
+ * The **first** matching rule wins — a product has one vendor, so accumulation
+ * is meaningless — falling back to the flat {@link ChannelListingDefaults.vendor}
+ * when no rule matches, and to `undefined` when neither is set. First-match is
+ * predictable: rules are evaluated in the order the operator arranged them, so a
+ * broad fallback rule placed last cannot pre-empt a specific one above it.
+ */
+export function resolveVendor(
+  defaults: ChannelListingDefaults,
+  item: TaggableItem,
+): string | undefined {
+  const matched = (defaults.vendorRules ?? []).find((rule) =>
+    ruleMatches(rule.match, rule.value, item),
+  );
+  return matched?.vendor ?? defaults.vendor;
+}
+
+/**
+ * The custom fields a created product should carry, for this card.
+ *
+ * Unconditional {@link ChannelListingDefaults.metafields} first, then whichever
+ * rules match, in operator order. Deduplicated on `(owner, namespace, key)` with
+ * the **last** writer winning, so a `custom.set` rule overrides an unconditional
+ * `custom.set` rather than sending the platform two values for one field — which
+ * some platforms reject and none reads predictably.
+ */
+export function resolveMetafields(
+  defaults: ChannelListingDefaults,
+  item: TaggableItem,
+): ListingMetafield[] {
+  const matched = (defaults.metafieldRules ?? [])
+    .filter((rule) => ruleMatches(rule.match, rule.value, item))
+    .map((rule) => rule.metafield);
+
+  const byKey = new Map<string, ListingMetafield>();
+  for (const field of [...(defaults.metafields ?? []), ...matched]) {
+    byKey.set(`${field.owner}:${field.namespace}:${field.key}`, field);
+  }
+  return [...byKey.values()];
+}
+
+/**
  * What the caller asked for, falling back to the channel's declaration.
  *
  * Per field, and `undefined` is the only thing that falls back: an explicit
@@ -309,28 +488,30 @@ export function resolveTags(defaults: ChannelListingDefaults, item: TaggableItem
  * the channel. That distinction is already how `ListingsController` treats the
  * request body, and it is the difference between a default and an override.
  *
- * **Tags are deliberately not handled here.** They are the one field that
- * depends on *which card* is being created, so they are resolved per item by
- * {@link resolveTags} rather than once per run. A run may still override them
- * wholesale, and `ListingCreationService` is where those two meet.
+ * **Only the run-level fields are handled here** — the ones that take one value
+ * for a whole batch. `category` is one classification for everything a run
+ * creates, and `publications` are the channels every created product goes on.
+ *
+ * The per-card fields are deliberately *not* here: `tags`, `vendor` and
+ * `metafields` all depend on *which card* is being created, so they are resolved
+ * per item by {@link resolveTags}, {@link resolveVendor} and
+ * {@link resolveMetafields}. A run may still override any of them wholesale, and
+ * `ListingCreationService` is where the override and the per-item resolution
+ * meet.
  */
 export function applyListingDefaults<
   T extends {
-    metafields?: readonly ListingMetafield[];
     category?: string;
-    vendor?: string;
+    publications?: readonly string[];
   },
 >(request: T, defaults: ChannelListingDefaults): T {
   return {
     ...request,
-    ...(request.metafields === undefined && defaults.metafields !== undefined
-      ? { metafields: defaults.metafields }
-      : {}),
     ...(request.category === undefined && defaults.category !== undefined
       ? { category: defaults.category }
       : {}),
-    ...(request.vendor === undefined && defaults.vendor !== undefined
-      ? { vendor: defaults.vendor }
+    ...(request.publications === undefined && defaults.publications !== undefined
+      ? { publications: defaults.publications }
       : {}),
   };
 }

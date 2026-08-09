@@ -155,6 +155,21 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         }) as T;
       }
 
+      if (query.includes('HubPublish')) {
+        return { publishablePublish: { userErrors: overrides.publishErrors ?? [] } } as T;
+      }
+
+      if (query.includes('HubPublications')) {
+        return (overrides.publications ?? {
+          publications: {
+            nodes: [
+              { id: 'gid://shopify/Publication/1', name: 'Online Store' },
+              { id: 'gid://shopify/Publication/2', name: 'Point of Sale' },
+            ],
+          },
+        }) as T;
+      }
+
       if (query.includes('HubProductTags')) {
         const pages = (overrides.tagPages ?? [
           {
@@ -994,6 +1009,68 @@ describe('creating a listing', () => {
     expect((noTags?.variables?.product as Record<string, unknown>).tags).toBeUndefined();
   });
 
+  it('publishes a newly created product to the requested sales channels', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(
+      ctx(),
+      req({ publications: ['gid://shopify/Publication/1', 'gid://shopify/Publication/2'] }),
+    );
+
+    const publish = calls.find((c) => c.query.includes('HubPublish'));
+    // Against the product, not the variant, and after it exists.
+    expect(publish?.variables?.id).toBe(NEW_PRODUCT);
+    expect(publish?.variables?.input).toEqual([
+      { publicationId: 'gid://shopify/Publication/1' },
+      { publicationId: 'gid://shopify/Publication/2' },
+    ]);
+  });
+
+  it('does not publish when no publications are given', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req());
+    expect(calls.some((c) => c.query.includes('HubPublish'))).toBe(false);
+  });
+
+  /**
+   * Publishing is product-owned: adding a variant to a product the operator
+   * already curated must not change which channels that product is on.
+   */
+  it('does not publish when only adding a variant to a sibling product', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(
+      ctx(),
+      req({ siblingListingId: VARIANT, publications: ['gid://shopify/Publication/1'] }),
+    );
+    expect(calls.some((c) => c.query.includes('HubPublish'))).toBe(false);
+  });
+
+  it('does not publish when the SKU already existed', async () => {
+    const { client, calls } = mockClient({
+      findBySku: { productVariants: { nodes: [{ id: VARIANT, sku: CODE }] } },
+    });
+    const connector = createShopifyConnector({ client });
+
+    await connector.createListing!(ctx(), req({ publications: ['gid://shopify/Publication/1'] }));
+    expect(calls.some((c) => c.query.includes('HubPublish'))).toBe(false);
+  });
+
+  it('surfaces a publish user error rather than reporting success', async () => {
+    const { client } = mockClient({
+      publishErrors: [{ message: 'Access denied for publishablePublish field.' }],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.createListing!(ctx(), req({ publications: ['gid://shopify/Publication/1'] })),
+    ).rejects.toThrow(/Access denied/);
+  });
+
   it('refuses a request with no SKU, because that is the idempotency key', async () => {
     const { client, calls } = mockClient();
     const connector = createShopifyConnector({ client });
@@ -1411,6 +1488,38 @@ describe('reading the custom fields a shop models', () => {
 
     expect(game?.choices).toEqual([]);
     expect(game?.unavailable).toBeUndefined();
+  });
+});
+
+describe('listing publications', () => {
+  it('returns the shop’s sales channels as id/name pairs', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    expect(await connector.listPublications!(ctx(), {})).toEqual([
+      { id: 'gid://shopify/Publication/1', name: 'Online Store' },
+      { id: 'gid://shopify/Publication/2', name: 'Point of Sale' },
+    ]);
+  });
+
+  it('drops a publication missing its id or name rather than inventing one', async () => {
+    const { client } = mockClient({
+      publications: {
+        publications: {
+          nodes: [
+            { id: 'gid://shopify/Publication/1', name: 'Online Store' },
+            { id: 'gid://shopify/Publication/2' },
+            { name: 'Nameless' },
+            null,
+          ],
+        },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    expect(await connector.listPublications!(ctx(), {})).toEqual([
+      { id: 'gid://shopify/Publication/1', name: 'Online Store' },
+    ]);
   });
 });
 

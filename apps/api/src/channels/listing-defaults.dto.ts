@@ -51,6 +51,51 @@ export class TagRuleDto {
   tag!: string;
 }
 
+/**
+ * One "cards like this get this vendor" rule.
+ *
+ * The vendor analogue of {@link TagRuleDto}, for a channel whose publishers vary
+ * by game. The first matching rule wins.
+ */
+export class VendorRuleDto {
+  @ApiProperty({ enum: TAG_RULE_MATCHES })
+  @IsIn(TAG_RULE_MATCHES as unknown as string[])
+  match!: (typeof TAG_RULE_MATCHES)[number];
+
+  @ApiProperty({ example: 'Pokemon' })
+  @IsString()
+  @MaxLength(255)
+  value!: string;
+
+  @ApiProperty({ example: 'The Pokémon Company', description: 'Applied verbatim.' })
+  @IsString()
+  @MaxLength(255)
+  vendor!: string;
+}
+
+/**
+ * One "cards like this get this custom field" rule.
+ *
+ * The metafield analogue of {@link TagRuleDto}. `custom.game` varies by game and
+ * `custom.set` by set, so — like tags — a fixed set per channel is only ever
+ * right for a single-game, single-set batch.
+ */
+export class MetafieldRuleDto {
+  @ApiProperty({ enum: TAG_RULE_MATCHES })
+  @IsIn(TAG_RULE_MATCHES as unknown as string[])
+  match!: (typeof TAG_RULE_MATCHES)[number];
+
+  @ApiProperty({ example: 'Pokemon' })
+  @IsString()
+  @MaxLength(255)
+  value!: string;
+
+  @ApiProperty({ type: ListingMetafieldDto })
+  @ValidateNested()
+  @Type(() => ListingMetafieldDto)
+  metafield!: ListingMetafieldDto;
+}
+
 export class ChannelListingDefaultsDto {
   @ApiPropertyOptional({
     type: [String],
@@ -103,9 +148,50 @@ export class ChannelListingDefaultsDto {
   @MaxLength(255)
   category?: string;
 
+  @ApiPropertyOptional({
+    type: [MetafieldRuleDto],
+    description:
+      'Custom fields applied to a created product when a rule matches it — the metafield ' +
+      'counterpart of tagRules, for fields that vary per card (custom.game by game, custom.set ' +
+      'by set). Accumulated with the unconditional metafields above.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => MetafieldRuleDto)
+  metafieldRules?: MetafieldRuleDto[];
+
   @ApiPropertyOptional({ description: 'Publisher or brand. Applied verbatim.' })
   @IsOptional()
   @IsString()
   @MaxLength(255)
   vendor?: string;
+
+  @ApiPropertyOptional({
+    type: [VendorRuleDto],
+    description:
+      'Vendor applied to a created product when a rule matches it, falling back to the flat ' +
+      'vendor above. First match wins, since a product has one vendor.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => VendorRuleDto)
+  vendorRules?: VendorRuleDto[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Sales channels (publication ids from GET /channels/:id/listings/publications) to publish ' +
+      'every created product to. An empty array means none. Only acted on where the connector ' +
+      'supports it.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  publications?: string[];
 }

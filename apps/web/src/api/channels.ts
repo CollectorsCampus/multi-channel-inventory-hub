@@ -45,14 +45,40 @@ export interface TagRule {
   tag: string;
 }
 
+/** Like a TagRule, but sets the product's vendor. First match wins. */
+export interface VendorRule {
+  match: TagRuleMatch;
+  value: string;
+  vendor: string;
+}
+
+/** Like a TagRule, but sets a custom field. `custom.game` by game, `custom.set` by set. */
+export interface MetafieldRule {
+  match: TagRuleMatch;
+  value: string;
+  metafield: ListingMetafield;
+}
+
 export interface ChannelListingDefaults {
   /** Applied to every created product whatever it is. Usually empty. */
   tags?: string[];
   /** Applied when they match the card. This is how a mixed batch is tagged correctly. */
   tagRules?: TagRule[];
   metafields?: ListingMetafield[];
+  /** Custom fields applied when a rule matches — the per-card counterpart of metafields. */
+  metafieldRules?: MetafieldRule[];
   category?: string;
   vendor?: string;
+  /** Vendor applied when a rule matches, falling back to the flat vendor. First match wins. */
+  vendorRules?: VendorRule[];
+  /** Sales channels (publication ids) every created product is published to. */
+  publications?: string[];
+}
+
+/** A sales channel a product can be published to, from GET .../listings/publications. */
+export interface ListingPublication {
+  id: string;
+  name: string;
 }
 
 export interface Channel {

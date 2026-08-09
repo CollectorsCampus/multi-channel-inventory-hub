@@ -129,6 +129,26 @@ export const CAPABILITIES = [
    */
   'listing.metafields',
 
+  /**
+   * Read back the sales channels (publications) a product can be published to,
+   * and publish a newly created product to the ones the operator chose.
+   *
+   * One capability for both halves on purpose: a connector that can enumerate a
+   * store's publications is the same one that can publish to them, and the read
+   * exists only to feed the write. The values are opaque publication ids —
+   * `gid://shopify/Publication/…` on Shopify — meaningful only inside that shop,
+   * so the operator picks from what the connector reports and the hub never
+   * derives one, exactly like a tag or a metafield.
+   *
+   * **Publishing is product-owned.** A connector honours
+   * {@link CreateListingRequest.publications} only when it *creates a product* —
+   * adding a variant to a product the operator already curated must not rewrite
+   * which channels that product is on. Publishing a draft attaches it to the
+   * channel without making it buyable; visibility still waits on the product
+   * being made active.
+   */
+  'listing.publications',
+
   // --- file transport (ADR 0002) --------------------------------------------
   /** Render desired listings to a file for the operator to upload. */
   'listing.export',
@@ -160,6 +180,7 @@ export const CAPABILITY_METHODS = {
   'listing.enumerate': 'enumerateListings',
   'listing.tags': 'listTags',
   'listing.metafields': 'listMetafields',
+  'listing.publications': 'listPublications',
   'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',
   'orders.import': 'importOrders',

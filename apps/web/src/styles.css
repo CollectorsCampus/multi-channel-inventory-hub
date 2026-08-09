@@ -327,6 +327,15 @@ pre.payload {
   margin: 0;
 }
 
+/* A wrapping row of checkboxes — the sales-channel picker, where each option is
+   an `.inline-check` and there may be a few. */
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  margin: 0.5rem 0;
+}
+
 .import-result details {
   margin-top: 0.5rem;
   font-size: 0.82rem;
@@ -1107,4 +1116,67 @@ code {
   background: var(--surface-2);
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
+}
+
+/* Editable On-hand cell and its batch-apply flow (inventory table). */
+.qty-edit {
+  width: 4.5rem;
+  padding: 0.2rem 0.4rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+}
+.qty-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.qty-edit.qty-changed {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.qty-edit.qty-invalid {
+  border-color: var(--error);
+}
+
+.staged-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+}
+.staged-bar span {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 50;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  max-width: 40rem;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+.modal h2 {
+  margin-top: 0;
 }

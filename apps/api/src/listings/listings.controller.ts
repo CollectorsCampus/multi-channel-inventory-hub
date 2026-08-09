@@ -42,6 +42,18 @@ export class ListingsController {
     return this.creation.listMetafields(channelInstanceId, query.limit);
   }
 
+  @Get('publications')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'The sales channels a created product can be published to.',
+    description:
+      'For choosing which channels created products go on, rather than typing publication ids. ' +
+      'Only available on a connector that declares listing.publications.',
+  })
+  publications(@Param('id') channelInstanceId: string, @Query() query: ListTagsQueryDto) {
+    return this.creation.listPublications(channelInstanceId, query.limit);
+  }
+
   @Post('intake')
   @RequireRole('editor')
   @ApiOperation({

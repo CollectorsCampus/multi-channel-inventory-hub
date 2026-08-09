@@ -17,8 +17,10 @@ import type {
   ImportResult,
   ImportedFile,
   ListMetafieldsRequest,
+  ListPublicationsRequest,
   ListTagsRequest,
   ListingMetafieldDefinition,
+  ListingPublication,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -175,6 +177,16 @@ export interface Connector {
    * are none".
    */
   listMetafields?(ctx: Ctx, req: ListMetafieldsRequest): Promise<ListingMetafieldDefinition[]>;
+
+  /**
+   * The sales channels a product can be published to on this platform.
+   *
+   * A vocabulary read like {@link listTags}, feeding the operator's choice back
+   * into {@link CreateListingRequest.publications}. The actual publishing is
+   * done inside {@link createListing} when it creates a product — this only
+   * tells the operator what is available to choose.
+   */
+  listPublications?(ctx: Ctx, req: ListPublicationsRequest): Promise<ListingPublication[]>;
 
   // --- file transport (ADR 0002) -------------------------------------------
   exportListings?(ctx: Ctx, req: ExportListingsRequest): Promise<ExportedFile>;

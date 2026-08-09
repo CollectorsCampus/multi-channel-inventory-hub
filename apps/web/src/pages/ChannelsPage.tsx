@@ -20,11 +20,12 @@ import {
 } from '../api/channels';
 import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
-import { useChannelTags } from '../api/listings';
+import { useChannelTags, useChannelMetafields, useChannelPublications } from '../api/listings';
+import type { ListingMetafield, ListingMetafieldDefinition } from '../api/listings';
 import { useSetLedgerQuantity } from '../api/inventory';
 import { useLocalSets } from '../api/catalog';
 import { suggestTag } from '../tagSuggest';
-import type { TagRule } from '../api/channels';
+import type { TagRule, VendorRule, MetafieldRule } from '../api/channels';
 
 /** How a rule reads in a table, rather than as its wire value. */
 const RULE_LABELS: Record<TagRule['match'], string> = {
@@ -54,7 +55,7 @@ const KIND_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
  * catalogue's own spelling and must be shown verbatim, because that exactness
  * is what makes the rule predictable.
  */
-function describeRuleValue(rule: TagRule): string {
+function describeRuleValue(rule: { match: TagRule['match']; value: string }): string {
   if (rule.match !== 'kind') return rule.value;
   return KIND_OPTIONS.find((k) => k.value === rule.value)?.label ?? rule.value;
 }
@@ -407,6 +408,14 @@ function ChannelCard({ channel }: { channel: Channel }) {
 function ListingDefaults({ channel }: { channel: Channel }) {
   const update = useUpdateChannel();
   const vocabulary = useChannelTags(channel.id, channel.capabilities.includes('listing.tags'));
+  const metaVocab = useChannelMetafields(
+    channel.id,
+    channel.capabilities.includes('listing.metafields'),
+  );
+  const pubVocab = useChannelPublications(
+    channel.id,
+    channel.capabilities.includes('listing.publications'),
+  );
   /**
    * What is actually in the ledger, which is what needs mapping. Offering every
    * set tcgcsv publishes would be hundreds of rows for a shop that stocks
@@ -417,9 +426,23 @@ function ListingDefaults({ channel }: { channel: Channel }) {
   const stored = channel.listingDefaults;
   const [rules, setRules] = useState<TagRule[]>(stored.tagRules ?? []);
   const [vendor, setVendor] = useState(stored.vendor ?? '');
+  const [vendorRules, setVendorRules] = useState<VendorRule[]>(stored.vendorRules ?? []);
+  const [metafieldRules, setMetafieldRules] = useState<MetafieldRule[]>(
+    stored.metafieldRules ?? [],
+  );
+  const [category, setCategory] = useState(stored.category ?? '');
+  const [publications, setPublications] = useState<string[]>(stored.publications ?? []);
   const [match, setMatch] = useState<TagRule['match']>('game');
   const [value, setValue] = useState('');
   const [tag, setTag] = useState('');
+
+  // The custom-field rule builder's own inputs: which field, which card, which
+  // value. Separate from the tag builder above so the two forms do not fight
+  // over one set of state.
+  const [mfDefKey, setMfDefKey] = useState('');
+  const [mfMatch, setMfMatch] = useState<TagRule['match']>('game');
+  const [mfValue, setMfValue] = useState('');
+  const [mfChoice, setMfChoice] = useState('');
 
   if (!channel.capabilities.includes('listing.create')) return null;
 
@@ -427,8 +450,11 @@ function ListingDefaults({ channel }: { channel: Channel }) {
     stored.tags !== undefined ||
     stored.tagRules !== undefined ||
     stored.vendor !== undefined ||
+    stored.vendorRules !== undefined ||
     stored.category !== undefined ||
-    stored.metafields !== undefined;
+    stored.metafields !== undefined ||
+    stored.metafieldRules !== undefined ||
+    stored.publications !== undefined;
 
   const storeTags = vocabulary.data ?? [];
   const games = [...new Set(heldSets.flatMap((s) => (s.game ? [s.game] : [])))].sort();
@@ -478,6 +504,72 @@ function ListingDefaults({ channel }: { channel: Channel }) {
     })
     .slice(0, 12);
 
+  const metaDefs: ListingMetafieldDefinition[] = metaVocab.data ?? [];
+  // Only fields with a fixed vocabulary can be rule-driven: a value is picked
+  // from a list, never typed, the same discipline as tags.
+  const referenceDefs = metaDefs.filter((d) => (d.choices?.length ?? 0) > 0);
+  const selectedDef = referenceDefs.find((d) => `${d.namespace}.${d.key}` === mfDefKey);
+  const pubs = pubVocab.data ?? [];
+
+  const vendorForGame = (g: string) =>
+    vendorRules.find((r) => r.match === 'game' && r.value === g)?.vendor ?? '';
+  const setVendorForGame = (g: string, v: string) =>
+    setVendorRules((current) => {
+      const rest = current.filter((r) => !(r.match === 'game' && r.value === g));
+      return v.trim() ? [...rest, { match: 'game' as const, value: g, vendor: v.trim() }] : rest;
+    });
+
+  /** A metafield rule's stored value, shown as the operator picked it. */
+  const labelForMetafield = (rule: MetafieldRule): string => {
+    const def = metaDefs.find(
+      (d) =>
+        d.owner === rule.metafield.owner &&
+        d.namespace === rule.metafield.namespace &&
+        d.key === rule.metafield.key,
+    );
+    const name = def?.name ?? `${rule.metafield.namespace}.${rule.metafield.key}`;
+    const choice = def?.choices?.find((c) => c.value === rule.metafield.value)?.label;
+    return `${name} = ${choice ?? rule.metafield.value}`;
+  };
+
+  const addMetafieldRule = () => {
+    if (!selectedDef || mfValue.trim() === '' || mfChoice === '') return;
+    const metafield: ListingMetafield = {
+      owner: selectedDef.owner,
+      namespace: selectedDef.namespace,
+      key: selectedDef.key,
+      type: selectedDef.type,
+      value: mfChoice,
+    };
+    setMetafieldRules((current) => {
+      // One value per (field, card): re-adding the same field for the same card
+      // replaces rather than duplicating.
+      const rest = current.filter(
+        (r) =>
+          !(
+            r.match === mfMatch &&
+            r.value === mfValue.trim() &&
+            r.metafield.namespace === metafield.namespace &&
+            r.metafield.key === metafield.key
+          ),
+      );
+      return [...rest, { match: mfMatch, value: mfValue.trim(), metafield }];
+    });
+    setMfValue('');
+    setMfChoice('');
+  };
+
+  const togglePublication = (id: string) =>
+    setPublications((current) =>
+      current.includes(id) ? current.filter((p) => p !== id) : [...current, id],
+    );
+
+  // Category choices come from what the chosen custom fields require — the same
+  // constraint the /list screen surfaces. Deduped by id.
+  const categoryOptions = [
+    ...new Map(metaDefs.flatMap((d) => d.requiresCategory ?? []).map((c) => [c.id, c])).values(),
+  ];
+
   const save = () =>
     update.mutate({
       id: channel.id,
@@ -487,9 +579,13 @@ function ListingDefaults({ channel }: { channel: Channel }) {
         // "nothing on every product", which is the usual case here.
         ...(stored.tags !== undefined ? { tags: stored.tags } : {}),
         ...(vendor.trim() ? { vendor: vendor.trim() } : {}),
-        // Carried through untouched: this form does not edit them, and dropping
-        // them would silently discard a category or custom fields set elsewhere.
-        ...(stored.category !== undefined ? { category: stored.category } : {}),
+        ...(vendorRules.length > 0 ? { vendorRules } : {}),
+        ...(metafieldRules.length > 0 ? { metafieldRules } : {}),
+        ...(category.trim() ? { category: category.trim() } : {}),
+        ...(publications.length > 0 ? { publications } : {}),
+        // Carried through untouched: this form does not edit the unconditional
+        // metafields, and dropping them would silently discard fields set
+        // elsewhere.
         ...(stored.metafields !== undefined ? { metafields: stored.metafields } : {}),
       },
     });
@@ -638,18 +734,234 @@ function ListingDefaults({ channel }: { channel: Channel }) {
         </button>
       </div>
 
+      <h4>Vendor</h4>
+      <p className="field-hint">
+        The publisher a created product carries. Set one per game where they differ; anything with
+        no rule uses the default.
+      </p>
+      {games.length > 0 && (
+        <table className="compact">
+          <tbody>
+            {games.map((g) => (
+              <tr key={g}>
+                <td className="muted">{g}</td>
+                <td>
+                  <input
+                    value={vendorForGame(g)}
+                    placeholder="e.g. The Pokémon Company"
+                    aria-label={`Vendor for ${g}`}
+                    onChange={(event) => setVendorForGame(g, event.target.value)}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <div className="inline-form">
-        <label htmlFor={`vendor-${channel.id}`}>Vendor</label>
+        <label htmlFor={`vendor-${channel.id}`}>Default vendor</label>
         <input
           id={`vendor-${channel.id}`}
           value={vendor}
           placeholder="optional"
           onChange={(event) => setVendor(event.target.value)}
         />
-        <span className="muted">
-          One value for the channel — set it per game with rules if your publishers differ.
-        </span>
+        <span className="muted">Used for a card no vendor rule matches.</span>
+      </div>
 
+      {channel.capabilities.includes('listing.metafields') && (
+        <>
+          <h4>Custom fields</h4>
+          <p className="field-hint">
+            Metaobject fields like <code>custom.game</code> and <code>custom.set</code>, set from a
+            rule so a mixed batch gets the right value. Each value is one <em>you</em> pick from the
+            store&rsquo;s own vocabulary.
+          </p>
+
+          {metafieldRules.length > 0 && (
+            <table className="compact">
+              <tbody>
+                {metafieldRules.map((rule, index) => (
+                  <tr
+                    key={`${rule.match}:${rule.value}:${rule.metafield.key}:${rule.metafield.value}`}
+                  >
+                    <td className="muted">{RULE_LABELS[rule.match]}</td>
+                    <td>{describeRuleValue(rule)}</td>
+                    <td className="muted">→</td>
+                    <td>{labelForMetafield(rule)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() =>
+                          setMetafieldRules(metafieldRules.filter((_, i) => i !== index))
+                        }
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {metaVocab.isError ? (
+            <p className="field-hint">
+              The store&rsquo;s custom fields could not be read, so there is nothing to pick here.
+            </p>
+          ) : referenceDefs.length === 0 ? (
+            <p className="field-hint">This store has no custom fields with a fixed vocabulary.</p>
+          ) : (
+            <div className="inline-form">
+              <select
+                value={mfDefKey}
+                onChange={(event) => {
+                  setMfDefKey(event.target.value);
+                  setMfChoice('');
+                }}
+                aria-label="Custom field"
+              >
+                <option value="">Field…</option>
+                {referenceDefs.map((d) => (
+                  <option key={`${d.namespace}.${d.key}`} value={`${d.namespace}.${d.key}`}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={mfMatch}
+                onChange={(event) => {
+                  setMfMatch(event.target.value as TagRule['match']);
+                  setMfValue('');
+                }}
+                aria-label="What the rule looks at"
+              >
+                <option value="game">Game is</option>
+                <option value="set">Set is</option>
+                <option value="name-contains">Name contains</option>
+                <option value="kind">Item is a</option>
+              </select>
+
+              {mfMatch === 'kind' ? (
+                <select
+                  value={mfValue}
+                  onChange={(event) => setMfValue(event.target.value)}
+                  aria-label="Value to match"
+                >
+                  <option value="">Pick…</option>
+                  {KIND_OPTIONS.map((k) => (
+                    <option key={k.value} value={k.value}>
+                      {k.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    list={`mf-values-${channel.id}-${mfMatch}`}
+                    value={mfValue}
+                    placeholder={mfMatch === 'name-contains' ? 'e.g. Elite Trainer Box' : 'Pick…'}
+                    onChange={(event) => setMfValue(event.target.value)}
+                    aria-label="Value to match"
+                  />
+                  <datalist id={`mf-values-${channel.id}-${mfMatch}`}>
+                    {(mfMatch === 'game' ? games : mfMatch === 'set' ? sets : []).map((v) => (
+                      <option key={v} value={v} />
+                    ))}
+                  </datalist>
+                </>
+              )}
+
+              <span className="muted">→</span>
+
+              <select
+                value={mfChoice}
+                onChange={(event) => setMfChoice(event.target.value)}
+                aria-label="Value to set"
+                disabled={!selectedDef}
+              >
+                <option value="">{selectedDef ? 'Value…' : 'Pick a field first'}</option>
+                {(selectedDef?.choices ?? []).map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                className="ghost"
+                disabled={!selectedDef || mfValue.trim() === '' || mfChoice === ''}
+                onClick={addMetafieldRule}
+              >
+                Add field rule
+              </button>
+            </div>
+          )}
+
+          <h4>Category</h4>
+          <div className="inline-form">
+            <label htmlFor={`category-${channel.id}`}>Product category</label>
+            {categoryOptions.length > 0 ? (
+              <select
+                id={`category-${channel.id}`}
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+              >
+                <option value="">None</option>
+                {categoryOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id={`category-${channel.id}`}
+                value={category}
+                placeholder="optional"
+                onChange={(event) => setCategory(event.target.value)}
+              />
+            )}
+            <span className="muted">
+              Most custom fields are restricted to a category — without it they are rejected.
+            </span>
+          </div>
+        </>
+      )}
+
+      {channel.capabilities.includes('listing.publications') && (
+        <>
+          <h4>Sales channels</h4>
+          <p className="field-hint">
+            Every created product is published to these. A draft stays invisible until you make it
+            active — this only decides where it appears then.
+          </p>
+          {pubVocab.isError ? (
+            <p className="field-hint">
+              The store&rsquo;s sales channels could not be read. The app may need the{' '}
+              <code>read_publications</code> scope.
+            </p>
+          ) : (
+            <div className="checkbox-group">
+              {pubs.map((p) => (
+                <label key={p.id} className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={publications.includes(p.id)}
+                    onChange={() => togglePublication(p.id)}
+                  />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="inline-form">
         <button type="button" onClick={save} disabled={update.isPending}>
           Save
         </button>

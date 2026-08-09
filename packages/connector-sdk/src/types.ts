@@ -166,6 +166,16 @@ export interface CreateListingRequest {
    * two SKUs are the same card is a catalogue judgement (rule 6).
    */
   siblingListingId?: string;
+  /**
+   * Sales channels to publish the product to, chosen by the operator from
+   * {@link ListingPublication}. Applied verbatim, like tags and metafields.
+   *
+   * **Honoured only when a product is created.** Publishing is product-owned:
+   * adding a variant to an already-curated product must not change which
+   * channels it is on, and re-publishing a listing that already existed is not
+   * this call's business. A connector without `listing.publications` ignores it.
+   */
+  publications?: readonly string[];
 }
 
 export interface CreateListingResult {
@@ -405,6 +415,27 @@ export interface ListingMetafieldDefinition {
 
 export interface ListMetafieldsRequest {
   /** Most vocabulary entries to read per field. */
+  limit?: number;
+}
+
+/**
+ * A sales channel a product can be published to.
+ *
+ * The read half of `listing.publications`, the same shape as a tag or metafield
+ * vocabulary: the operator picks an `id` to send back through
+ * {@link CreateListingRequest.publications}, and the `name` is only there so the
+ * choice is legible. `id` is opaque to the core — `gid://shopify/Publication/…`
+ * on Shopify — and means nothing outside the one shop.
+ */
+export interface ListingPublication {
+  /** Wire value, ready to send back as an entry in `CreateListingRequest.publications`. */
+  id: string;
+  /** What a human calls it — "Online Store", "Point of Sale". */
+  name: string;
+}
+
+export interface ListPublicationsRequest {
+  /** Most publications to return. A ceiling, not a page size, like `ListTagsRequest`. */
   limit?: number;
 }
 

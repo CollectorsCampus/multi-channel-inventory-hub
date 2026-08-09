@@ -9,9 +9,11 @@ import type {
   DelistRequest,
   EnumerateListingsRequest,
   ListMetafieldsRequest,
+  ListPublicationsRequest,
   ListTagsRequest,
   ListingMetafieldChoice,
   ListingMetafieldDefinition,
+  ListingPublication,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -135,6 +137,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'listing.enumerate',
       'listing.tags',
       'listing.metafields',
+      'listing.publications',
       'listing.sku',
     ],
 
@@ -183,8 +186,18 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
      *
      * `status: DRAFT` is hard-coded rather than a request field. Nothing should
      * become buyable because a background job ran, and a parameter is an
-     * invitation for some future caller to pass ACTIVE. Publication stays the
-     * seller's decision, in Shopify, deliberately.
+     * invitation for some future caller to pass ACTIVE.
+     *
+     * **Publishing is separate from status, and only on a new product.** When
+     * the operator supplies `req.publications`, a newly created product is
+     * attached to those sales channels — which does *not* make a draft buyable,
+     * only decides where it appears once the seller makes it active. It is done
+     * only in the product-create path: adding a variant to a product the
+     * operator already curated must not change which channels that product is
+     * on, and a listing that already existed is not this call's to republish.
+     *
+     * Needs `read_publications` + `write_publications` on the app, beyond the
+     * scopes the rest of the connector uses.
      *
      * No quantity is set here either. Stock flows through `listing.quantity`
      * like everything else, so a listing created now and pushed a moment later
@@ -224,6 +237,13 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       const externalListingId = variantId
         ? await fillVariant(ctx, productId, variantId, req, sku)
         : await addVariant(ctx, productId, req, sku);
+
+      // After the variant exists, not before: a product with no variant is not
+      // something to put in front of a channel, and publishing is the last thing
+      // that should happen to a new product. Only on a product we just created.
+      if (req.publications && req.publications.length > 0) {
+        await publishProduct(ctx, productId, req.publications);
+      }
 
       return { externalListingId, createdProduct: true, alreadyExisted: false };
     },
@@ -626,6 +646,32 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
       return definitions;
     },
+
+    /**
+     * The sales channels this shop can publish a product to.
+     *
+     * A store has a handful — "Online Store", "Point of Sale", maybe a few
+     * marketplaces — so unlike tags this needs no pagination beyond a generous
+     * first page. Returned as `{ id, name }` for the operator to pick from; the
+     * id is the publication GID `publishProduct` sends back.
+     *
+     * Needs `read_publications`. Without it Shopify errors rather than returning
+     * an empty list, so the caller sees a real failure to act on rather than a
+     * silently short list.
+     */
+    async listPublications(ctx: Ctx, req: ListPublicationsRequest): Promise<ListingPublication[]> {
+      const first = Math.min(Math.max(req.limit ?? 50, 1), 250);
+
+      const data = await client.request<{
+        publications?: { nodes?: Array<{ id?: string; name?: string } | null> };
+      }>(ctx, PUBLICATIONS_QUERY, { first });
+
+      const publications: ListingPublication[] = [];
+      for (const node of data.publications?.nodes ?? []) {
+        if (node?.id && node.name) publications.push({ id: node.id, name: node.name });
+      }
+      return publications;
+    },
   };
 
   // -------------------------------------------------------------------------
@@ -846,6 +892,33 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
     const variantId = data.productCreate.product?.variants?.nodes?.[0]?.id;
     return variantId ? { productId, variantId } : { productId };
+  }
+
+  /**
+   * Publish a product to the given sales channels.
+   *
+   * `publishablePublish` attaches the product to each publication. On a draft
+   * this is a no-op for the customer — visibility still waits on the product
+   * being made active — but it means the operator does not have to set the
+   * channels by hand afterwards.
+   *
+   * Ids are passed verbatim: they are `gid://shopify/Publication/…` the operator
+   * picked from {@link listPublications}, and the connector no more validates one
+   * than it validates a metaobject id.
+   */
+  async function publishProduct(
+    ctx: Ctx,
+    productId: string,
+    publicationIds: readonly string[],
+  ): Promise<void> {
+    const data = await client.request<{
+      publishablePublish: { userErrors: Array<{ field?: string[]; message: string }> };
+    }>(ctx, PUBLISH_MUTATION, {
+      id: productId,
+      input: publicationIds.map((publicationId) => ({ publicationId })),
+    });
+
+    throwOnUserErrors(data.publishablePublish?.userErrors, 'Publishing product');
   }
 
   /** Add a variant to an existing product. */
@@ -1289,6 +1362,32 @@ const PRODUCT_TAGS_QUERY = /* GraphQL */ `
       }
       edges {
         node
+      }
+    }
+  }
+`;
+
+// \`Publication.name\` is deprecated in favour of the Catalog interface's
+// \`title\`, but \`title\` is not queryable on \`Publication\` directly and \`name\`
+// is present and valid in the pinned 2026-07 version. Kept until a version bump
+// forces the Catalog-shaped read.
+const PUBLICATIONS_QUERY = /* GraphQL */ `
+  query HubPublications($first: Int!) {
+    publications(first: $first) {
+      nodes {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const PUBLISH_MUTATION = /* GraphQL */ `
+  mutation HubPublish($id: ID!, $input: [PublicationInput!]!) {
+    publishablePublish(id: $id, input: $input) {
+      userErrors {
+        field
+        message
       }
     }
   }

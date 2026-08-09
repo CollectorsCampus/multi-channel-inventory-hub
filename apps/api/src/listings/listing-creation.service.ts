@@ -4,6 +4,7 @@ import {
   type CreateListingRequest,
   type ListingMetafield,
   type ListingMetafieldDefinition,
+  type ListingPublication,
 } from '@hub/connector-sdk';
 import { formatCondition } from '@hub/connector-tcgplayer';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,7 +18,9 @@ import {
   applyListingDefaults,
   itemKind,
   parseListingDefaults,
+  resolveMetafields,
   resolveTags,
+  resolveVendor,
   type ChannelListingDefaults,
 } from '../channels/listing-defaults';
 
@@ -137,6 +140,13 @@ export interface CreateListingsRequest {
    */
   category?: string;
   vendor?: string;
+  /**
+   * Sales channels to publish created products to, overriding the channel's
+   * declared `publications`. Absent falls back to the channel default; an empty
+   * array is "publish nowhere this run". Only acted on where the connector
+   * declares `listing.publications`.
+   */
+  publications?: readonly string[];
   optionName?: string;
   /**
    * What to sell these for, in cents. Applied to the allocation and sent at
@@ -255,6 +265,24 @@ export class ListingCreationService {
     return connector.listMetafields!(ctx, limit === undefined ? {} : { limit });
   }
 
+  /**
+   * The sales channels this channel can publish a created product to.
+   *
+   * Read-only, and the same purpose as {@link listTags}: the operator picks a
+   * publication the channel already has, and the hub never invents one.
+   */
+  async listPublications(channelInstanceId: string, limit?: number): Promise<ListingPublication[]> {
+    const { connector, ctx, displayName } = await this.channels.resolve(channelInstanceId);
+
+    if (!hasCapability(connector.capabilities, 'listing.publications')) {
+      throw new BadRequestException(
+        `${connector.displayName} does not report the sales channels "${displayName}" publishes to.`,
+      );
+    }
+
+    return connector.listPublications!(ctx, limit === undefined ? {} : { limit });
+  }
+
   async create(request: CreateListingsRequest): Promise<CreateListingsResult> {
     const ids = [...new Set(request.inventoryItemIds)];
 
@@ -312,12 +340,23 @@ export class ListingCreationService {
         ? null
         : request.tags.map((tag) => tag.trim()).filter((tag) => tag !== '');
 
-    const vendor = withDefaults.vendor?.trim();
-    // Carried through untouched. The core does not know what a value means —
-    // on Shopify it is a metaobject id — so validating or normalising it here
-    // would be the core inventing an opinion it cannot hold.
-    const metafields = withDefaults.metafields ?? [];
+    // Vendor and metafields join tags as per-card fields: the vendor is the
+    // game's publisher and `custom.game`/`custom.set` are the game's and set's
+    // metaobjects, so a mixed batch needs the right value per item. An explicit
+    // value on the request still overrides the rules wholesale, exactly as
+    // `runTags` does — `null` means "no override, resolve per item".
+    const runVendor = request.vendor === undefined ? null : request.vendor.trim();
+    const runMetafields = request.metafields === undefined ? null : [...request.metafields];
+
     const category = withDefaults.category?.trim();
+    // The channels every created product is published to. Channel-level, not
+    // per-card, and only sent to a connector that can act on it — one without
+    // `listing.publications` would silently drop the field, so leaving it off
+    // keeps "sent it" honest. Honoured by the connector only when it creates a
+    // product.
+    const publications = hasCapability(connector.capabilities, 'listing.publications')
+      ? (withDefaults.publications ?? []).map((p) => p.trim()).filter((p) => p !== '')
+      : [];
 
     const result: CreateListingsResult = { listings: [], problems: [] };
 
@@ -340,11 +379,15 @@ export class ListingCreationService {
 
       const name = item.sku.catalogItem.name;
       // The condition rides alongside the catalogue fields rather than being
-      // looked up again inside `resolveTags`: a `kind` rule asks about the SKU,
+      // looked up again inside the resolvers: a `kind` rule asks about the SKU,
       // and `CatalogItem` has no condition — one product is every condition.
-      const tags =
-        runTags ??
-        resolveTags(defaults, { ...item.sku.catalogItem, condition: item.sku.condition });
+      const taggable = { ...item.sku.catalogItem, condition: item.sku.condition };
+      const tags = runTags ?? resolveTags(defaults, taggable);
+      const vendor = runVendor ?? resolveVendor(defaults, taggable);
+      // Carried through untouched. The core does not know what a value means —
+      // on Shopify it is a metaobject id — so validating or normalising it here
+      // would be the core inventing an opinion it cannot hold.
+      const metafields = runMetafields ?? resolveMetafields(defaults, taggable);
 
       try {
         result.listings.push(
@@ -352,6 +395,7 @@ export class ListingCreationService {
             optionName,
             tags,
             metafields,
+            publications,
             ...(category ? { category } : {}),
             ...(vendor ? { vendor } : {}),
             ...(request.price !== undefined ? { price: request.price } : {}),
@@ -503,6 +547,7 @@ export class ListingCreationService {
       optionName: string;
       tags: readonly string[];
       metafields: readonly ListingMetafield[];
+      publications: readonly string[];
       category?: string;
       vendor?: string;
       price?: number;
@@ -553,6 +598,9 @@ export class ListingCreationService {
     if (content.tags.length > 0) req.tags = content.tags;
     if (content.metafields.length > 0) req.metafields = content.metafields;
     if (content.category) req.category = content.category;
+    // Sent whatever the outcome; the connector publishes only when it actually
+    // creates a product, so an add-a-variant or already-existed path ignores it.
+    if (content.publications.length > 0) req.publications = content.publications;
     if (siblingListingId) req.siblingListingId = siblingListingId;
     // A price the operator gave this run, or one the allocation already
     // carries. Creation still invents nothing — the same way it sets no

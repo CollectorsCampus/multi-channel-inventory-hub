@@ -1654,6 +1654,38 @@ back.
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.
 
+### v0.6.1 (2026-08-09)
+
+Tagged at the "Prepare v0.6.1" merge (#90). Multi-arch image, tags `0.6.1`, `0.6` and
+`latest`, all at digest `sha256:d951eb6d…`, replacing v0.6.0's `sha256:6446ac38…`. A patch
+carrying the two defects the **first production deployment** surfaced the same day, both
+found live and fixed with regression tests:
+
+- **#89 — the CSP blanked plain-HTTP LAN deployments.** Helmet merges its default directives
+  into a configured CSP, and the default set includes `upgrade-insecure-requests`; browsers
+  exempt localhost, so every previous access (all `http://localhost`) hid it, while
+  `http://192.168.x.x` had its JS/CSS force-upgraded to https and rendered a blank page.
+  Diagnosed with headless Chrome (playwright-core + installed Chrome) against the live
+  server after the Browser pane refused LAN reads. The directive is nulled — the CSP is
+  `'self'`-only, so subresources inherit the page's scheme and https loses nothing.
+- **#88 — `createListing` sent `category` to `productCreate` verbatim**, so a bare taxonomy
+  handle (`ae-2-2-3-2`, exactly what a channel's `listingDefaults` may hold) was rejected as
+  an invalid global id and the creation failed. Now normalised through the existing
+  idempotent `toTaxonomyGid`, as `listMetafields` already did.
+
+Verified inside the pulled artifact: version 0.6.1, `upgradeInsecureRequests` in the built
+`bootstrap.js`, `toTaxonomyGid` in the built connector's create path, `--prod` held.
+
+**The hub moved to production the same day** — Portainer stack on the operator's server,
+public at `https://` behind a Cloudflare tunnel on the **store's** account, with a live
+`ORDERS_CREATE` webhook registered with the hub app's own credentials, so sales now reach
+the ledger automatically. Deployment specifics (host, hostname, subscription id, the
+pg_dump migration, and the dead local containers that must never be restarted with workers
+on) are deliberately in the untracked memory notes and `private/production/`, not here —
+same rule as shop domains. The first product created by the full rules engine (a One Piece
+single) came out with every rule applied: vendor, game metafield, tags, category and both
+sales channels.
+
 ### v0.6.0 (2026-08-08)
 
 Tagged at `7d2a8c6` (the "Prepare v0.6.0" merge, #86). Multi-arch image at

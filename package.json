@@ -1,6 +1,6 @@
 {
   "name": "inventory-hub",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "description": "Self-hostable multi-channel inventory sync. Central ledger, pluggable channel connectors.",
   "license": "AGPL-3.0-or-later",

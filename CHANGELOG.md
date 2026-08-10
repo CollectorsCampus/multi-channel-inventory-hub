@@ -3,6 +3,43 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.7.0] — 2026-08-10
+
+The storefront stays true to the shelf. A sold-out single can now unpublish itself, an
+outdated product photo can be replaced in bulk, an item links to its pages on the sites
+that know it — including your own store — and a Japanese-language copy can finally be
+said to be one at intake.
+
+**Contains a schema migration** (one boolean column on channels — the first since
+0.4.0). The container applies it automatically at start; nothing manual.
+
+### Added
+
+- **Draft sold-out singles** (opt-in per channel). When a single's advertised quantity is
+  pushed to zero, its product is unpublished — but only if the platform itself shows the
+  _whole_ product out of stock, so a sibling condition with copies (or stock at a location
+  the hub does not manage) keeps it live. Sealed products are never touched. One direction
+  only: restocking never re-publishes automatically — nothing should become buyable
+  because a background job ran, so you publish it yourself, as with any draft.
+- **Re-push catalogue images** to listings the hub already drives, from the channel card:
+  pick linked singles, confirm, and each product's photos are replaced with the
+  catalogue's current image (add first, delete after, so a product never sits imageless).
+  Exists because the catalogue upgraded from thumbnails to full resolution after many
+  listings were created. Sealed listings are never offered — their photos are yours.
+- **An item links to its pages elsewhere.** External ids on the intake card view and the
+  item detail page are now links — TCGplayer, Scryfall, CardTrader — and a listed item
+  links to its live page on _your_ storefront (Shopify's own URL, never a constructed
+  guess; a draft shows only its admin page) plus the Shopify admin.
+- **A language picker at intake**, beside condition and printing. A Japanese-language copy
+  of a catalogued card is the same product with `language JA` — the model always supported
+  it; the form finally asks. This is what makes Japanese One Piece copies expressible.
+
+### Changed
+
+- The connector contract gains `listing.image` (replace a listing's image),
+  `listing.url` (where a listing lives, as URLs) and `listing.status` (publish/unpublish,
+  with a platform-side sold-out guard). Existing connectors are unaffected.
+
 ## [0.6.1] — 2026-08-09
 
 Two fixes from the first production deployment, both found live. No schema change.

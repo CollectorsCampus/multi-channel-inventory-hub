@@ -24,4 +24,4 @@ export * from './connector';
  */
 export * from './catalog';
 
-export const CONNECTOR_SDK_VERSION = '0.6.1';
+export const CONNECTOR_SDK_VERSION = '0.7.0';

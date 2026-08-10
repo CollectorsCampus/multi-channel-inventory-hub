@@ -40,6 +40,8 @@ export interface ChannelSummary {
   reconcileAutoCorrect: boolean;
   /** Opt-in: list stock on this channel as it is taken in. Needs listingDefaults. */
   autoListNewStock: boolean;
+  /** Opt-in: draft a single's product when its pushed quantity reaches zero. */
+  draftAtSellout: boolean;
   /** What a listing created here carries, applied verbatim. Never derived. */
   listingDefaults: ChannelListingDefaults;
   /** Present only when the connector receives webhooks. */
@@ -62,6 +64,7 @@ export interface UpdateChannelInput {
   secrets?: Record<string, string>;
   reconcileAutoCorrect?: boolean;
   autoListNewStock?: boolean;
+  draftAtSellout?: boolean;
   /**
    * Replaced wholesale, not merged.
    *
@@ -191,6 +194,7 @@ export class ChannelsService {
         ...(input.autoListNewStock !== undefined
           ? { autoListNewStock: input.autoListNewStock }
           : {}),
+        ...(input.draftAtSellout !== undefined ? { draftAtSellout: input.draftAtSellout } : {}),
         ...(input.listingDefaults !== undefined
           ? { listingDefaults: encodeListingDefaults(input.listingDefaults) }
           : {}),
@@ -278,6 +282,7 @@ export class ChannelsService {
     lastReconciledAt: Date | null;
     reconcileAutoCorrect: boolean;
     autoListNewStock: boolean;
+    draftAtSellout: boolean;
     listingDefaults: string;
     createdAt: Date;
     _count: { allocations: number };
@@ -332,6 +337,7 @@ export class ChannelsService {
       // settings form can say why the toggle is unavailable rather than hiding
       // it and leaving the operator to wonder where it went.
       autoListNewStock: instance.autoListNewStock,
+      draftAtSellout: instance.draftAtSellout,
       listingDefaults: parseListingDefaults(instance.listingDefaults),
       webhookPath: receivesWebhooks ? `/api/webhooks/${instance.id}` : null,
       allocationCount: instance._count.allocations,

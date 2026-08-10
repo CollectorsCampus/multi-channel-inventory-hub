@@ -98,6 +98,30 @@ export interface UpdateListingSkuRequest {
   sku: string;
 }
 
+/**
+ * Publish or unpublish a listing's product.
+ *
+ * `onlyIfSoldOut` is the multi-variant guard, enforced by the connector against
+ * the **platform's own stock numbers**: the request is a no-op (reported, not
+ * silent) while any variant of the product still has stock anywhere. That is
+ * deliberately the platform's answer rather than the hub's, because the product
+ * may carry variants the hub does not drive, and only the platform sees them
+ * all.
+ */
+export interface UpdateListingStatusRequest {
+  externalListingId: string;
+  status: 'active' | 'draft';
+  /** Act only when the platform shows the listing's whole product out of stock. */
+  onlyIfSoldOut?: boolean;
+}
+
+export interface UpdateListingStatusResult {
+  /** False when the guard held or the product was already in that state. */
+  changed: boolean;
+  /** Why nothing changed, for the log. */
+  reason?: string;
+}
+
 export interface ListingUrlRequest {
   externalListingId: string;
 }

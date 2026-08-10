@@ -130,6 +130,21 @@ export const CAPABILITIES = [
   'listing.metafields',
 
   /**
+   * Publish or unpublish a listing's product on the channel.
+   *
+   * Exists for the sellout policy: a sold-out single's product can be drafted
+   * so customers stop finding an unbuyable page. The request carries an
+   * `onlyIfSoldOut` guard the connector enforces against the **platform's own
+   * stock numbers** — a product with any variant still in stock anywhere is
+   * left alone, so one condition selling out cannot hide its siblings.
+   *
+   * The core only ever asks to *draft* automatically. Activating is available
+   * to a human-driven caller, but no background path may use it: nothing
+   * should become buyable on a storefront because a job ran.
+   */
+  'listing.status',
+
+  /**
    * Resolve where a listing lives on the channel, as URLs a human can open.
    *
    * A read with no side effects: the storefront page a customer would see
@@ -209,6 +224,7 @@ export const CAPABILITY_METHODS = {
   'listing.metafields': 'listMetafields',
   'listing.publications': 'listPublications',
   'listing.url': 'listingUrl',
+  'listing.status': 'updateListingStatus',
   'listing.image': 'updateListingImage',
   'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',

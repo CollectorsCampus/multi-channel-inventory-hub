@@ -15,6 +15,7 @@ import { ConnectorRegistry } from '../connectors/connector-registry.service';
 import { ChannelContextFactory } from '../connectors/channel-context.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { itemKind } from '../channels/listing-defaults';
 import { SyncEventService } from './sync-event.service';
 import { AlertsService } from './alerts.service';
 
@@ -166,6 +167,14 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
         durationMs: Date.now() - started,
         payload: { quantity: current.desiredListedQuantity, price: current.price },
       });
+
+      // After the push is recorded, never before: the sellout policy reacts to
+      // a quantity the channel now actually shows. Its own failure must not
+      // fail this job — the push succeeded, and retrying it would re-push a
+      // quantity that already landed.
+      if (operation === 'quantity' && current.desiredListedQuantity === 0) {
+        await this.maybeDraftAtSellout(connector, ctx, channelInstanceId, allocation, current);
+      }
     } catch (error) {
       const message = (error as Error).message;
       const terminal = error instanceof UnrecoverableError || isLastAttempt(job);
@@ -229,6 +238,67 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
         // Deferred until the channel-configuration UI exists to create
         // listings; quantity and price cover an already-mapped variant.
         throw new UnrecoverableError('listing.push is not wired up yet.');
+    }
+  }
+
+  /**
+   * The sellout policy (opt-in per channel): a single whose advertised
+   * quantity just went to zero has its product drafted, so customers stop
+   * finding an unbuyable page.
+   *
+   * Three gates before the channel is touched, cheapest first: the channel
+   * must have opted in, the connector must be able to do it, and the item must
+   * be a **single** — a sealed listing was created and imaged by the operator,
+   * and its visibility is theirs. The connector then enforces the fourth gate
+   * against the platform's own numbers (`onlyIfSoldOut`), so a product with an
+   * in-stock sibling variant — or stock at a location the hub does not manage
+   * — is left alone.
+   *
+   * **One direction only.** A restock never re-activates the product: nothing
+   * should become buyable on a storefront because a background job ran. The
+   * operator activates by hand, exactly as they do for a newly created draft.
+   *
+   * Failures are logged and swallowed: the quantity push already succeeded and
+   * is recorded, and failing the job now would retry a push that landed.
+   */
+  private async maybeDraftAtSellout(
+    connector: Connector,
+    ctx: Ctx,
+    channelInstanceId: string,
+    allocation: { inventoryItemId: string },
+    current: { externalListingId: string | null },
+  ): Promise<void> {
+    if (!current.externalListingId) return;
+    if (!hasCapability(connector.capabilities, 'listing.status')) return;
+
+    try {
+      const channel = await this.prisma.channelInstance.findUnique({
+        where: { id: channelInstanceId },
+        select: { draftAtSellout: true },
+      });
+      if (!channel?.draftAtSellout) return;
+
+      const item = await this.prisma.inventoryItem.findUnique({
+        where: { id: allocation.inventoryItemId },
+        select: { sku: { select: { condition: true } } },
+      });
+      if (!item || itemKind(item.sku.condition) !== 'single') return;
+
+      const result = await connector.updateListingStatus!(ctx, {
+        externalListingId: current.externalListingId,
+        status: 'draft',
+        onlyIfSoldOut: true,
+      });
+
+      this.logger.log(
+        result.changed
+          ? `Drafted sold-out listing ${current.externalListingId} on ${channelInstanceId}.`
+          : `Sellout draft skipped for ${current.externalListingId}: ${result.reason ?? 'no change'}.`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not draft sold-out listing ${current.externalListingId}: ${(error as Error).message}`,
+      );
     }
   }
 

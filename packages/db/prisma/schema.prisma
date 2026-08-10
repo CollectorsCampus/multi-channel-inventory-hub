@@ -208,6 +208,14 @@ model ChannelInstance {
   /// listingDefaults says what a created product should carry.
   autoListNewStock Boolean @default(false) @map("auto_list_new_stock")
 
+  /// Opt-in: when a single's advertised quantity is pushed to zero, ask the
+  /// channel to unpublish (draft) the listing's product — only if the platform
+  /// itself shows the whole product out of stock, so one sold-out condition
+  /// cannot hide a sibling variant that still has copies. One direction only:
+  /// restocking never re-activates automatically, because nothing should
+  /// become buyable on a storefront because a background job ran.
+  draftAtSellout Boolean @default(false) @map("draft_at_sellout")
+
   /// JSON-encoded defaults applied to listings this channel creates:
   /// { tags?, metafields?, category?, vendor? }. String, not Json — see header.
   ///

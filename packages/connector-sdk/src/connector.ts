@@ -29,6 +29,8 @@ import type {
   PushListingResult,
   UpdateListingImageRequest,
   UpdateListingSkuRequest,
+  UpdateListingStatusRequest,
+  UpdateListingStatusResult,
   UpdatePriceRequest,
   UpdateQuantityRequest,
 } from './types';
@@ -154,6 +156,19 @@ export interface Connector {
    * confirm, because a guessed URL that 404s reads as a broken feature.
    */
   listingUrl?(ctx: Ctx, req: ListingUrlRequest): Promise<ListingUrlResult>;
+
+  /**
+   * Publish or unpublish the listing's product.
+   *
+   * With `onlyIfSoldOut`, the connector must check the platform's own stock
+   * for the whole product and report `changed: false` rather than acting while
+   * anything remains — the guard belongs to the platform's numbers, not the
+   * hub's, because the product may carry variants the hub does not drive.
+   */
+  updateListingStatus?(
+    ctx: Ctx,
+    req: UpdateListingStatusRequest,
+  ): Promise<UpdateListingStatusResult>;
 
   // --- discovery -----------------------------------------------------------
   /**

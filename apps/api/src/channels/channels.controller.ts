@@ -109,6 +109,16 @@ export class UpdateChannelDto {
   autoListNewStock?: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'Draft a single’s product on the channel when its pushed quantity reaches zero — only if ' +
+      'the platform itself shows the whole product out of stock, so a sibling variant with ' +
+      'copies keeps it live. One direction: restocking never re-activates automatically.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  draftAtSellout?: boolean;
+
+  @ApiPropertyOptional({
     type: ChannelListingDefaultsDto,
     description:
       'Replaced wholesale rather than merged, unlike config: this is one form section answering ' +

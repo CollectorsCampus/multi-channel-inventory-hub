@@ -28,8 +28,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1124 tests** (api 685, shopify 132, tcgplayer 102, sdk 61, tcgcsv 48,
-cardtrader 37, scryfall 27, web 25, db 7), lint/typecheck/format/build clean —
+`main` is green: **1160 tests** (api 699, shopify 148, tcgplayer 102, sdk 61, tcgcsv 48,
+cardtrader 37, scryfall 27, web 31, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
 trusting a remembered total**: several older commits say "990", which was simply
@@ -1625,18 +1625,26 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#86** is on `main` and shipped in **v0.6.0** (2026-08-08) — the
-listing rules engine, the higher-resolution catalogue images and the inventory-list usability
-work (all #85), then the version bump (#86). **No schema migration since v0.4.0**, so every
-release since has been a clean upgrade.
+None. Everything through **#101** is on `main`, and **production runs v0.7.0** — verified
+over the tunnel after the operator updated the stack on 2026-08-10 (version, all new
+routes, the `draft_at_sellout` migration applied by the entrypoint, webhook ingress still
+verifying). The seeded rule set on the live Shopify channel has been **active since the
+0.6.x deploy** and is proven: the first rules-engine product came out with vendor, game
+metafield, tags, category and both sales channels applied.
 
-**The operator's live Shopify channel is already seeded with the full rule set** (3
-`vendorRules`, 6 `metafieldRules` for `custom.game`/`custom.set`, 2 `publications`, beside the
-11 `tagRules` + category) — written straight to the channel's `listingDefaults` column. It is
-**dormant until they `docker pull …:0.6.0` and redeploy**, because the 0.5.0 image they run
-today only parses tags+category. **While still on 0.5.0, do not re-save listing defaults from
-its UI**: the old `save()` omits the new keys and the PATCH replaces wholesale, so it would
-drop the seeded vendor/metafield/publication rules.
+**The sales loop is running in production.** At the v0.7.0 verification the ledger held
+**7 `sale` stock movements** where history had exactly one (the old test order) — real
+Shopify orders decrementing stock through the live `ORDERS_CREATE` webhook, unprompted.
+The catalog had grown to 23,414 items and 218 allocations, all through the production UI.
+The operator also ran the image re-push from the production channel card and confirmed
+the storefront photos updated.
+
+**Dependabot: 0 open alerts** (#101, 2026-08-10). Two highs — `nanoid` < 3.3.17 and
+`js-yaml` 4.x < 4.3.1 — were both **build-tree transitives** (postcss←vite;
+cosmiconfig←fork-ts-checker/eslint) despite the "runtime" scope label, verified by
+listing the published 0.7.0 image's module store: no nanoid at all, and only the
+separately-pinned `js-yaml@5.2.2`. Both parents declare ranges, so a plain `pnpm update`
+cleared them — no overrides, per the `fast-uri` lesson.
 
 v0.4.0 went out as a minor rather than the v0.3.1 first planned: by the time the queue fix
 was released it had a schema migration and five features beside it.
@@ -1677,6 +1685,18 @@ is tcgcsv category 85 (454 sets) — ingestable with zero code**, so no TCGdex s
 built; **One Piece JP needs no source either** (numbered sets share JP/EN identity, and the
 JP/Asian-exclusive promos are on the already-registered CardTrader source); PriceCharting
 was assessed and **tabled** ($49/mo API tier, and the operator is exiting graded cards).
+
+Facts under the image re-push worth not re-deriving: **a hub-created single carries exactly
+one media** — the variant's `mediaSrc` at creation references the product media rather than
+duplicating it (measured on a live product), which is what makes replace-wholesale safe;
+**`productDeleteMedia` is deprecated in 2026-07** but its replacement (`fileUpdate`) needs
+the `write_files` scope the app does not carry, so the deprecated mutation is kept with a
+note (the `Publication.name` precedent) while adding goes through the non-deprecated
+`productUpdate(media:)`; and **2,718 production rows had to be re-backfilled** to
+full-resolution URLs — items ingested between the local image backfill and the production
+deployment kept `_200w` thumbnails, which is how a post-upgrade product (Vinsmoke Reiju)
+still went live with a 200px photo. All three image-URL upgrades live in source code now,
+so the gap cannot reopen.
 
 ### v0.6.1 (2026-08-09)
 

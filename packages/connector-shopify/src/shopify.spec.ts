@@ -159,6 +159,16 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         return { publishablePublish: { userErrors: overrides.publishErrors ?? [] } } as T;
       }
 
+      if (query.includes('HubListingStatus')) {
+        return (overrides.listingStatus ?? {
+          node: { product: { id: PRODUCT, status: 'ACTIVE', totalInventory: 0 } },
+        }) as T;
+      }
+
+      if (query.includes('HubSetStatus')) {
+        return { productUpdate: { userErrors: overrides.setStatusErrors ?? [] } } as T;
+      }
+
       if (query.includes('HubListingUrl')) {
         return (overrides.listingUrl ?? {
           node: {
@@ -1577,6 +1587,89 @@ describe('listing publications', () => {
     expect(await connector.listPublications!(ctx(), {})).toEqual([
       { id: 'gid://shopify/Publication/1', name: 'Online Store' },
     ]);
+  });
+});
+
+describe('updating a listing status', () => {
+  it('drafts the product when the platform shows it fully sold out', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingStatus!(ctx(), {
+      externalListingId: VARIANT,
+      status: 'draft',
+      onlyIfSoldOut: true,
+    });
+
+    expect(result).toEqual({ changed: true });
+    const set = calls.find((c) => c.query.includes('HubSetStatus'));
+    expect(set?.variables?.product).toEqual({ id: PRODUCT, status: 'DRAFT' });
+  });
+
+  /**
+   * The multi-variant guard. totalInventory is Shopify's sum across every
+   * variant and location, so an in-stock Lightly Played copy — or stock at a
+   * location the hub does not manage — keeps the product live when the Near
+   * Mint copy sells out.
+   */
+  it('leaves the product alone while any variant anywhere has stock', async () => {
+    const { client, calls } = mockClient({
+      listingStatus: { node: { product: { id: PRODUCT, status: 'ACTIVE', totalInventory: 3 } } },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingStatus!(ctx(), {
+      externalListingId: VARIANT,
+      status: 'draft',
+      onlyIfSoldOut: true,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toMatch(/still has 3/);
+    expect(calls.some((c) => c.query.includes('HubSetStatus'))).toBe(false);
+  });
+
+  it('reports an already-drafted product as unchanged', async () => {
+    const { client, calls } = mockClient({
+      listingStatus: { node: { product: { id: PRODUCT, status: 'DRAFT', totalInventory: 0 } } },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingStatus!(ctx(), {
+      externalListingId: VARIANT,
+      status: 'draft',
+      onlyIfSoldOut: true,
+    });
+
+    expect(result).toEqual({ changed: false, reason: 'already DRAFT' });
+    expect(calls.some((c) => c.query.includes('HubSetStatus'))).toBe(false);
+  });
+
+  it('activates without the guard when asked explicitly', async () => {
+    const { client, calls } = mockClient({
+      listingStatus: { node: { product: { id: PRODUCT, status: 'DRAFT', totalInventory: 5 } } },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingStatus!(ctx(), {
+      externalListingId: VARIANT,
+      status: 'active',
+    });
+
+    expect(result.changed).toBe(true);
+    const set = calls.find((c) => c.query.includes('HubSetStatus'));
+    expect((set?.variables?.product as { status: string }).status).toBe('ACTIVE');
+  });
+
+  it('surfaces a user error rather than reporting success', async () => {
+    const { client } = mockClient({
+      setStatusErrors: [{ message: 'Product cannot be updated.' }],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingStatus!(ctx(), { externalListingId: VARIANT, status: 'draft' }),
+    ).rejects.toThrow(/cannot be updated/);
   });
 });
 

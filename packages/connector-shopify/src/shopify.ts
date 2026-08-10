@@ -22,6 +22,8 @@ import type {
   PushListingResult,
   UpdateListingImageRequest,
   UpdateListingSkuRequest,
+  UpdateListingStatusRequest,
+  UpdateListingStatusResult,
   UpdatePriceRequest,
   UpdateQuantityRequest,
 } from '@hub/connector-sdk';
@@ -142,6 +144,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'listing.metafields',
       'listing.publications',
       'listing.url',
+      'listing.status',
       'listing.image',
       'listing.sku',
     ],
@@ -343,6 +346,58 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
         }>(ctx, DELETE_MEDIA_MUTATION, { productId, mediaIds: oldMediaIds });
         throwOnUserErrors(deleted.productDeleteMedia?.mediaUserErrors, 'Removing old images');
       }
+    },
+
+    /**
+     * Publish or unpublish a variant's product.
+     *
+     * The `onlyIfSoldOut` guard is checked against **`product.totalInventory`**
+     * — Shopify's own sum across every variant and every location — so a
+     * product is only drafted when the platform itself says nothing is left
+     * anywhere. That is deliberately wider than the hub's view: the product may
+     * carry variants the hub does not drive, and stock at a location the hub
+     * does not manage still counts as stock.
+     */
+    async updateListingStatus(
+      ctx: Ctx,
+      req: UpdateListingStatusRequest,
+    ): Promise<UpdateListingStatusResult> {
+      requireListing(req.externalListingId);
+
+      const data = await client.request<{
+        node: {
+          product?: { id?: string; status?: string; totalInventory?: number | null };
+        } | null;
+      }>(ctx, LISTING_STATUS_QUERY, { id: req.externalListingId });
+
+      const product = data.node?.product;
+      if (!product?.id) {
+        throw new Error(
+          `Shopify variant ${req.externalListingId} has no product; it may be deleted.`,
+        );
+      }
+
+      const want = req.status === 'active' ? 'ACTIVE' : 'DRAFT';
+      if (product.status === want) {
+        return { changed: false, reason: `already ${want}` };
+      }
+
+      if (req.onlyIfSoldOut) {
+        const total = product.totalInventory ?? 0;
+        if (total > 0) {
+          return {
+            changed: false,
+            reason: `product still has ${total} in stock across its variants`,
+          };
+        }
+      }
+
+      const updated = await client.request<{
+        productUpdate: { userErrors: Array<{ field?: string[]; message: string }> };
+      }>(ctx, SET_STATUS_MUTATION, { product: { id: product.id, status: want } });
+      throwOnUserErrors(updated.productUpdate?.userErrors, 'Setting product status');
+
+      return { changed: true };
     },
 
     /**
@@ -1641,6 +1696,31 @@ const CREATE_VARIANT_MUTATION = /* GraphQL */ `
 const SET_SKU_MUTATION = /* GraphQL */ `
   mutation SetVariantSku($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
     productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const LISTING_STATUS_QUERY = /* GraphQL */ `
+  query HubListingStatus($id: ID!) {
+    node(id: $id) {
+      ... on ProductVariant {
+        product {
+          id
+          status
+          totalInventory
+        }
+      }
+    }
+  }
+`;
+
+const SET_STATUS_MUTATION = /* GraphQL */ `
+  mutation HubSetStatus($product: ProductUpdateInput!) {
+    productUpdate(product: $product) {
       userErrors {
         field
         message

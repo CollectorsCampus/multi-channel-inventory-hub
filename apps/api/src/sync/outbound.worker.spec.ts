@@ -353,6 +353,117 @@ describeQueue('outbound queue round trip', () => {
     });
   });
 
+  /**
+   * The sellout policy: a single pushed to zero has its product drafted, per
+   * channel opt-in. What is worth pinning is the boundary — the flag, the
+   * kind, the direction — and that the policy's own failure never fails a
+   * push that already landed.
+   */
+  describe('draft at sellout', () => {
+    function statusConnector(calls: unknown[], options: { fail?: boolean } = {}): Connector {
+      return {
+        ...fakeConnector(async () => {}),
+        capabilities: ['listing.quantity', 'listing.status'],
+        updateListingStatus: (async (_ctx: unknown, req: unknown) => {
+          if (options.fail) throw new Error('status write refused');
+          calls.push(req);
+          return { changed: true };
+        }) as Connector['updateListingStatus'],
+      };
+    }
+
+    async function seedLinked(quantityOnHand: number, condition = 'NM') {
+      const catalogItem = await prisma.catalogItem.create({
+        data: {
+          name: `Item ${Math.random().toString(36).slice(2, 8)}`,
+          searchName: 'item',
+          skus: { create: [{ condition, printing: 'NORMAL', language: 'EN' }] },
+        },
+        include: { skus: true },
+      });
+      const item = await prisma.inventoryItem.create({
+        data: { skuId: catalogItem.skus[0]!.id, quantityOnHand },
+      });
+      const channel = await prisma.channelInstance.create({
+        data: {
+          connectorKey: CONNECTOR_KEY,
+          displayName: 'Test Channel',
+          config: '{}',
+          draftAtSellout: true,
+        },
+      });
+      await inventory.upsertAllocation(item.id, {
+        channelInstanceId: channel.id,
+        mode: 'pooled',
+        maxQuantity: null,
+        externalListingId: 'gid://shopify/ProductVariant/900',
+      });
+      const allocation = await prisma.channelAllocation.findFirstOrThrow({
+        where: { inventoryItemId: item.id, channelInstanceId: channel.id },
+      });
+      return { channel, allocationId: allocation.id };
+    }
+
+    it('asks the connector to draft, guarded, when a single is pushed to zero', async () => {
+      const calls: unknown[] = [];
+      const { channel, allocationId } = await seedLinked(0);
+
+      await runOneJob(statusConnector(calls), allocationId, channel.id);
+
+      expect(calls).toEqual([
+        {
+          externalListingId: 'gid://shopify/ProductVariant/900',
+          status: 'draft',
+          onlyIfSoldOut: true,
+        },
+      ]);
+    });
+
+    it('does nothing when the channel has not opted in', async () => {
+      const calls: unknown[] = [];
+      const { channel, allocationId } = await seedLinked(0);
+      await prisma.channelInstance.update({
+        where: { id: channel.id },
+        data: { draftAtSellout: false },
+      });
+
+      await runOneJob(statusConnector(calls), allocationId, channel.id);
+      expect(calls).toEqual([]);
+    });
+
+    it('never drafts sealed product', async () => {
+      // A sealed listing was created and imaged by the operator; its
+      // visibility is theirs even when it sells out.
+      const calls: unknown[] = [];
+      const { channel, allocationId } = await seedLinked(0, 'SEALED');
+
+      await runOneJob(statusConnector(calls), allocationId, channel.id);
+      expect(calls).toEqual([]);
+    });
+
+    it('does nothing while stock remains', async () => {
+      const calls: unknown[] = [];
+      const { channel, allocationId } = await seedLinked(4);
+
+      await runOneJob(statusConnector(calls), allocationId, channel.id);
+      expect(calls).toEqual([]);
+    });
+
+    it('records a successful push even when the draft itself fails', async () => {
+      // The quantity landed on the channel; the policy failing afterwards must
+      // not turn a delivered push into a failed job that retries.
+      const { channel, allocationId } = await seedLinked(0);
+
+      await runOneJob(statusConnector([], { fail: true }), allocationId, channel.id);
+
+      const allocation = await prisma.channelAllocation.findUniqueOrThrow({
+        where: { id: allocationId },
+      });
+      expect(allocation.status).toBe('listed');
+      expect(allocation.lastError).toBeNull();
+    });
+  });
+
   // -------------------------------------------------------------------------
 
   /** Drive exactly one job through a worker built like the real one. */

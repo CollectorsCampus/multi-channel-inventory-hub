@@ -988,6 +988,28 @@ function ListingDefaults({ channel }: { channel: Channel }) {
         List new stock here as it is taken in
       </label>
 
+      {channel.capabilities.includes('listing.status') && (
+        <>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={channel.draftAtSellout}
+              disabled={update.isPending}
+              onChange={(event) =>
+                update.mutate({ id: channel.id, draftAtSellout: event.target.checked })
+              }
+            />
+            Draft sold-out singles
+          </label>
+          <p className="field-hint">
+            When a single&rsquo;s quantity is pushed to zero, its product is unpublished — only if
+            the store shows the <em>whole</em> product out of stock, so a sibling condition with
+            copies keeps it live. Restocking never re-activates automatically; you publish it
+            yourself, as with any draft.
+          </p>
+        </>
+      )}
+
       <p className="field-hint">
         {declared
           ? 'Adding stock creates a draft product tagged by whichever rules match it. Nothing ' +

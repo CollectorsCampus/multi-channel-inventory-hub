@@ -98,6 +98,8 @@ export interface Channel {
   reconcileAutoCorrect: boolean;
   /** Opt-in: list stock here as it is taken in. Server refuses it without defaults. */
   autoListNewStock: boolean;
+  /** Opt-in: draft a single's product when its pushed quantity reaches zero. */
+  draftAtSellout: boolean;
   /** What a listing created here carries. Applied verbatim; never derived. */
   listingDefaults: ChannelListingDefaults;
   webhookPath: string | null;
@@ -157,6 +159,7 @@ export function useUpdateChannel() {
       secrets?: Record<string, string>;
       reconcileAutoCorrect?: boolean;
       autoListNewStock?: boolean;
+      draftAtSellout?: boolean;
       /** Replaced wholesale, not merged — sending `{ tags: [] }` clears them. */
       listingDefaults?: ChannelListingDefaults;
     }) => apiFetch<Channel>(`/channels/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),

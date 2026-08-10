@@ -1654,6 +1654,30 @@ back.
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.
 
+### v0.7.0 (2026-08-10)
+
+Tagged at the "Prepare v0.7.0" merge (#99). Multi-arch image, tags `0.7.0`, `0.7` and
+`latest`, all at digest `sha256:e3bffcad…`, replacing v0.6.1's `sha256:d951eb6d…`. Four
+features — #92 image re-push (singles only; sealed imagery is the operator's), #96
+external + storefront links (`listing.url`; Cardmarket deliberately unlinked, bot-walled),
+#97 the intake language picker (what makes a JP-language copy expressible), and #98 draft
+sold-out singles (`listing.status` with the platform-side `totalInventory` guard;
+**one-directional by design** — restock never re-publishes). **Contains the first schema
+migration since v0.4.0** (`draft_at_sellout` on channels), applied automatically by the
+entrypoint.
+
+Verified the established way: anonymously, all three tags resolve to the one digest with
+real amd64+arm64 children; inside the pulled artifact, version 0.7.0, the migration
+directory present, `maybeDraftAtSellout` in the built worker, the images service and
+`listingUrl` route in the built API, all three new methods in the built connector, and
+`--prod` held.
+
+Also settled around this release, recorded in the untracked memory notes: **Pokémon Japan
+is tcgcsv category 85 (454 sets) — ingestable with zero code**, so no TCGdex source was
+built; **One Piece JP needs no source either** (numbered sets share JP/EN identity, and the
+JP/Asian-exclusive promos are on the already-registered CardTrader source); PriceCharting
+was assessed and **tabled** ($49/mo API tier, and the operator is exiting graded cards).
+
 ### v0.6.1 (2026-08-09)
 
 Tagged at the "Prepare v0.6.1" merge (#90). Multi-arch image, tags `0.6.1`, `0.6` and

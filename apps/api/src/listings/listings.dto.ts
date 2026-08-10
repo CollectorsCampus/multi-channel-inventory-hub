@@ -48,6 +48,22 @@ export class ListingMetafieldDto {
   value!: string;
 }
 
+export class PushListingImagesDto {
+  @ApiProperty({
+    type: [String],
+    description:
+      'Ledger items whose listing images to replace, chosen by the operator from ' +
+      'GET .../listings/images/pending. Replacement is destructive of the old image, so ' +
+      'this is never a filter.',
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(MAX_ITEMS)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  inventoryItemIds!: string[];
+}
+
 export class CreateListingsDto {
   @ApiProperty({
     type: [String],

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConnectorsModule } from '../connectors/connectors.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { ListingCreationService } from './listing-creation.service';
+import { ListingImagesService } from './listing-images.service';
 import { ListingsController } from './listings.controller';
 
 /**
@@ -15,7 +16,7 @@ import { ListingsController } from './listings.controller';
 @Module({
   imports: [ConnectorsModule, InventoryModule],
   controllers: [ListingsController],
-  providers: [ListingCreationService],
+  providers: [ListingCreationService, ListingImagesService],
   exports: [ListingCreationService],
 })
 export class ListingsModule {}

@@ -159,6 +159,22 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         return { publishablePublish: { userErrors: overrides.publishErrors ?? [] } } as T;
       }
 
+      if (query.includes('HubProductMedia')) {
+        return (overrides.productMedia ?? {
+          product: { media: { nodes: [{ id: 'gid://shopify/MediaImage/900' }] } },
+        }) as T;
+      }
+
+      if (query.includes('HubAddMedia')) {
+        return { productUpdate: { userErrors: overrides.addMediaErrors ?? [] } } as T;
+      }
+
+      if (query.includes('HubDeleteMedia')) {
+        return {
+          productDeleteMedia: { mediaUserErrors: overrides.deleteMediaErrors ?? [] },
+        } as T;
+      }
+
       if (query.includes('HubPublications')) {
         return (overrides.publications ?? {
           publications: {
@@ -1549,6 +1565,93 @@ describe('listing publications', () => {
     expect(await connector.listPublications!(ctx(), {})).toEqual([
       { id: 'gid://shopify/Publication/1', name: 'Online Store' },
     ]);
+  });
+});
+
+describe('updating a listing image', () => {
+  const NEW_IMAGE = 'https://tcgplayer-cdn.tcgplayer.com/product/593559_in_1000x1000.jpg';
+
+  it('replaces the product media: adds the new image, deletes the old', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.updateListingImage!(ctx(), {
+      externalListingId: VARIANT,
+      imageUrl: NEW_IMAGE,
+    });
+
+    const add = calls.find((c) => c.query.includes('HubAddMedia'));
+    // Against the product resolved from the variant, with the URL verbatim.
+    expect(add?.variables?.productId).toBe(PRODUCT);
+    expect(add?.variables?.media).toEqual([
+      { originalSource: NEW_IMAGE, mediaContentType: 'IMAGE' },
+    ]);
+
+    const del = calls.find((c) => c.query.includes('HubDeleteMedia'));
+    expect(del?.variables?.mediaIds).toEqual(['gid://shopify/MediaImage/900']);
+  });
+
+  it('adds before deleting, so the product never has zero images', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await connector.updateListingImage!(ctx(), {
+      externalListingId: VARIANT,
+      imageUrl: NEW_IMAGE,
+    });
+
+    const addIndex = calls.findIndex((c) => c.query.includes('HubAddMedia'));
+    const deleteIndex = calls.findIndex((c) => c.query.includes('HubDeleteMedia'));
+    expect(addIndex).toBeGreaterThanOrEqual(0);
+    expect(deleteIndex).toBeGreaterThan(addIndex);
+  });
+
+  it('deletes nothing when the product had no media', async () => {
+    const { client, calls } = mockClient({ productMedia: { product: { media: { nodes: [] } } } });
+    const connector = createShopifyConnector({ client });
+
+    await connector.updateListingImage!(ctx(), {
+      externalListingId: VARIANT,
+      imageUrl: NEW_IMAGE,
+    });
+
+    expect(calls.some((c) => c.query.includes('HubAddMedia'))).toBe(true);
+    expect(calls.some((c) => c.query.includes('HubDeleteMedia'))).toBe(false);
+  });
+
+  it('does not delete the old image when adding the new one failed', async () => {
+    const { client, calls } = mockClient({
+      addMediaErrors: [{ message: 'Image could not be downloaded.' }],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingImage!(ctx(), { externalListingId: VARIANT, imageUrl: NEW_IMAGE }),
+    ).rejects.toThrow(/could not be downloaded/);
+    // The old image survives a failed replacement rather than being deleted
+    // out from under a listing whose new image never arrived.
+    expect(calls.some((c) => c.query.includes('HubDeleteMedia'))).toBe(false);
+  });
+
+  it('surfaces a delete error rather than reporting success', async () => {
+    const { client } = mockClient({
+      deleteMediaErrors: [{ message: 'Media cannot be deleted.' }],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingImage!(ctx(), { externalListingId: VARIANT, imageUrl: NEW_IMAGE }),
+    ).rejects.toThrow(/cannot be deleted/);
+  });
+
+  it('refuses an empty image URL', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingImage!(ctx(), { externalListingId: VARIANT, imageUrl: '   ' }),
+    ).rejects.toThrow(/empty image URL/i);
+    expect(calls).toEqual([]);
   });
 });
 

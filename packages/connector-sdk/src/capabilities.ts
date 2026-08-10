@@ -130,6 +130,23 @@ export const CAPABILITIES = [
   'listing.metafields',
 
   /**
+   * Replace the image of a listing this hub already drives.
+   *
+   * Separate from `listing.push`, which syncs stock and price, and from
+   * `listing.create`, which supplies an image only at birth: this exists for
+   * the listing whose image has *improved since* — a catalogue that upgraded
+   * its resolution, a corrected scan. The core sends the catalogue's current
+   * image URL and the connector replaces what the platform holds.
+   *
+   * **Replacement is destructive of what it replaces**, so the core only calls
+   * this for listings an operator explicitly selected — never as a side effect
+   * of a push or a sweep. Connectors should replace the listing's existing
+   * imagery rather than accumulate: a storefront gallery showing the old
+   * low-resolution image beside the new one is worse than either alone.
+   */
+  'listing.image',
+
+  /**
    * Read back the sales channels (publications) a product can be published to,
    * and publish a newly created product to the ones the operator chose.
    *
@@ -181,6 +198,7 @@ export const CAPABILITY_METHODS = {
   'listing.tags': 'listTags',
   'listing.metafields': 'listMetafields',
   'listing.publications': 'listPublications',
+  'listing.image': 'updateListingImage',
   'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',
   'orders.import': 'importOrders',

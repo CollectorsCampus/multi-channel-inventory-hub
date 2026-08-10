@@ -3,7 +3,13 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, RequireRole } from '../auth/decorators';
 import type { AuthenticatedPrincipal } from '../auth/auth-provider.interface';
 import { ListingCreationService } from './listing-creation.service';
-import { CreateListingsDto, IntakeAndListDto, ListTagsQueryDto } from './listings.dto';
+import { ListingImagesService } from './listing-images.service';
+import {
+  CreateListingsDto,
+  IntakeAndListDto,
+  ListTagsQueryDto,
+  PushListingImagesDto,
+} from './listings.dto';
 
 /**
  * Bringing listings into existence on a channel.
@@ -15,7 +21,10 @@ import { CreateListingsDto, IntakeAndListDto, ListTagsQueryDto } from './listing
 @ApiTags('listings')
 @Controller('channels/:id/listings')
 export class ListingsController {
-  constructor(private readonly creation: ListingCreationService) {}
+  constructor(
+    private readonly creation: ListingCreationService,
+    private readonly images: ListingImagesService,
+  ) {}
 
   @Get('tags')
   @RequireRole('editor')
@@ -52,6 +61,36 @@ export class ListingsController {
   })
   publications(@Param('id') channelInstanceId: string, @Query() query: ListTagsQueryDto) {
     return this.creation.listPublications(channelInstanceId, query.limit);
+  }
+
+  @Get('images/pending')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'Linked singles whose listing image a re-push could replace.',
+    description:
+      'What a run would touch, for the operator to pick from. Singles only: sealed listings ' +
+      'were created by hand with curated imagery and only matched afterwards, so their images ' +
+      'are not this hub’s to replace.',
+  })
+  pendingImages(@Param('id') channelInstanceId: string) {
+    return this.images.pending(channelInstanceId);
+  }
+
+  @Post('images/push')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'Replace selected listings’ images with the catalogue’s current ones.',
+    description:
+      'Destructive of the old image, so it takes explicit inventory item ids — never a filter. ' +
+      'Each item is independent: one failure is reported and the rest still land, and ' +
+      're-running a selection is harmless.',
+  })
+  pushImages(
+    @Param('id') channelInstanceId: string,
+    @Body() body: PushListingImagesDto,
+    @CurrentUser() user: AuthenticatedPrincipal,
+  ) {
+    return this.images.push(channelInstanceId, body.inventoryItemIds, user.userId);
   }
 
   @Post('intake')

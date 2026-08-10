@@ -151,6 +151,44 @@ export function useChannelTags(channelInstanceId: string, enabled: boolean) {
   });
 }
 
+/** A linked single whose listing image a re-push could replace. */
+export interface PendingImagePush {
+  inventoryItemId: string;
+  name: string;
+  setName: string | null;
+  condition: string;
+  externalListingId: string;
+}
+
+export interface PushImagesResult {
+  updated: Array<{ inventoryItemId: string; name: string }>;
+  problems: Array<{ inventoryItemId: string; name?: string; message: string }>;
+}
+
+/**
+ * What an image re-push could act on. Loaded only when the panel is open —
+ * it is a maintenance action, not something every page view needs.
+ */
+export function useChannelPendingImages(channelInstanceId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['channels', channelInstanceId, 'pending-images'],
+    queryFn: () =>
+      apiFetch<PendingImagePush[]>(`/channels/${channelInstanceId}/listings/images/pending`),
+    enabled: enabled && channelInstanceId !== '',
+    retry: false,
+  });
+}
+
+export function usePushListingImages(channelInstanceId: string) {
+  return useMutation({
+    mutationFn: (inventoryItemIds: string[]) =>
+      apiFetch<PushImagesResult>(`/channels/${channelInstanceId}/listings/images/push`, {
+        method: 'POST',
+        body: JSON.stringify({ inventoryItemIds }),
+      }),
+  });
+}
+
 export function useCreateListings(channelInstanceId: string) {
   const queryClient = useQueryClient();
   return useMutation({

@@ -18,6 +18,7 @@ import type {
   NormalizedEvent,
   PushListingRequest,
   PushListingResult,
+  UpdateListingImageRequest,
   UpdateListingSkuRequest,
   UpdatePriceRequest,
   UpdateQuantityRequest,
@@ -138,6 +139,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'listing.tags',
       'listing.metafields',
       'listing.publications',
+      'listing.image',
       'listing.sku',
     ],
 
@@ -288,6 +290,56 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       });
 
       throwOnUserErrors(data.productVariantsBulkUpdate?.userErrors, 'Setting SKU');
+    },
+
+    /**
+     * Replace the product's imagery with the catalogue's current image.
+     *
+     * **Add first, then delete**, so the product never has zero images: a
+     * failure between the two leaves both the old and new image, which a rerun
+     * cleans up, while the reverse order could leave a bare product on a live
+     * storefront.
+     *
+     * Deleting goes through `productDeleteMedia`, which the 2026-07 schema
+     * marks deprecated (in favour of `fileUpdate`) but still serves — kept
+     * because the replacement needs the `write_files` scope this app does not
+     * carry, and a media delete is squarely a product write. Adding uses the
+     * non-deprecated `productUpdate` with its `media` argument.
+     */
+    async updateListingImage(ctx: Ctx, req: UpdateListingImageRequest): Promise<void> {
+      const imageUrl = req.imageUrl.trim();
+      if (!imageUrl) {
+        // Shopify would reject it anyway, but with a message naming neither
+        // the listing nor the cause.
+        throw new Error('Refusing to set an empty image URL.');
+      }
+      requireListing(req.externalListingId);
+
+      const productId = await resolveProductId(ctx, req.externalListingId);
+
+      const existing = await client.request<{
+        product?: { media?: { nodes?: Array<{ id?: string } | null> } };
+      }>(ctx, PRODUCT_MEDIA_QUERY, { id: productId });
+      const oldMediaIds = (existing.product?.media?.nodes ?? [])
+        .map((node) => node?.id)
+        .filter((id): id is string => Boolean(id));
+
+      const added = await client.request<{
+        productUpdate: { userErrors: Array<{ field?: string[]; message: string }> };
+      }>(ctx, ADD_MEDIA_MUTATION, {
+        productId,
+        media: [{ originalSource: imageUrl, mediaContentType: 'IMAGE' }],
+      });
+      throwOnUserErrors(added.productUpdate?.userErrors, 'Adding image');
+
+      if (oldMediaIds.length > 0) {
+        const deleted = await client.request<{
+          productDeleteMedia: {
+            mediaUserErrors: Array<{ field?: string[]; message: string }>;
+          };
+        }>(ctx, DELETE_MEDIA_MUTATION, { productId, mediaIds: oldMediaIds });
+        throwOnUserErrors(deleted.productDeleteMedia?.mediaUserErrors, 'Removing old images');
+      }
     },
 
     /**
@@ -1553,6 +1605,44 @@ const SET_SKU_MUTATION = /* GraphQL */ `
   mutation SetVariantSku($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
     productVariantsBulkUpdate(productId: $productId, variants: $variants) {
       userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const PRODUCT_MEDIA_QUERY = /* GraphQL */ `
+  query HubProductMedia($id: ID!) {
+    product(id: $id) {
+      media(first: 20) {
+        nodes {
+          id
+        }
+      }
+    }
+  }
+`;
+
+const ADD_MEDIA_MUTATION = /* GraphQL */ `
+  mutation HubAddMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+    productUpdate(product: { id: $productId }, media: $media) {
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+// \`productDeleteMedia\` is deprecated in 2026-07 in favour of \`fileUpdate\`,
+// which needs the \`write_files\` scope this app does not carry. Still valid in
+// the pinned version, and a media delete is a product write; revisit on a
+// version bump.
+const DELETE_MEDIA_MUTATION = /* GraphQL */ `
+  mutation HubDeleteMedia($productId: ID!, $mediaIds: [ID!]!) {
+    productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
+      mediaUserErrors {
         field
         message
       }

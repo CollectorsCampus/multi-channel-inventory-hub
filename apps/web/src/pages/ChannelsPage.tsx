@@ -20,7 +20,14 @@ import {
 } from '../api/channels';
 import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
-import { useChannelTags, useChannelMetafields, useChannelPublications } from '../api/listings';
+import {
+  MAX_ITEMS,
+  useChannelMetafields,
+  useChannelPendingImages,
+  useChannelPublications,
+  useChannelTags,
+  usePushListingImages,
+} from '../api/listings';
 import type { ListingMetafield, ListingMetafieldDefinition } from '../api/listings';
 import { useSetLedgerQuantity } from '../api/inventory';
 import { useLocalSets } from '../api/catalog';
@@ -297,6 +304,8 @@ function ChannelCard({ channel }: { channel: Channel }) {
       )}
 
       <ListingDefaults channel={channel} />
+
+      <ListingImages channel={channel} />
 
       <Reconciliation channel={channel} />
 
@@ -994,6 +1003,140 @@ function ListingDefaults({ channel }: { channel: Channel }) {
         </p>
       )}
       {update.isError && <FormError error={update.error as Error} />}
+    </div>
+  );
+}
+
+/**
+ * Re-push catalogue images to listings the hub already drives.
+ *
+ * Exists because images improve after creation — the catalogue sources
+ * upgraded from thumbnails to full resolution, and listings created before
+ * that still show the thumbnail on the storefront. Singles only: a sealed
+ * listing's imagery is the operator's own work, matched not created, and is
+ * not offered here at all.
+ */
+function ListingImages({ channel }: { channel: Channel }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
+  const pending = useChannelPendingImages(channel.id, open);
+  const push = usePushListingImages(channel.id);
+
+  if (!channel.capabilities.includes('listing.image')) return null;
+
+  const rows = pending.data ?? [];
+  const chosen = rows.filter((r) => selected.has(r.inventoryItemId));
+
+  const toggle = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < MAX_ITEMS) next.add(id);
+      return next;
+    });
+
+  const selectAll = () =>
+    setSelected(new Set(rows.slice(0, MAX_ITEMS).map((r) => r.inventoryItemId)));
+
+  const apply = () => {
+    setConfirming(false);
+    push.mutate(
+      chosen.map((r) => r.inventoryItemId),
+      { onSuccess: () => setSelected(new Set()) },
+    );
+  };
+
+  return (
+    <div className="file-transport">
+      <h3>Listing images</h3>
+      <p className="muted">
+        Replace a listing&rsquo;s images with the catalogue&rsquo;s current one — for singles
+        created before the image-resolution upgrade, whose storefront photo is still the thumbnail.
+        Sealed products are not offered: their photos are yours, not the catalogue&rsquo;s.
+      </p>
+
+      {!open ? (
+        <button type="button" className="ghost" onClick={() => setOpen(true)}>
+          Show updatable listings
+        </button>
+      ) : pending.isError ? (
+        <p className="field-hint">{(pending.error as Error).message}</p>
+      ) : pending.isLoading ? (
+        <p className="muted">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="field-hint">No linked singles with a catalogue image on this channel.</p>
+      ) : (
+        <>
+          <div className="inline-form">
+            <button type="button" className="ghost" onClick={selectAll}>
+              Select {rows.length > MAX_ITEMS ? `first ${MAX_ITEMS}` : 'all'} ({rows.length})
+            </button>
+            {rows.length > MAX_ITEMS && (
+              <span className="muted">
+                One run updates at most {MAX_ITEMS}; run again for the rest.
+              </span>
+            )}
+          </div>
+
+          <table className="compact">
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.inventoryItemId}>
+                  <td>
+                    <label className="inline-check">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(row.inventoryItemId)}
+                        onChange={() => toggle(row.inventoryItemId)}
+                      />
+                      {row.name}
+                    </label>
+                  </td>
+                  <td className="muted">{row.setName ?? ''}</td>
+                  <td className="muted">{row.condition}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {!confirming ? (
+            <button
+              type="button"
+              disabled={chosen.length === 0 || push.isPending}
+              onClick={() => setConfirming(true)}
+            >
+              Replace {chosen.length} image{chosen.length === 1 ? '' : 's'}…
+            </button>
+          ) : (
+            <div className="inline-form">
+              <span>
+                This replaces each product&rsquo;s photos on the storefront with the catalogue
+                image. The old photos are deleted.
+              </span>
+              <button type="button" disabled={push.isPending} onClick={apply}>
+                Replace {chosen.length} image{chosen.length === 1 ? '' : 's'}
+              </button>
+              <button type="button" className="ghost" onClick={() => setConfirming(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {push.data && (
+        <p className="field-hint">
+          {push.data.updated.length} updated
+          {push.data.problems.length > 0 && <>, {push.data.problems.length} problem(s):</>}
+        </p>
+      )}
+      {push.data?.problems.map((p) => (
+        <p key={p.inventoryItemId} className="error">
+          {p.name ?? p.inventoryItemId}: {p.message}
+        </p>
+      ))}
+      {push.isError && <FormError error={push.error as Error} />}
     </div>
   );
 }

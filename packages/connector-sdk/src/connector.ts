@@ -25,6 +25,7 @@ import type {
   NormalizedEvent,
   PushListingRequest,
   PushListingResult,
+  UpdateListingImageRequest,
   UpdateListingSkuRequest,
   UpdatePriceRequest,
   UpdateQuantityRequest,
@@ -133,6 +134,15 @@ export interface Connector {
    * storefronts that field already holds something the seller relies on.
    */
   updateListingSku?(ctx: Ctx, req: UpdateListingSkuRequest): Promise<void>;
+
+  /**
+   * Replace a listing's image with the catalogue's current one.
+   *
+   * Only ever called for listings an operator explicitly selected — the
+   * replacement destroys what it replaces, and imagery a seller curated by
+   * hand is not the hub's to overwrite uninvited.
+   */
+  updateListingImage?(ctx: Ctx, req: UpdateListingImageRequest): Promise<void>;
 
   // --- discovery -----------------------------------------------------------
   /**

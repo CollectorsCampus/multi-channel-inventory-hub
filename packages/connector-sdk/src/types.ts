@@ -99,6 +99,19 @@ export interface UpdateListingSkuRequest {
 }
 
 /**
+ * Replace a listing's image with the catalogue's current one.
+ *
+ * `imageUrl` is a URL the platform fetches and rehosts, exactly as at
+ * creation. The connector replaces the listing's existing imagery rather than
+ * adding alongside it — the caller has decided the old image is superseded,
+ * and a gallery showing both is worse than either.
+ */
+export interface UpdateListingImageRequest {
+  externalListingId: string;
+  imageUrl: string;
+}
+
+/**
  * Bring a listing into existence on a platform that does not have it.
  *
  * Everything a platform needs to render a product is an **input**, not

@@ -5,6 +5,7 @@ import {
   type ListingMetafield,
   type ListingMetafieldDefinition,
   type ListingPublication,
+  type ListingUrlResult,
 } from '@hub/connector-sdk';
 import { formatCondition } from '@hub/connector-tcgplayer';
 import { PrismaService } from '../prisma/prisma.service';
@@ -263,6 +264,32 @@ export class ListingCreationService {
     }
 
     return connector.listMetafields!(ctx, limit === undefined ? {} : { limit });
+  }
+
+  /**
+   * Where a listing lives on the channel, as URLs a human can open.
+   *
+   * A pure read for the item-detail screen, so an allocation can link to the
+   * live product instead of showing a bare platform id.
+   */
+  async listingUrl(
+    channelInstanceId: string,
+    externalListingId: string,
+  ): Promise<ListingUrlResult> {
+    const { connector, ctx, displayName } = await this.channels.resolve(channelInstanceId);
+
+    if (!hasCapability(connector.capabilities, 'listing.url')) {
+      throw new BadRequestException(
+        `${connector.displayName} does not report where "${displayName}" listings live.`,
+      );
+    }
+
+    const id = externalListingId.trim();
+    if (!id) {
+      throw new BadRequestException('externalListingId is required.');
+    }
+
+    return connector.listingUrl!(ctx, { externalListingId: id });
   }
 
   /**

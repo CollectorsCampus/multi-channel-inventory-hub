@@ -12,6 +12,7 @@ import { useChannels, type Channel } from '../api/channels';
 import { describeOutcome, useIntakeAndList } from '../api/listings';
 import { SKU_CONDITIONS } from '../constants';
 import { enlargedImageUrl } from '../cardImage';
+import { externalLinks } from '../externalLinks';
 import { previewTags } from '../tagSuggest';
 
 /**
@@ -330,6 +331,17 @@ function CardViewer({ candidate, onClose }: { candidate: CatalogCandidate; onClo
           </p>
           {candidate.marketPrice !== undefined && (
             <p className="muted">Market {formatPrice(candidate.marketPrice)}</p>
+          )}
+          {/* The same card on the sites its ids point at — checking a price or
+              a printing against TCGplayer is part of deciding to add it. */}
+          {externalLinks(candidate.externalIds).length > 0 && (
+            <p className="field-hint">
+              {externalLinks(candidate.externalIds).map((link) => (
+                <a key={link.url} href={link.url} target="_blank" rel="noreferrer">
+                  {link.label} ↗{' '}
+                </a>
+              ))}
+            </p>
           )}
 
           {/* Stays open after a successful add, deliberately: a playset is

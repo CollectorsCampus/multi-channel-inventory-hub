@@ -16,6 +16,8 @@ import {
 import { STOCK_MOVEMENT_REASONS } from '../constants';
 import { useSyncEvents } from '../api/sync';
 import { useChannels } from '../api/channels';
+import { useListingUrl } from '../api/listings';
+import { externalLinks } from '../externalLinks';
 
 /**
  * Item detail with the allocation editor (§7).
@@ -66,6 +68,10 @@ export function ItemDetailPage() {
  */
 function ItemIdentity({ item }: { item: InventoryItemDetail }) {
   const externals = Object.entries(item.externalIds);
+  // Which of those ids have a public page worth opening. Namespaces without
+  // one (hub's own, cardmarket's bot-walled pages) stay as plain text below.
+  const links = externalLinks(item.externalIds);
+  const linked = item.allocations.filter((a) => a.externalListingId);
 
   return (
     <div className="item-identity">
@@ -82,6 +88,18 @@ function ItemIdentity({ item }: { item: InventoryItemDetail }) {
           <span className="chip">{item.printing}</span>
           <span className="chip">{item.language}</span>
         </span>
+        {(links.length > 0 || linked.length > 0) && (
+          <p className="field-hint">
+            {links.map((link) => (
+              <a key={link.url} href={link.url} target="_blank" rel="noreferrer">
+                {link.label} ↗{' '}
+              </a>
+            ))}
+            {linked.map((allocation) => (
+              <StoreLink key={allocation.id} allocation={allocation} />
+            ))}
+          </p>
+        )}
         {externals.length > 0 && (
           <p className="field-hint">
             {externals.map(([source, id]) => (
@@ -93,6 +111,37 @@ function ItemIdentity({ item }: { item: InventoryItemDetail }) {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Where a linked listing lives, resolved from the channel itself.
+ *
+ * The storefront URL comes from the platform rather than being constructed —
+ * Shopify knows the product's handle and primary domain, and answers null for
+ * a draft, which is why an unpublished listing shows only its admin page.
+ * A channel that cannot answer (no `listing.url`, listing deleted) shows
+ * nothing rather than an error: these are conveniences beside the id, not
+ * data the page depends on.
+ */
+function StoreLink({ allocation }: { allocation: Allocation }) {
+  const link = useListingUrl(allocation.channelInstanceId, allocation.externalListingId, true);
+
+  if (!link.data) return null;
+
+  return (
+    <>
+      {link.data.url && (
+        <a href={link.data.url} target="_blank" rel="noreferrer">
+          View on store ↗{' '}
+        </a>
+      )}
+      {link.data.adminUrl && (
+        <a href={link.data.adminUrl} target="_blank" rel="noreferrer">
+          Shopify admin ↗{' '}
+        </a>
+      )}
+    </>
   );
 }
 

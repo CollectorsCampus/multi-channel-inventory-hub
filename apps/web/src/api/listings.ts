@@ -151,6 +151,34 @@ export function useChannelTags(channelInstanceId: string, enabled: boolean) {
   });
 }
 
+/** Where a listing lives on its channel — the storefront page and the admin page. */
+export interface ListingUrl {
+  /** Null while the listing has no public page (draft, unpublished). */
+  url: string | null;
+  adminUrl?: string;
+}
+
+/**
+ * Resolve a listing's live URLs. Cached per listing for the session — a
+ * product's handle changes about as often as its title does.
+ */
+export function useListingUrl(
+  channelInstanceId: string,
+  externalListingId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['channels', channelInstanceId, 'listing-url', externalListingId],
+    queryFn: () =>
+      apiFetch<ListingUrl>(
+        `/channels/${channelInstanceId}/listings/link?externalListingId=${encodeURIComponent(externalListingId!)}`,
+      ),
+    enabled: enabled && channelInstanceId !== '' && !!externalListingId,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
 /** A linked single whose listing image a re-push could replace. */
 export interface PendingImagePush {
   inventoryItemId: string;

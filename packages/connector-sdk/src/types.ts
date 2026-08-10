@@ -98,6 +98,23 @@ export interface UpdateListingSkuRequest {
   sku: string;
 }
 
+export interface ListingUrlRequest {
+  externalListingId: string;
+}
+
+/**
+ * Where a listing lives on the channel, for a human to open.
+ *
+ * `url` is the storefront page a customer sees — **null while the listing is
+ * unpublished or hidden**, because the platform has no public page for it yet,
+ * and inventing one would produce a link that 404s. `adminUrl` is the
+ * platform's own management page for the listing, which exists regardless.
+ */
+export interface ListingUrlResult {
+  url: string | null;
+  adminUrl?: string;
+}
+
 /**
  * Replace a listing's image with the catalogue's current one.
  *

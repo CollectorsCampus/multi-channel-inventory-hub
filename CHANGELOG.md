@@ -17,7 +17,7 @@ said to be one at intake.
 
 - **Draft sold-out singles** (opt-in per channel). When a single's advertised quantity is
   pushed to zero, its product is unpublished — but only if the platform itself shows the
-  *whole* product out of stock, so a sibling condition with copies (or stock at a location
+  _whole_ product out of stock, so a sibling condition with copies (or stock at a location
   the hub does not manage) keeps it live. Sealed products are never touched. One direction
   only: restocking never re-publishes automatically — nothing should become buyable
   because a background job ran, so you publish it yourself, as with any draft.
@@ -28,7 +28,7 @@ said to be one at intake.
   listings were created. Sealed listings are never offered — their photos are yours.
 - **An item links to its pages elsewhere.** External ids on the intake card view and the
   item detail page are now links — TCGplayer, Scryfall, CardTrader — and a listed item
-  links to its live page on *your* storefront (Shopify's own URL, never a constructed
+  links to its live page on _your_ storefront (Shopify's own URL, never a constructed
   guess; a draft shows only its admin page) plus the Shopify admin.
 - **A language picker at intake**, beside condition and printing. A Japanese-language copy
   of a catalogued card is the same product with `language JA` — the model always supported

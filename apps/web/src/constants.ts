@@ -12,6 +12,29 @@
 
 export const SKU_CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DMG', 'SEALED', 'NA'] as const;
 
+/**
+ * The TCGPlayer connector's language vocabulary (`LANGUAGE_NAMES` in
+ * condition.ts), which is the one vocabulary this repository already parses and
+ * prints — "Near Mint Holofoil - Japanese" round-trips through it. Same
+ * duplication rationale as above; `Sku.language` itself is a free string, so a
+ * code outside this list is stored fine, this is just what the picker offers.
+ */
+export const SKU_LANGUAGES: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'EN', label: 'English' },
+  { code: 'JA', label: 'Japanese' },
+  { code: 'KO', label: 'Korean' },
+  { code: 'ZHS', label: 'Chinese (Simplified)' },
+  { code: 'ZHT', label: 'Chinese (Traditional)' },
+  { code: 'FR', label: 'French' },
+  { code: 'DE', label: 'German' },
+  { code: 'IT', label: 'Italian' },
+  { code: 'ES', label: 'Spanish' },
+  { code: 'PT', label: 'Portuguese' },
+  { code: 'RU', label: 'Russian' },
+  { code: 'TH', label: 'Thai' },
+  { code: 'ID', label: 'Indonesian' },
+];
+
 export const STOCK_MOVEMENT_REASONS = ['intake', 'adjustment', 'return', 'shrinkage'] as const;
 
 export const ALLOCATION_MODES = ['fixed', 'pooled'] as const;

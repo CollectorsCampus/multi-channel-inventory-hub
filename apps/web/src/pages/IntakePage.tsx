@@ -10,7 +10,7 @@ import {
 import { formatPrice } from '../api/inventory';
 import { useChannels, type Channel } from '../api/channels';
 import { describeOutcome, useIntakeAndList } from '../api/listings';
-import { SKU_CONDITIONS } from '../constants';
+import { SKU_CONDITIONS, SKU_LANGUAGES } from '../constants';
 import { enlargedImageUrl } from '../cardImage';
 import { externalLinks } from '../externalLinks';
 import { previewTags } from '../tagSuggest';
@@ -426,6 +426,10 @@ function IntakeForm({
 
   const [condition, setCondition] = useState('NM');
   const [printing, setPrinting] = useState(printings[0] ?? 'NORMAL');
+  // Seeded from the candidate but overridable: the catalogue describes the
+  // printing it knows (usually EN), while the physical copy on the desk may be
+  // the Japanese one. Language is the operator's statement about that copy.
+  const [language, setLanguage] = useState(candidate.language ?? 'EN');
   const [quantity, setQuantity] = useState('1');
   const [cost, setCost] = useState('');
   /**
@@ -445,6 +449,7 @@ function IntakeForm({
 
   useEffect(() => {
     setPrinting(candidate.printings?.[0] ?? 'NORMAL');
+    setLanguage(candidate.language ?? 'EN');
     setQuantity('1');
     setCost('');
     // Re-seeded with the new card's price, not cleared: switching cards should
@@ -493,7 +498,7 @@ function IntakeForm({
             sourceId: candidate.sourceId,
             condition,
             printing,
-            language: candidate.language,
+            language,
             quantity: Number(quantity) || 0,
             ...(cost === '' ? {} : { costBasis: Math.round(Number(cost) * 100) }),
           };
@@ -534,6 +539,24 @@ function IntakeForm({
           {printings.map((p) => (
             <option key={p} value={p}>
               {p}
+            </option>
+          ))}
+        </select>
+
+        <label htmlFor={fieldId('language')}>Language</label>
+        <select
+          id={fieldId('language')}
+          value={language}
+          onChange={(e) => setLanguage(e.target.value)}
+        >
+          {/* A source can hand back a code outside the picker's vocabulary;
+              it must stay selectable rather than being silently coerced. */}
+          {!SKU_LANGUAGES.some((l) => l.code === language) && (
+            <option value={language}>{language}</option>
+          )}
+          {SKU_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.label}
             </option>
           ))}
         </select>

@@ -21,6 +21,8 @@ import type {
   ListTagsRequest,
   ListingMetafieldDefinition,
   ListingPublication,
+  ListingUrlRequest,
+  ListingUrlResult,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -143,6 +145,15 @@ export interface Connector {
    * hand is not the hub's to overwrite uninvited.
    */
   updateListingImage?(ctx: Ctx, req: UpdateListingImageRequest): Promise<void>;
+
+  /**
+   * Where this listing lives on the channel, as URLs a human can open.
+   *
+   * A pure read. The storefront URL is null while the listing has no public
+   * page — a connector must not construct one it has not seen the platform
+   * confirm, because a guessed URL that 404s reads as a broken feature.
+   */
+  listingUrl?(ctx: Ctx, req: ListingUrlRequest): Promise<ListingUrlResult>;
 
   // --- discovery -----------------------------------------------------------
   /**

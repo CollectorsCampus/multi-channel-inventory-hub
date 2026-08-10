@@ -14,6 +14,8 @@ import type {
   ListingMetafieldChoice,
   ListingMetafieldDefinition,
   ListingPublication,
+  ListingUrlRequest,
+  ListingUrlResult,
   LiveListingState,
   NormalizedEvent,
   PushListingRequest,
@@ -139,6 +141,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'listing.tags',
       'listing.metafields',
       'listing.publications',
+      'listing.url',
       'listing.image',
       'listing.sku',
     ],
@@ -340,6 +343,40 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
         }>(ctx, DELETE_MEDIA_MUTATION, { productId, mediaIds: oldMediaIds });
         throwOnUserErrors(deleted.productDeleteMedia?.mediaUserErrors, 'Removing old images');
       }
+    },
+
+    /**
+     * Where a variant's product lives, for a human to open.
+     *
+     * `onlineStoreUrl` is Shopify's own answer — it carries the store's primary
+     * domain and is **null for a draft or unpublished product**, which is passed
+     * through rather than papered over with a constructed URL: Shopify knows
+     * whether a public page exists and a guess that 404s reads as a broken
+     * feature. The admin URL always exists; `legacyResourceId` is the numeric id
+     * the admin routes on.
+     */
+    async listingUrl(ctx: Ctx, req: ListingUrlRequest): Promise<ListingUrlResult> {
+      requireListing(req.externalListingId);
+
+      const data = await client.request<{
+        node: {
+          product?: { id?: string; legacyResourceId?: string; onlineStoreUrl?: string | null };
+        } | null;
+      }>(ctx, LISTING_URL_QUERY, { id: req.externalListingId });
+
+      const product = data.node?.product;
+      if (!product?.id) {
+        throw new Error(
+          `Shopify variant ${req.externalListingId} has no product; it may be deleted.`,
+        );
+      }
+
+      const shopDomain = String(ctx.config.shopDomain ?? '').trim();
+      const result: ListingUrlResult = { url: product.onlineStoreUrl ?? null };
+      if (shopDomain && product.legacyResourceId) {
+        result.adminUrl = `https://${shopDomain}/admin/products/${product.legacyResourceId}`;
+      }
+      return result;
     },
 
     /**
@@ -1607,6 +1644,20 @@ const SET_SKU_MUTATION = /* GraphQL */ `
       userErrors {
         field
         message
+      }
+    }
+  }
+`;
+
+const LISTING_URL_QUERY = /* GraphQL */ `
+  query HubListingUrl($id: ID!) {
+    node(id: $id) {
+      ... on ProductVariant {
+        product {
+          id
+          legacyResourceId
+          onlineStoreUrl
+        }
       }
     }
   }

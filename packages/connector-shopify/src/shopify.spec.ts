@@ -159,6 +159,18 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         return { publishablePublish: { userErrors: overrides.publishErrors ?? [] } } as T;
       }
 
+      if (query.includes('HubListingUrl')) {
+        return (overrides.listingUrl ?? {
+          node: {
+            product: {
+              id: PRODUCT,
+              legacyResourceId: '333',
+              onlineStoreUrl: 'https://www.example-store.com/products/pikachu-ex',
+            },
+          },
+        }) as T;
+      }
+
       if (query.includes('HubProductMedia')) {
         return (overrides.productMedia ?? {
           product: { media: { nodes: [{ id: 'gid://shopify/MediaImage/900' }] } },
@@ -1565,6 +1577,45 @@ describe('listing publications', () => {
     expect(await connector.listPublications!(ctx(), {})).toEqual([
       { id: 'gid://shopify/Publication/1', name: 'Online Store' },
     ]);
+  });
+});
+
+describe('resolving a listing url', () => {
+  it('returns the storefront page and the admin page', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    expect(await connector.listingUrl!(ctx(), { externalListingId: VARIANT })).toEqual({
+      url: 'https://www.example-store.com/products/pikachu-ex',
+      adminUrl: 'https://test-store.myshopify.com/admin/products/333',
+    });
+  });
+
+  /**
+   * Shopify answers null for a draft or unpublished product, and that must be
+   * passed through: a constructed storefront URL for a page that does not
+   * exist is a link that 404s.
+   */
+  it('passes through a null storefront url for an unpublished product', async () => {
+    const { client } = mockClient({
+      listingUrl: {
+        node: { product: { id: PRODUCT, legacyResourceId: '333', onlineStoreUrl: null } },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.listingUrl!(ctx(), { externalListingId: VARIANT });
+    expect(result.url).toBeNull();
+    expect(result.adminUrl).toContain('/admin/products/333');
+  });
+
+  it('reports a deleted variant rather than inventing a url', async () => {
+    const { client } = mockClient({ listingUrl: { node: null } });
+    const connector = createShopifyConnector({ client });
+
+    await expect(connector.listingUrl!(ctx(), { externalListingId: VARIANT })).rejects.toThrow(
+      /may be deleted/,
+    );
   });
 });
 

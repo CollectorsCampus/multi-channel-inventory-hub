@@ -63,6 +63,21 @@ export class ListingsController {
     return this.creation.listPublications(channelInstanceId, query.limit);
   }
 
+  @Get('link')
+  @RequireRole('viewer')
+  @ApiOperation({
+    summary: 'Where a listing lives on the channel, as URLs a human can open.',
+    description:
+      'The storefront page (null while the listing is unpublished) and the platform’s admin ' +
+      'page. Viewer-readable: it exposes nothing an id does not already.',
+  })
+  link(
+    @Param('id') channelInstanceId: string,
+    @Query('externalListingId') externalListingId: string,
+  ) {
+    return this.creation.listingUrl(channelInstanceId, externalListingId ?? '');
+  }
+
   @Get('images/pending')
   @RequireRole('editor')
   @ApiOperation({

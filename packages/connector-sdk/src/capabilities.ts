@@ -130,6 +130,16 @@ export const CAPABILITIES = [
   'listing.metafields',
 
   /**
+   * Resolve where a listing lives on the channel, as URLs a human can open.
+   *
+   * A read with no side effects: the storefront page a customer would see
+   * (absent while the listing is unpublished) and the platform's own admin
+   * page for it. Exists so an item's detail screen can link to the live
+   * product instead of showing a bare platform id.
+   */
+  'listing.url',
+
+  /**
    * Replace the image of a listing this hub already drives.
    *
    * Separate from `listing.push`, which syncs stock and price, and from
@@ -198,6 +208,7 @@ export const CAPABILITY_METHODS = {
   'listing.tags': 'listTags',
   'listing.metafields': 'listMetafields',
   'listing.publications': 'listPublications',
+  'listing.url': 'listingUrl',
   'listing.image': 'updateListingImage',
   'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',

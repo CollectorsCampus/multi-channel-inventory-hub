@@ -235,6 +235,21 @@ describe('toCandidates', () => {
     expect(enterprise?.marketPrice).toBe(3965);
   });
 
+  /**
+   * Each finish keeps its own figure. A foil's market is not the normal's, and
+   * a repricing caller reads this rather than the scalar — a printing with no
+   * price is absent, never papered over with another printing's number.
+   */
+  it('carries per-printing prices, omitting a printing with none', () => {
+    const enterprise = candidates().find((c) => c.sourceId === '706191');
+
+    // Normal priced, Foil row present but unpriced in the fixture.
+    expect(enterprise?.pricesByPrinting).toEqual({ NORMAL: 3965 });
+
+    const priced = candidates().find((c) => c.sourceId === '706132');
+    expect(priced?.pricesByPrinting?.NORMAL).toBe(299);
+  });
+
   it('carries the product-level tcgplayer id, which is the point of this source', () => {
     const boimler = candidates().find((c) => c.sourceId === '706132');
 

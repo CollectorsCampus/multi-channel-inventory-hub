@@ -61,6 +61,15 @@ export interface ReconcileJob {
   channelInstanceId?: string;
 }
 
+/** The repricing sweep's queue — same shape as reconcile, for the same reasons. */
+export const REPRICE_QUEUE = 'reprice';
+
+/** The job scheduler's fixed id, so re-registering replaces rather than adds. */
+export const REPRICE_SWEEP_JOB = 'daily-reprice';
+
+/** Carries nothing: the sweep reads everything at run time. */
+export type RepriceJob = Record<string, never>;
+
 @Injectable()
 export class OutboundQueue implements OnModuleDestroy {
   private readonly logger = new Logger(OutboundQueue.name);

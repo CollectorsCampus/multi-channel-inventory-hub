@@ -29,7 +29,14 @@ import {
   usePushListingImages,
 } from '../api/listings';
 import type { ListingMetafield, ListingMetafieldDefinition } from '../api/listings';
-import { useSetLedgerQuantity } from '../api/inventory';
+import { formatPrice, useSetLedgerQuantity } from '../api/inventory';
+import { SKU_CONDITIONS } from '../constants';
+import {
+  useApplyProposal,
+  useDismissProposal,
+  useRepriceProposals,
+  useRepriceSweep,
+} from '../api/pricing';
 import { useLocalSets } from '../api/catalog';
 import { suggestTag } from '../tagSuggest';
 import type { TagRule, VendorRule, MetafieldRule } from '../api/channels';
@@ -306,6 +313,8 @@ function ChannelCard({ channel }: { channel: Channel }) {
       <ListingDefaults channel={channel} />
 
       <ListingImages channel={channel} />
+
+      <Repricing channel={channel} />
 
       <Reconciliation channel={channel} />
 
@@ -1159,6 +1168,210 @@ function ListingImages({ channel }: { channel: Channel }) {
         </p>
       ))}
       {push.isError && <FormError error={push.error as Error} />}
+    </div>
+  );
+}
+
+/**
+ * Repricing: keep asking prices tracking the market, under rules the operator
+ * sets once.
+ *
+ * The hub never invents a percentage — a condition with no declared percent is
+ * simply never repriced, for the same reason intake never defaults a
+ * condition: condition is most of what a single is worth. Moves within the
+ * auto-apply threshold happen on the nightly sweep; bigger ones queue here
+ * for a human.
+ */
+function Repricing({ channel }: { channel: Channel }) {
+  const update = useUpdateChannel();
+  const sweep = useRepriceSweep();
+  const apply = useApplyProposal();
+  const dismiss = useDismissProposal();
+
+  const stored = channel.repricingPolicy;
+  const [enabled, setEnabled] = useState(stored.enabled ?? false);
+  const [percents, setPercents] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      Object.entries(stored.conditionPercents ?? {}).map(([k, v]) => [k, String(v)]),
+    ),
+  );
+  const [rounding, setRounding] = useState<'none' | '99'>(stored.rounding ?? 'none');
+  const [floor, setFloor] = useState(
+    stored.floorCents != null ? String(stored.floorCents / 100) : '',
+  );
+  const [autoPct, setAutoPct] = useState(
+    stored.autoApplyMaxPct != null ? String(stored.autoApplyMaxPct) : '',
+  );
+
+  const proposals = useRepriceProposals(channel.capabilities.includes('listing.price'));
+  const mine = (proposals.data ?? []).filter((p) => p.channelInstanceId === channel.id);
+
+  if (!channel.capabilities.includes('listing.price')) return null;
+
+  const save = () => {
+    const conditionPercents: Record<string, number> = {};
+    for (const [condition, raw] of Object.entries(percents)) {
+      const value = Number(raw);
+      if (raw.trim() !== '' && Number.isFinite(value) && value > 0) {
+        conditionPercents[condition] = value;
+      }
+    }
+    update.mutate({
+      id: channel.id,
+      repricingPolicy: {
+        enabled,
+        conditionPercents,
+        rounding,
+        ...(floor.trim() !== '' ? { floorCents: Math.round(Number(floor) * 100) } : {}),
+        ...(autoPct.trim() !== '' ? { autoApplyMaxPct: Number(autoPct) } : {}),
+      },
+    });
+  };
+
+  return (
+    <div className="file-transport">
+      <h3>Repricing</h3>
+      <p className="muted">
+        Market prices are pulled daily and asking prices follow them under these rules. Moves within
+        the auto-apply line happen on their own; bigger ones wait below for your confirmation. A
+        condition with no percentage is never repriced.
+      </p>
+
+      <table className="compact">
+        <tbody>
+          {SKU_CONDITIONS.map((condition) => (
+            <tr key={condition}>
+              <td className="muted">{condition}</td>
+              <td>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  placeholder="—"
+                  value={percents[condition] ?? ''}
+                  aria-label={`Percent of market for ${condition}`}
+                  onChange={(e) => setPercents({ ...percents, [condition]: e.target.value })}
+                />
+              </td>
+              <td className="muted">% of market</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="inline-form">
+        <label htmlFor={`rounding-${channel.id}`}>Rounding</label>
+        <select
+          id={`rounding-${channel.id}`}
+          value={rounding}
+          onChange={(e) => setRounding(e.target.value as 'none' | '99')}
+        >
+          <option value="none">exact</option>
+          <option value="99">nearest .99</option>
+        </select>
+
+        <label htmlFor={`floor-${channel.id}`}>Floor $</label>
+        <input
+          id={`floor-${channel.id}`}
+          type="number"
+          step="0.01"
+          min={0}
+          placeholder="none"
+          value={floor}
+          onChange={(e) => setFloor(e.target.value)}
+        />
+
+        <label htmlFor={`autopct-${channel.id}`}>Auto-apply up to %</label>
+        <input
+          id={`autopct-${channel.id}`}
+          type="number"
+          min={0}
+          placeholder="review all"
+          value={autoPct}
+          onChange={(e) => setAutoPct(e.target.value)}
+        />
+
+        <label className="inline-check">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+
+        <button type="button" onClick={save} disabled={update.isPending}>
+          Save
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={sweep.isPending}
+          onClick={() => sweep.mutate()}
+        >
+          {sweep.isPending ? 'Sweeping…' : 'Sweep now'}
+        </button>
+      </div>
+
+      {sweep.data && (
+        <p className="field-hint">
+          {sweep.data.itemsConsidered} item(s) checked, {sweep.data.pricesRecorded} price(s)
+          recorded, {sweep.data.autoApplied} auto-applied, {sweep.data.proposed} for review
+          {sweep.data.problems.length > 0 && <>, {sweep.data.problems.length} problem(s)</>}.
+        </p>
+      )}
+      {sweep.data?.problems.slice(0, 5).map((p) => (
+        <p key={p} className="error">
+          {p}
+        </p>
+      ))}
+
+      {mine.length > 0 && (
+        <>
+          <h4>Awaiting review</h4>
+          <table className="compact">
+            <tbody>
+              {mine.map((proposal) => (
+                <tr key={proposal.id}>
+                  <td>
+                    <span className="cell-title">{proposal.name}</span>
+                    <span className="cell-sub">
+                      {[proposal.setName, proposal.condition, proposal.printing]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </td>
+                  <td>
+                    {proposal.currentPrice != null ? formatPrice(proposal.currentPrice) : '—'} →{' '}
+                    <strong>{formatPrice(proposal.proposedPrice)}</strong>
+                  </td>
+                  <td className="muted" title={proposal.basis}>
+                    market {formatPrice(proposal.marketPrice)}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      disabled={apply.isPending}
+                      onClick={() => apply.mutate(proposal.id)}
+                    >
+                      Apply
+                    </button>{' '}
+                    <button
+                      type="button"
+                      className="ghost"
+                      disabled={dismiss.isPending}
+                      onClick={() => dismiss.mutate(proposal.id)}
+                    >
+                      Dismiss
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {update.isError && <FormError error={update.error as Error} />}
+      {(sweep.isError || apply.isError || dismiss.isError) && (
+        <FormError error={(sweep.error ?? apply.error ?? dismiss.error) as Error} />
+      )}
     </div>
   );
 }

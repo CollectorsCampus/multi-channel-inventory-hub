@@ -169,6 +169,14 @@ function toCandidate(card: ScryfallCard): CatalogCandidate {
   // Prefer the non-foil price; a foil-only printing has usd null and usd_foil set.
   const marketPrice = usdStringToCents(card.prices?.usd) ?? usdStringToCents(card.prices?.usd_foil);
 
+  // The same two figures per printing, so a caller repricing a FOIL SKU is
+  // never handed the plain printing's market by accident.
+  const pricesByPrinting: Record<string, number> = {};
+  const usd = usdStringToCents(card.prices?.usd);
+  const usdFoil = usdStringToCents(card.prices?.usd_foil);
+  if (usd !== undefined) pricesByPrinting.NORMAL = usd;
+  if (usdFoil !== undefined) pricesByPrinting.FOIL = usdFoil;
+
   const candidate: CatalogCandidate = {
     sourceId: card.id,
     name: card.name,
@@ -180,6 +188,7 @@ function toCandidate(card: ScryfallCard): CatalogCandidate {
   if (imageUrl) candidate.imageUrl = imageUrl;
   if (printings.length > 0) candidate.printings = printings;
   if (marketPrice !== undefined) candidate.marketPrice = marketPrice;
+  if (Object.keys(pricesByPrinting).length > 0) candidate.pricesByPrinting = pricesByPrinting;
   if (card.lang) candidate.language = card.lang.toUpperCase();
 
   return candidate;

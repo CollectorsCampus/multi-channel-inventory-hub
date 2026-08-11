@@ -124,8 +124,20 @@ describe('Scryfall catalog source', () => {
       },
       printings: ['NORMAL', 'FOIL'],
       marketPrice: 249,
+      pricesByPrinting: { NORMAL: 249, FOIL: 800 },
       language: 'EN',
     });
+  });
+
+  /**
+   * A foil's market is not the normal's, and a repricing caller must be able
+   * to tell them apart — the scalar `marketPrice` alone cannot. The full
+   * candidate assertion above pins both figures; this pins the asymmetry.
+   */
+  it('prices only the foil for a foil-only printing', async () => {
+    const source = createScryfallSource({ fetch: searchReturning([FOIL_ONLY]) });
+    const [candidate] = await source.search(ctx(), { text: 'shiny' });
+    expect(candidate!.pricesByPrinting).toEqual({ FOIL: 1575 });
   });
 
   /**

@@ -65,6 +65,15 @@ export interface CatalogCandidate {
   /** Reference market price in cents. Never a float. */
   marketPrice?: number;
 
+  /**
+   * Reference market price **per printing**, in cents, where the source
+   * distinguishes them — a foil's market is not the normal's, and a caller
+   * repricing a foil SKU must not fall back to `marketPrice` (which is the
+   * scalar summary, normally the plain printing's figure). A printing absent
+   * here has no known price; that is an answer, not a gap to paper over.
+   */
+  pricesByPrinting?: Readonly<Record<string, number>>;
+
   /** Finishes this product comes in ("NORMAL", "FOIL", ...), for intake to offer. */
   printings?: readonly string[];
 

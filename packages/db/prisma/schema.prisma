@@ -69,11 +69,44 @@ model CatalogItem {
 
   externalRefs CatalogExternalRef[]
   skus         Sku[]
+  marketPrices MarketPrice[]
 
   @@index([name])
   @@index([searchName])
   @@index([game, setName])
   @@map("catalog_items")
+}
+
+/// The latest market price this hub has fetched for one item, from one source,
+/// for one printing — a foil's market is not the normal's.
+///
+/// Latest-only by design, not a history: each sweep overwrites in place,
+/// keeping the previous figure in `previousPrice` so a change can be shown as
+/// was/now. A price-history table needs its own retention story (the query
+/// console precedent) and nothing reads one yet. This is deliberately separate
+/// from CatalogItem itself, which stores identity only — "identity is durable,
+/// prices are not" — the difference here is the explicit `fetchedAt` a caller
+/// must confront.
+model MarketPrice {
+  id            String @id @default(uuid(7))
+  catalogItemId String @map("catalog_item_id")
+  /// CatalogSource key the figure came from ("tcgcsv", "scryfall").
+  source        String
+  /// Non-null by design: nullable would make the unique below unenforceable
+  /// (NULL != NULL). "NORMAL" is the same sentinel Sku uses.
+  printing      String @default("NORMAL")
+
+  /// Cents, never a float.
+  price         Int
+  currency      String   @default("USD")
+  /// What the same row held before this fetch, for was/now display.
+  previousPrice Int?     @map("previous_price")
+  fetchedAt     DateTime @map("fetched_at")
+
+  catalogItem CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+
+  @@unique([catalogItemId, source, printing])
+  @@map("market_prices")
 }
 
 /// Maps a CatalogItem onto a platform's canonical ID. We reuse external IDs
@@ -216,6 +249,14 @@ model ChannelInstance {
   /// become buyable on a storefront because a background job ran.
   draftAtSellout Boolean @default(false) @map("draft_at_sellout")
 
+  /// JSON-encoded repricing policy for this channel — condition percentages of
+  /// market, rounding, floor, the auto-apply threshold. String, not Json, the
+  /// same choice `listingDefaults` makes: read entire, written entire, never
+  /// queried into. Deliberately its own column rather than folded into
+  /// listingDefaults, whose presence gates autoListNewStock — a repricing
+  /// policy is not a declaration of what a created product carries.
+  repricingPolicy String @default("{}") @map("repricing_policy")
+
   /// JSON-encoded defaults applied to listings this channel creates:
   /// { tags?, metafields?, category?, vendor? }. String, not Json — see header.
   ///
@@ -273,8 +314,9 @@ model ChannelAllocation {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  inventoryItem   InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
-  channelInstance ChannelInstance @relation(fields: [channelInstanceId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem    @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  channelInstance ChannelInstance  @relation(fields: [channelInstanceId], references: [id], onDelete: Cascade)
+  repriceProposal RepriceProposal?
 
   @@unique([inventoryItemId, channelInstanceId])
   /// Index, not unique: externalListingId is nullable, so a unique constraint
@@ -284,6 +326,39 @@ model ChannelAllocation {
   @@index([status])
   @@index([inventoryItemId])
   @@map("channel_allocations")
+}
+
+/// A price change the sweep proposes but does not apply — the review queue for
+/// moves larger than the channel's auto-apply threshold.
+///
+/// At most one per allocation, replaced by each sweep and **deleted on
+/// decision** (applied or dismissed) rather than kept with a status: the
+/// applied price is recorded where prices live (the allocation, and the sync
+/// log when pushed), and a graveyard of decided rows would need its own
+/// retention story. A dismissal therefore does not survive the next sweep —
+/// the same market re-proposes the same change — which is honest: the market
+/// still says what it says.
+model RepriceProposal {
+  id           String @id @default(uuid(7))
+  allocationId String @map("allocation_id")
+
+  /// Cents at proposal time; null for an allocation that had no price yet.
+  currentPrice  Int?   @map("current_price")
+  /// Cents — what the policy computed.
+  proposedPrice Int    @map("proposed_price")
+  /// Cents — the market figure the computation started from.
+  marketPrice   Int    @map("market_price")
+  /// CatalogSource key the market figure came from.
+  source        String
+  /// How the number was arrived at, in the operator's terms.
+  basis         String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  allocation ChannelAllocation @relation(fields: [allocationId], references: [id], onDelete: Cascade)
+
+  @@unique([allocationId])
+  @@map("reprice_proposals")
 }
 
 // ---------------------------------------------------------------------------

@@ -28,8 +28,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1160 tests** (api 699, shopify 148, tcgplayer 102, sdk 61, tcgcsv 48,
-cardtrader 37, scryfall 27, web 31, db 7), lint/typecheck/format/build clean —
+`main` is green: **1192 tests** (api 729, shopify 148, tcgplayer 102, sdk 61, tcgcsv 49,
+cardtrader 37, scryfall 28, web 31, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
 trusting a remembered total**: several older commits say "990", which was simply
@@ -1625,7 +1625,7 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#101** is on `main`, and **production runs v0.7.0** — verified
+None. Everything through **#104** is on `main` (v0.8.0, the repricing engine), and **production runs v0.7.0 until the operator moves the stack to 0.8.0** — the repricing panel, sweep and migration are all in the new image only — verified
 over the tunnel after the operator updated the stack on 2026-08-10 (version, all new
 routes, the `draft_at_sellout` migration applied by the entrypoint, webhook ingress still
 verifying). The seeded rule set on the live Shopify channel has been **active since the
@@ -1661,6 +1661,58 @@ back.
 
 `main` may be a few commits ahead of `origin/main` — check before assuming CI has seen the
 latest.
+
+### v0.8.0 (2026-08-11) — the repricing engine
+
+Tagged at the "Prepare v0.8.0" merge (#104). Multi-arch image, tags `0.8.0`, `0.8` and
+`latest`, all at digest `sha256:42ee80b1…`, replacing v0.7.0's `sha256:e3bffcad…`. One
+feature, #103: **prices follow the market** — a daily sweep (`REPRICE_CRON`, default
+03:30, a BullMQ job scheduler that installs itself on first boot) pulls market figures
+for every allocated item and moves asking prices under per-channel policy: percent of
+market per condition, `.99` rounding, floor, churn guard, and `autoApplyMaxPct` — within
+it auto-applied and pushed, above it a proposal with Apply/Dismiss on the channel card.
+**Contains a schema migration** (`market_prices`, `reprice_proposals`,
+`channel_instances.repricing_policy`).
+
+Decisions worth not re-deriving:
+
+- **Prices are per printing end to end.** `CatalogCandidate.pricesByPrinting` exists
+  because tcgcsv's rows are per-finish and `toCandidates` collapsed them to the normal's
+  scalar — a foil repriced off the plain printing's market is the wrong price with no
+  error. A printing with no published figure is **skipped, never** given another
+  printing's number.
+- **The hub never invents a multiplier.** A condition without a declared percentage is
+  never repriced (the `deriveSkuDimensions` argument again: condition is most of what a
+  single is worth). No threshold set means everything reviews; an unpriced allocation
+  always reviews (no base to measure the change against).
+- **tcgcsv is swept by whole set files** found by exact `setName` against `listSets` —
+  `fetchById` is cold-start-blind by design, and stored names came from that same listing
+  so equality holds. Scryfall goes per card. CardTrader publishes no prices.
+- **Applying a price is a column write plus an outbound `price` push** — nothing else
+  enqueues `operation: 'price'` today, and `upsertAllocation` was deliberately not used:
+  it would restate mode/partition figures the sweep has no business touching (rule 5
+  guards quantities; a price is channel data).
+- **`market_prices` is latest-only** with `previousPrice` for was/now — a history table
+  needs its own retention story (the query-console precedent). Proposals are one per
+  allocation, replaced by sweeps, **deleted on decision**; a dismissal is deliberately
+  not remembered — the market still says what it says.
+- **CodeQL caught a real remote-property-injection** in the policy parser, its second in
+  this repo (#17's was the first): `conditionPercents` keys came off the PATCH body and
+  became property names, so `__proto__` was writable. Fixed by iterating the closed
+  `SKU_CONDITIONS` vocabulary rather than the request object. Its follow-up nit was also
+  right: `__proto__: 50` in an **object literal** is a silently-ignored prototype-set, so
+  the first regression test never contained the key it existed to pin — raw JSON text
+  does. **Watch for both shapes in any new request-keyed map.**
+- **The local full-suite runs were failing on pure infrastructure** — test-DB connection
+  drops with different unrelated files failing each run (one a no-I/O crypto test), while
+  CI's identical suite passed twice. The tell distinguishing infra flake from real
+  breakage: the failing _set_ is unstable across runs and the errors are connection
+  timeouts, not assertions.
+
+Verified the established way: anonymously, all three tags at the one digest with real
+amd64+arm64 children; inside the artifact, version 0.8.0, the `add_repricing` migration
+directory, `apps/api/dist/pricing/` with the `SKU_CONDITIONS` allowlist in the built
+parser, `pricesByPrinting` in both built sources, `--prod` held.
 
 ### v0.7.0 (2026-08-10)
 

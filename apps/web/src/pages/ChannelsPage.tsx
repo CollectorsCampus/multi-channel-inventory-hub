@@ -1212,6 +1212,7 @@ function Repricing({ channel }: { channel: Channel }) {
   const [autoPct, setAutoPct] = useState(
     stored.autoApplyMaxPct != null ? String(stored.autoApplyMaxPct) : '',
   );
+  const [inStockOnly, setInStockOnly] = useState(stored.inStockOnly ?? false);
 
   const proposals = useRepriceProposals(channel.capabilities.includes('listing.price'));
   const mine = (proposals.data ?? []).filter((p) => p.channelInstanceId === channel.id);
@@ -1234,6 +1235,7 @@ function Repricing({ channel }: { channel: Channel }) {
         rounding,
         ...(floor.trim() !== '' ? { floorCents: Math.round(Number(floor) * 100) } : {}),
         ...(autoPct.trim() !== '' ? { autoApplyMaxPct: Number(autoPct) } : {}),
+        inStockOnly,
       },
     });
   };
@@ -1300,6 +1302,18 @@ function Repricing({ channel }: { channel: Channel }) {
           value={autoPct}
           onChange={(e) => setAutoPct(e.target.value)}
         />
+
+        <label
+          className="inline-check"
+          title="Zero-stock items keep their price; market figures are still recorded."
+        >
+          <input
+            type="checkbox"
+            checked={inStockOnly}
+            onChange={(e) => setInStockOnly(e.target.checked)}
+          />
+          In-stock only
+        </label>
 
         <label className="inline-check">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />

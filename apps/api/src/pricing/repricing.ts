@@ -49,6 +49,13 @@ export interface RepricingPolicy {
   autoApplyMaxPct?: number;
   /** Ignore moves smaller than this many cents, so prices do not churn. */
   minDeltaCents?: number;
+  /**
+   * Only reprice items physically held. Zero-stock (and oversold-negative)
+   * items are skipped — market figures are still recorded for them, so the
+   * catalogue stays current, but their asking prices are not churned while
+   * there is nothing to sell.
+   */
+  inStockOnly?: boolean;
 }
 
 const ROUNDINGS = ['none', '99'] as const;
@@ -78,6 +85,7 @@ export function parseRepricingPolicy(raw: string | null | undefined): RepricingP
   const policy: RepricingPolicy = {};
 
   if (typeof decoded.enabled === 'boolean') policy.enabled = decoded.enabled;
+  if (typeof decoded.inStockOnly === 'boolean') policy.inStockOnly = decoded.inStockOnly;
 
   if (isPlainObject(decoded.conditionPercents)) {
     const percents: Record<string, number> = {};
@@ -126,6 +134,7 @@ export function encodeRepricingPolicy(policy: RepricingPolicy): string {
   if (policy.floorCents !== undefined) stored.floorCents = policy.floorCents;
   if (policy.autoApplyMaxPct !== undefined) stored.autoApplyMaxPct = policy.autoApplyMaxPct;
   if (policy.minDeltaCents !== undefined) stored.minDeltaCents = policy.minDeltaCents;
+  if (policy.inStockOnly !== undefined) stored.inStockOnly = policy.inStockOnly;
   return JSON.stringify(stored);
 }
 

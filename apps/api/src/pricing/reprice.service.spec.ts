@@ -86,6 +86,7 @@ async function seed(options: {
   printing?: string;
   price?: number | null;
   policy?: RepricingPolicy;
+  quantityOnHand?: number;
 }) {
   const item = await prisma.catalogItem.create({
     data: {
@@ -110,7 +111,7 @@ async function seed(options: {
     },
   });
   const inventory = await prisma.inventoryItem.create({
-    data: { skuId: sku.id, quantityOnHand: 1 },
+    data: { skuId: sku.id, quantityOnHand: options.quantityOnHand ?? 1 },
   });
   const channel = await prisma.channelInstance.create({
     data: {
@@ -261,6 +262,48 @@ describeDb('RepriceService', () => {
     await service.sweep();
     expect(await prisma.repriceProposal.count()).toBe(0);
     expect(clearFlag).toHaveBeenCalledWith('reprice_review', channelId, 'pricing:sweep');
+  });
+
+  /**
+   * The toggle gates repricing, not market data: the zero-stock item's figure
+   * is still recorded, so the catalogue stays current for when it restocks.
+   */
+  it('skips a zero-stock item under in-stock only, but still records its market price', async () => {
+    const { allocationId } = await seed({
+      price: 1000,
+      quantityOnHand: 0,
+      policy: { ...POLICY, inStockOnly: true },
+    });
+    service = buildService(fakeTcgcsv({ NORMAL: 1050 }));
+
+    const report = await service.sweep();
+
+    expect(report.autoApplied).toBe(0);
+    expect(report.proposed).toBe(0);
+    expect(report.pricesRecorded).toBe(1);
+    const allocation = await prisma.channelAllocation.findUniqueOrThrow({
+      where: { id: allocationId },
+    });
+    expect(allocation.price).toBe(1000);
+  });
+
+  it('clears a stale proposal once the item sells out under in-stock only', async () => {
+    const { allocationId } = await seed({ price: 1000, policy: { ...POLICY, inStockOnly: true } });
+    service = buildService(fakeTcgcsv({ NORMAL: 2000 }));
+    await service.sweep();
+    expect(await prisma.repriceProposal.count()).toBe(1);
+
+    const allocation = await prisma.channelAllocation.findUniqueOrThrow({
+      where: { id: allocationId },
+      select: { inventoryItemId: true },
+    });
+    await prisma.inventoryItem.update({
+      where: { id: allocation.inventoryItemId },
+      data: { quantityOnHand: 0 },
+    });
+
+    await service.sweep();
+    expect(await prisma.repriceProposal.count()).toBe(0);
   });
 
   it('applies a proposal on request: price written, push queued, row gone', async () => {

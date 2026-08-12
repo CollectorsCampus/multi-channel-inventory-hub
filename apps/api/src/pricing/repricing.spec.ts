@@ -19,8 +19,13 @@ describe('parseRepricingPolicy', () => {
       floorCents: 49,
       autoApplyMaxPct: 10,
       minDeltaCents: 5,
+      inStockOnly: true,
     };
     expect(parseRepricingPolicy(encodeRepricingPolicy(policy))).toEqual(policy);
+  });
+
+  it('drops a non-boolean inStockOnly rather than coercing it', () => {
+    expect(parseRepricingPolicy('{"inStockOnly":"true"}')).toEqual({});
   });
 
   it('treats an empty column, malformed JSON and a non-object alike', () => {

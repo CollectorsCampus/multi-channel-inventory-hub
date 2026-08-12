@@ -350,15 +350,16 @@ other marketplaces, spanning 29 countries and 9 currencies.
 This table was previously guesswork. It has been checked, and the guesses were mostly right
 about shape and wrong about which ones are reachable.
 
-| Candidate            | Access model, verified                                        | Verdict                               |
-| -------------------- | ------------------------------------------------------------- | ------------------------------------- |
-| **Whatnot**          | Real GraphQL Seller API — **closed to new applicants**        | Blocked. Watch for it reopening.      |
-| **Amazon (SP-API)**  | Open, but Professional account + developer-profile review     | Viable; heaviest onboarding here.     |
-| **Crystal Commerce** | Has a JSON API and a partner programme                        | **A competing hub, not a channel.**   |
-| **BinderPOS**        | No public API; integrates via its own Shopify app             | **Would collide with us in Shopify.** |
-| **Card Kingdom**     | No seller API. Third-party scrapers expose its _prices_ only. | Price data at best, not a channel.    |
-| **Cardsphere**       | No public seller API found                                    | Not pursuable.                        |
-| **COMC**             | No public seller API found                                    | Not pursuable.                        |
+| Candidate            | Access model, verified                                        | Verdict                                   |
+| -------------------- | ------------------------------------------------------------- | ----------------------------------------- |
+| **Whatnot**          | Real GraphQL Seller API — **closed to new applicants**        | Blocked. Watch for it reopening.          |
+| **TikTok Shop**      | Open Platform REST API; Custom App + ~2–3 day scope review    | Viable; gates are seller-side. See below. |
+| **Amazon (SP-API)**  | Open, but Professional account + developer-profile review     | Viable; heaviest onboarding here.         |
+| **Crystal Commerce** | Has a JSON API and a partner programme                        | **A competing hub, not a channel.**       |
+| **BinderPOS**        | No public API; integrates via its own Shopify app             | **Would collide with us in Shopify.**     |
+| **Card Kingdom**     | No seller API. Third-party scrapers expose its _prices_ only. | Price data at best, not a channel.        |
+| **Cardsphere**       | No public seller API found                                    | Not pursuable.                            |
+| **COMC**             | No public seller API found                                    | Not pursuable.                            |
 
 #### Whatnot — the exact ADR 0002 shape, again
 
@@ -373,6 +374,31 @@ So it is a fully documented, well-shaped, completely unobtainable API. That is T
 verbatim. **Do not plan around it**, and do not treat the quality of the documentation as
 evidence of availability — that inference is the one this project has now been burned by
 twice.
+
+_Re-checked 2026-08-12: still "not accepting new applicants". Unchanged._
+
+#### TikTok Shop — _researched 2026-08-12_, and it sorts differently from Whatnot
+
+The obvious comparison is Whatnot — live/video commerce, collectibles audience — but the
+access model is the opposite bucket:
+
+- **Trading cards are a permitted category.** Sealed and live-opened cards are allowed
+  outright; **pre-owned cards — i.e. singles — are invite-only.** Collectibles sellers need
+  a Shop Performance Score ≥ 2.5 and may need authenticity/condition documentation.
+- **The API is real and reachable**: TikTok Shop Open Platform, REST with OAuth, product /
+  inventory / order endpoints and order webhooks — the right shape for a `Connector`.
+  Access is self-registration in the Partner Center, then a **Custom App** (their term for
+  an app distributed to individual sellers rather than published — exactly this hub's
+  shape), then per-scope permission applications that TikTok reviews in **~2–3 business
+  days**. Bucket 2 (application), but far lighter than Amazon SP-API.
+- **The real gates are seller-side, not API-side.** A US seller account with business
+  verification, the collectibles category requirements, and — for singles — the pre-owned
+  invite. Establish those before any connector work: the account is the hard part, not the
+  code.
+
+Sources: seller-uk essay 3291731840829206 (trading cards policy), seller-us essay
+2274231656367918 (collectibles requirements), partner.tiktokshop.com authorization
+overview (202407).
 
 #### Amazon SP-API — open, but the gate is a tier and a review
 
@@ -428,8 +454,9 @@ buckets, and the bucket predicts the work far better than the feature list does:
 
 1. **Self-serve today** — CardTrader, Cardmarket, CardNexus, eBay (Sell), and probably Mana
    Pool. A token or key from an account page. Build against these first.
-2. **Application with a real chance of refusal** — Amazon SP-API. Professional tier plus a
-   reviewed developer profile.
+2. **Application with a real chance of refusal** — Amazon SP-API (Professional tier plus a
+   reviewed developer profile), and TikTok Shop (lighter: Custom App plus a ~2–3 day scope
+   review, but singles need the pre-owned invite on the seller account).
 3. **Closed to new applicants** — TCGPlayer and Whatnot. Both fully documented. Both
    unobtainable. File-based connectors or nothing.
 4. **Not a channel at all** — Crystal Commerce and BinderPOS (competing hubs), Card Kingdom,

@@ -156,6 +156,17 @@ export interface ListingUrl {
   /** Null while the listing has no public page (draft, unpublished). */
   url: string | null;
   adminUrl?: string;
+  /** The listing's title in the platform's own spelling, when it can say. */
+  title?: string;
+}
+
+/**
+ * A listing title as a human should read it. Shopify spells a single-variant
+ * product "Name - Default Title"; the suffix is the platform's placeholder,
+ * not part of the name.
+ */
+export function displayListingTitle(title: string): string {
+  return title.replace(/ - Default Title$/, '');
 }
 
 /**

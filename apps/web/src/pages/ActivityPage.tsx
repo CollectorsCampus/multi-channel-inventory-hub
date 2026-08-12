@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useAlertAction, useAlerts, useSyncEvents, type Alert, type SyncEvent } from '../api/sync';
-import { useListingUrl } from '../api/listings';
+import { displayListingTitle, useListingUrl } from '../api/listings';
 
 /**
  * A channel's name, linking to its card on the Channels page.
@@ -170,11 +170,15 @@ function AlertListingLink({ alert }: { alert: Alert }) {
 
   if (!link.data) return null;
 
+  // With a title the admin link *is* the item's name, which answers the
+  // question the alert raises — "what actually sold?" — in the row itself.
+  const adminLabel = link.data.title ? displayListingTitle(link.data.title) : 'Shopify admin';
+
   return (
     <p className="field-hint">
       {link.data.adminUrl && (
         <a href={link.data.adminUrl} target="_blank" rel="noreferrer">
-          Shopify admin ↗{' '}
+          {adminLabel} ↗{' '}
         </a>
       )}
       {link.data.url && (

@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { encodeJson } from '@hub/db';
 import { PrismaService } from '../prisma/prisma.service';
+import { SyslogService } from './syslog.service';
 
 /**
  * The append-only audit log (§2: "every external mutation is logged before and
@@ -28,7 +29,12 @@ export interface SyncEventDraft {
 export class SyncEventService {
   private readonly logger = new Logger(SyncEventService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Optional so tests constructing this directly need not care; when
+    // absent, nothing is shipped.
+    @Optional() private readonly syslog?: SyslogService,
+  ) {}
 
   /** Write the `pending` row before an external call. Returns its id. */
   async begin(draft: SyncEventDraft): Promise<string> {
@@ -63,7 +69,9 @@ export class SyncEventService {
     extra: { detail?: string; payload?: unknown; durationMs?: number } = {},
   ): Promise<void> {
     try {
-      await this.prisma.syncEvent.update({
+      // No `select`, deliberately: the full updated row is what syslog ships,
+      // and Prisma returns it from the update anyway — no second read.
+      const row = await this.prisma.syncEvent.update({
         where: { id: syncEventId },
         data: {
           outcome,
@@ -72,6 +80,7 @@ export class SyncEventService {
           durationMs: extra.durationMs ?? null,
         },
       });
+      this.syslog?.emitSyncEvent(row);
     } catch (error) {
       // Losing the audit write must not fail the operation it describes.
       this.logger.warn(`Could not finalise sync event ${syncEventId}: ${(error as Error).message}`);

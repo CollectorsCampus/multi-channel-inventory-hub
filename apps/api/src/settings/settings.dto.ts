@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 /**
  * Every field optional, and absent means "leave alone".
@@ -85,4 +86,31 @@ export class UpdateOidcSettingsDto {
   @IsString()
   @MaxLength(1000)
   allowedEndpointOrigins?: string;
+}
+
+/** Partial write for the remote-syslog form; absent means "leave alone". */
+export class UpdateSyslogSettingsDto {
+  @ApiPropertyOptional({ description: 'Ship alerts and sync activity to the collector below.' })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ example: '192.168.1.50', description: 'Collector hostname or address.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  host?: string;
+
+  @ApiPropertyOptional({ default: 514 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  port?: number;
+
+  @ApiPropertyOptional({ enum: ['udp', 'tcp'], default: 'udp' })
+  @IsOptional()
+  @IsIn(['udp', 'tcp'])
+  protocol?: 'udp' | 'tcp';
 }

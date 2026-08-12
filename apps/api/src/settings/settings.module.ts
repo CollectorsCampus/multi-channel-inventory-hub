@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { AlertsModule } from '../sync/alerts.module';
 import { AuthSettingsModule } from './auth-settings.module';
 import { SettingsService } from './settings.service';
 import { SettingsController } from './settings.controller';
@@ -13,7 +14,9 @@ import { SettingsController } from './settings.controller';
  * `AuthSettingsModule`, which both import. See that file for why.
  */
 @Module({
-  imports: [AuthSettingsModule, AuthModule],
+  // AlertsModule for SyslogService — the syslog form is a settings concern,
+  // but the emitter has to live beside the alert writer it ships for.
+  imports: [AuthSettingsModule, AuthModule, AlertsModule],
   controllers: [SettingsController],
   providers: [SettingsService],
 })

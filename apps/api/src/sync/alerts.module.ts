@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AlertsService } from './alerts.service';
+import { SyslogService } from './syslog.service';
 
 /**
  * Alerts on their own, so anything can raise one.
@@ -15,7 +16,10 @@ import { AlertsService } from './alerts.service';
  * movable. `SyncModule` re-exports it so its existing consumers are unchanged.
  */
 @Module({
-  providers: [AlertsService],
-  exports: [AlertsService],
+  // SyslogService lives here rather than in SyncModule for the same reason
+  // AlertsService does: it depends on Prisma and nothing else, and both the
+  // alert writer here and SyncEventService over there need to reach it.
+  providers: [AlertsService, SyslogService],
+  exports: [AlertsService, SyslogService],
 })
 export class AlertsModule {}

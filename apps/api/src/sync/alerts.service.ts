@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { decodeJson, encodeJson } from '@hub/db';
 import { PrismaService } from '../prisma/prisma.service';
+import { SyslogService } from './syslog.service';
 
 /**
  * The only writer of alerts (§7).
@@ -83,7 +84,12 @@ export interface RaiseFlagInput extends Omit<RaiseAlertInput, 'title' | 'detail'
 
 @Injectable()
 export class AlertsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Optional so the many tests that construct this service directly need
+    // not care about shipping; when absent, nothing is emitted.
+    @Optional() private readonly syslog?: SyslogService,
+  ) {}
 
   /**
    * Raise a new alert unconditionally.
@@ -94,7 +100,7 @@ export class AlertsService {
    * true; that is `raiseFlag`.
    */
   async raise(input: RaiseAlertInput): Promise<{ id: string }> {
-    return this.prisma.alert.create({
+    const created = await this.prisma.alert.create({
       data: {
         kind: input.kind,
         severity: input.severity,
@@ -109,6 +115,15 @@ export class AlertsService {
       },
       select: { id: true },
     });
+    this.syslog?.emitAlert({
+      event: 'raised',
+      kind: input.kind,
+      severity: input.severity,
+      title: input.title,
+      detail: input.detail,
+      channelInstanceId: input.channelInstanceId,
+    });
+    return created;
   }
 
   /**
@@ -148,6 +163,17 @@ export class AlertsService {
           severityRank: rankOf(input.severity),
         },
       });
+      // Shipped on every refresh, unlike a future email digest: syslog is a
+      // log stream, and deduplication is the collector's job, not ours.
+      this.syslog?.emitAlert({
+        event: 'refreshed',
+        kind: input.kind,
+        severity: input.severity,
+        title,
+        detail,
+        channelInstanceId: input.channelInstanceId,
+        occurrences,
+      });
       return { id: existing.id, occurrences };
     }
 
@@ -173,6 +199,13 @@ export class AlertsService {
     await this.prisma.alert.update({
       where: { id: existing.id },
       data: { status: 'resolved', resolvedAt: new Date() },
+    });
+    this.syslog?.emitAlert({
+      event: 'resolved',
+      kind,
+      severity: 'info',
+      title: `Flag cleared (${source})`,
+      channelInstanceId,
     });
     return true;
   }

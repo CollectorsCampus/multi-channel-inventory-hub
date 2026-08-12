@@ -137,6 +137,12 @@ export interface ListingUrlRequest {
 export interface ListingUrlResult {
   url: string | null;
   adminUrl?: string;
+  /**
+   * The listing's title in the platform's own spelling, so a caller can name
+   * the thing it is linking to rather than showing a bare platform id. Optional
+   * because not every platform can answer it in the same read.
+   */
+  title?: string;
 }
 
 /**

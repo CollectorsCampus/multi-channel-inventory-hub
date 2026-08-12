@@ -172,6 +172,7 @@ function mockClient(overrides: Record<string, unknown> = {}) {
       if (query.includes('HubListingUrl')) {
         return (overrides.listingUrl ?? {
           node: {
+            displayName: 'Pikachu ex - Near Mint',
             product: {
               id: PRODUCT,
               legacyResourceId: '333',
@@ -1681,7 +1682,24 @@ describe('resolving a listing url', () => {
     expect(await connector.listingUrl!(ctx(), { externalListingId: VARIANT })).toEqual({
       url: 'https://www.example-store.com/products/pikachu-ex',
       adminUrl: 'https://test-store.myshopify.com/admin/products/333',
+      title: 'Pikachu ex - Near Mint',
     });
+  });
+
+  /**
+   * A variant that answers no displayName produces no title key at all — the
+   * caller distinguishes "platform did not say" from an empty string.
+   */
+  it('omits the title when the platform reports none', async () => {
+    const { client } = mockClient({
+      listingUrl: {
+        node: { product: { id: PRODUCT, legacyResourceId: '333', onlineStoreUrl: null } },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.listingUrl!(ctx(), { externalListingId: VARIANT });
+    expect('title' in result).toBe(false);
   });
 
   /**

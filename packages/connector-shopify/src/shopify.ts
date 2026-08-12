@@ -415,6 +415,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
 
       const data = await client.request<{
         node: {
+          displayName?: string;
           product?: { id?: string; legacyResourceId?: string; onlineStoreUrl?: string | null };
         } | null;
       }>(ctx, LISTING_URL_QUERY, { id: req.externalListingId });
@@ -430,6 +431,13 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       const result: ListingUrlResult = { url: product.onlineStoreUrl ?? null };
       if (shopDomain && product.legacyResourceId) {
         result.adminUrl = `https://${shopDomain}/admin/products/${product.legacyResourceId}`;
+      }
+      // Verbatim, exactly as enumerateListings reports titles — including the
+      // " - Default Title" suffix on a single-variant product. Tidying the
+      // platform's spelling is a presentation choice, and it belongs to the
+      // screen making it.
+      if (data.node?.displayName) {
+        result.title = data.node.displayName;
       }
       return result;
     },
@@ -1733,6 +1741,7 @@ const LISTING_URL_QUERY = /* GraphQL */ `
   query HubListingUrl($id: ID!) {
     node(id: $id) {
       ... on ProductVariant {
+        displayName
         product {
           id
           legacyResourceId

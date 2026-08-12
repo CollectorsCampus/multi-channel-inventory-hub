@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   describeDriftKind,
@@ -86,6 +86,16 @@ export function ChannelsPage() {
   const channels = useChannels();
   const connectors = useConnectors();
   const [adding, setAdding] = useState(false);
+
+  // Alert and log rows on the Activity page link here as /channels#<id>. The
+  // cards render only after the channels query resolves, so the browser's own
+  // load-time hash scroll finds nothing — scroll once the target exists.
+  useEffect(() => {
+    if (!channels.data) return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    document.getElementById(hash)?.scrollIntoView({ block: 'start' });
+  }, [channels.data]);
 
   if (channels.isError) {
     const message = (channels.error as Error).message;
@@ -254,7 +264,7 @@ function ChannelCard({ channel }: { channel: Channel }) {
   );
 
   return (
-    <div className="panel">
+    <div className="panel" id={channel.id}>
       <div className="channel-head">
         <div>
           <h2>{channel.displayName}</h2>

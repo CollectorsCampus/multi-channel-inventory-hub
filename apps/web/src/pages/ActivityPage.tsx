@@ -1,6 +1,24 @@
 import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { useAlertAction, useAlerts, useSyncEvents, type Alert, type SyncEvent } from '../api/sync';
 import { useListingUrl } from '../api/listings';
+
+/**
+ * A channel's name, linking to its card on the Channels page.
+ *
+ * The id rides as the hash so the page can scroll to the card once its data
+ * loads. A name with no id (the channel has since been deleted) stays plain
+ * text — a link to a card that no longer exists would 404 the reader's trust,
+ * not the browser.
+ */
+function ChannelRef({ id, name }: { id: string | null; name: string }) {
+  if (!id) return <code>{name}</code>;
+  return (
+    <Link to="/channels" hash={id}>
+      <code>{name}</code>
+    </Link>
+  );
+}
 
 /**
  * Sync activity and the conflict inbox (§7).
@@ -84,7 +102,7 @@ function AlertRow({
         <span className={`chip severity-${alert.severity}`}>{alert.severity}</span>
         <strong>{alert.title}</strong>
         <span className="muted">{alert.kind.replace(/_/g, ' ')}</span>
-        {alert.channelName && <code>{alert.channelName}</code>}
+        {alert.channelName && <ChannelRef id={alert.channelInstanceId} name={alert.channelName} />}
         <span className="muted">{new Date(alert.createdAt).toLocaleString()}</span>
       </div>
 
@@ -270,7 +288,13 @@ function EventRow({ event }: { event: SyncEvent }) {
         <td>{new Date(event.ts).toLocaleTimeString()}</td>
         <td>{event.direction}</td>
         <td>{event.operation ?? event.entityType}</td>
-        <td>{event.channelName ?? '—'}</td>
+        <td>
+          {event.channelName ? (
+            <ChannelRef id={event.channelInstanceId} name={event.channelName} />
+          ) : (
+            '—'
+          )}
+        </td>
         <td>
           <span className={`chip outcome-${event.outcome}`}>{event.outcome}</span>
         </td>

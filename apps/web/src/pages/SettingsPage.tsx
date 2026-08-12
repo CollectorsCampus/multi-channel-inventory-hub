@@ -7,10 +7,14 @@ import { useChannels } from '../api/channels';
 import { useCatalogClearPreview, useClearCatalog, useLocalSets } from '../api/catalog';
 import {
   useOidcSettings,
+  useSyslogSettings,
   useTestOidcSettings,
+  useTestSyslog,
   useUpdateOidcSettings,
+  useUpdateSyslogSettings,
   type OidcField,
   type OidcSettingsPatch,
+  type SyslogSettings,
 } from '../api/settings';
 import {
   ROLE_DESCRIPTIONS,
@@ -58,6 +62,7 @@ export function SettingsPage() {
 
       <Deployment />
       {isAdmin && <SingleSignOn />}
+      {isAdmin && <RemoteSyslog />}
       {isAdmin && <ClearCatalog />}
       <Navigation />
 
@@ -298,6 +303,102 @@ function SingleSignOn() {
           exercises.
         </p>
       )}
+      {test.isError && <p className="error">{(test.error as Error).message}</p>}
+      {update.isError && <p className="error">{(update.error as Error).message}</p>}
+    </div>
+  );
+}
+
+/**
+ * Remote syslog: ship alerts and sync activity to a collector.
+ *
+ * Structured events, not container logs — Docker's own syslog logging driver
+ * covers raw stdout with no hub involvement, and the hint says so rather than
+ * letting anyone wire both and wonder why every line arrives twice.
+ */
+function RemoteSyslog() {
+  const settings = useSyslogSettings(true);
+  const update = useUpdateSyslogSettings();
+  const test = useTestSyslog();
+
+  const [patch, setPatch] = useState<Partial<SyslogSettings>>({});
+  const view = settings.data;
+  if (!view) return null;
+
+  const current = <K extends keyof SyslogSettings>(name: K): SyslogSettings[K] =>
+    (patch[name] ?? view[name]) as SyslogSettings[K];
+  const set = <K extends keyof SyslogSettings>(name: K, value: SyslogSettings[K]) =>
+    setPatch((p) => ({ ...p, [name]: value }));
+  const dirty = Object.keys(patch).length > 0;
+
+  return (
+    <div className="panel">
+      <h2>Remote syslog</h2>
+      <p className="muted">
+        Ships every alert and sync event to a collector as RFC 5424 messages with JSON bodies — what
+        the Activity page shows, as a log stream. Container logs are separate; point Docker&apos;s
+        syslog logging driver at the same collector for those.
+      </p>
+
+      <div className="inline-form">
+        <label htmlFor="syslog-host">Collector</label>
+        <input
+          id="syslog-host"
+          placeholder="hostname or address"
+          value={current('host')}
+          onChange={(e) => set('host', e.target.value)}
+        />
+
+        <label htmlFor="syslog-port">Port</label>
+        <input
+          id="syslog-port"
+          type="number"
+          min={1}
+          max={65535}
+          value={current('port')}
+          onChange={(e) => set('port', Number(e.target.value))}
+        />
+
+        <label htmlFor="syslog-protocol">Protocol</label>
+        <select
+          id="syslog-protocol"
+          value={current('protocol')}
+          onChange={(e) => set('protocol', e.target.value as 'udp' | 'tcp')}
+        >
+          <option value="udp">UDP</option>
+          <option value="tcp">TCP</option>
+        </select>
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={current('enabled')}
+            onChange={(e) => set('enabled', e.target.checked)}
+          />
+          Enabled
+        </label>
+
+        <button
+          type="button"
+          className="primary"
+          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+          disabled={!dirty || update.isPending}
+        >
+          {update.isPending ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => test.mutate()}
+          disabled={test.isPending || dirty || view.host === ''}
+          title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
+        >
+          {test.isPending ? 'Sending…' : 'Send test message'}
+        </button>
+        {dirty && <span className="muted">Unsaved changes</span>}
+      </div>
+
+      {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
       {test.isError && <p className="error">{(test.error as Error).message}</p>}
       {update.isError && <p className="error">{(update.error as Error).message}</p>}
     </div>

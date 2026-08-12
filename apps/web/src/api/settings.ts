@@ -98,3 +98,45 @@ export function useTestOidcSettings() {
       }),
   });
 }
+
+/** Remote syslog: where alerts and sync activity are shipped as RFC 5424. */
+export interface SyslogSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  protocol: 'udp' | 'tcp';
+}
+
+export function useSyslogSettings(enabled: boolean) {
+  return useQuery({
+    queryKey: ['settings', 'syslog'],
+    queryFn: () => apiFetch<SyslogSettings>('/settings/syslog'),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useUpdateSyslogSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<SyslogSettings>) =>
+      apiFetch<SyslogSettings>('/settings/syslog', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['settings', 'syslog'] });
+    },
+  });
+}
+
+/**
+ * Sends one test message with the *saved* settings — save first. TCP reports
+ * delivery honestly; UDP can only ever say "sent".
+ */
+export function useTestSyslog() {
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ ok: boolean; detail: string }>('/settings/syslog/test', { method: 'POST' }),
+  });
+}

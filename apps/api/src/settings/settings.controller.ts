@@ -1,8 +1,9 @@
 import { Body, Controller, Get, Post, Put } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequireRole } from '../auth/decorators';
+import { SyslogService } from '../sync/syslog.service';
 import { SettingsService } from './settings.service';
-import { UpdateOidcSettingsDto } from './settings.dto';
+import { UpdateOidcSettingsDto, UpdateSyslogSettingsDto } from './settings.dto';
 
 /**
  * Instance settings an admin may change without a shell.
@@ -16,7 +17,43 @@ import { UpdateOidcSettingsDto } from './settings.dto';
 @ApiTags('settings')
 @Controller('settings')
 export class SettingsController {
-  constructor(private readonly settings: SettingsService) {}
+  constructor(
+    private readonly settings: SettingsService,
+    private readonly syslog: SyslogService,
+  ) {}
+
+  @Get('syslog')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Remote syslog configuration.',
+    description:
+      'Where alerts and sync activity are shipped as RFC 5424 messages. Container logs are a ' +
+      'different stream — Docker’s own syslog logging driver covers those with no hub involvement.',
+  })
+  syslogSettings() {
+    return this.syslog.view();
+  }
+
+  @Put('syslog')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Change remote syslog configuration. Applies immediately — no restart.',
+  })
+  updateSyslog(@Body() body: UpdateSyslogSettingsDto) {
+    return this.syslog.update(body);
+  }
+
+  @Post('syslog/test')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Send one test message to the configured collector.',
+    description:
+      'TCP reports whether the collector accepted the connection. UDP is connectionless, so ' +
+      '"sent" is all it can truthfully claim — check the collector for arrival.',
+  })
+  testSyslog() {
+    return this.syslog.test();
+  }
 
   @Get('oidc')
   @RequireRole('admin')

@@ -3,6 +3,41 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.8.0] — 2026-08-11
+
+Prices follow the market. Current market figures are pulled at least daily for everything
+the ledger has allocated, and each channel turns them into asking prices under rules you
+set once — automatically for small moves, by your confirmation for big ones.
+
+**Contains a schema migration** (two new tables and one column). The container applies it
+automatically at start; the daily sweep schedules itself on first boot (`REPRICE_CRON`,
+default 03:30).
+
+### Added
+
+- **Daily market prices.** A scheduled sweep fetches current figures from the catalogue
+  sources that publish them (tcgcsv and Scryfall; CardTrader's catalogue carries none) for
+  every allocated item, **per printing** — a foil is priced off the foil's market, never
+  the plain printing's by fallback — and records them with the previous figure kept, so a
+  change reads as was/now.
+- **Repricing rules, per channel.** Percent of market per condition (a condition you have
+  not declared is **never** repriced — the hub does not invent multipliers), optional
+  rounding to .99, a price floor, and a churn guard for sub-cent noise. Applied prices go
+  out through the normal push path and land in the sync log.
+- **Auto-apply under your threshold, review above it.** `autoApplyMaxPct` is the line:
+  moves within it apply on the sweep; bigger ones become proposals on the channel card —
+  current → proposed with the market figure and the arithmetic — with Apply and Dismiss
+  per row, and an info alert while any wait. No threshold set means everything reviews. A
+  dismissal is deliberately not remembered: the next sweep re-proposes what the market
+  still says.
+- **Sweep now.** The same code as the nightly run, from the channel card, reporting what
+  it checked, recorded, applied and queued.
+
+### Changed
+
+- `CatalogCandidate` gains `pricesByPrinting`; the tcgcsv and Scryfall sources fill it.
+  Existing consumers of the scalar `marketPrice` are unchanged.
+
 ## [0.7.0] — 2026-08-10
 
 The storefront stays true to the shelf. A sold-out single can now unpublish itself, an

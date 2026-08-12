@@ -186,131 +186,144 @@ function SingleSignOn() {
 
   return (
     <div className="panel">
-      <h2>Single sign-on</h2>
-      <p className="muted">
-        Any OpenID Connect provider, with PKCE. Applies immediately — no restart. Register{' '}
-        <code>{view.redirectUri}</code> as the redirect URI with your provider.
-      </p>
-
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={locked('enabled')}
-          onChange={(event) => set('enabled', event.target.checked)}
-        />
-        Offer SSO on the login screen
-        {locked('enabled') && <span className="chip">set by the environment</span>}
-      </label>
-
-      {text(
-        'issuer',
-        'Issuer URL',
-        'The base URL; discovery appends /.well-known/openid-configuration. For Entra use your tenant id, never "common".',
-        'https://login.microsoftonline.com/<tenant>/v2.0',
-      )}
-      {text('clientId', 'Client ID')}
-
-      <label className="field">
-        <span>
-          Client secret
-          {locked('clientSecret') && <span className="chip"> set by the environment</span>}
-        </span>
-        <input
-          type="password"
-          value={patch.clientSecret ?? ''}
-          disabled={locked('clientSecret')}
-          placeholder={view.clientSecretSet ? 'Stored — leave blank to keep' : 'Not set'}
-          onChange={(event) => set('clientSecret', event.target.value)}
-        />
-        <span className="field-hint">
-          Stored encrypted and never shown again. Register the app as a <em>Web</em> client, not a
-          single-page application — the code is exchanged here, with this secret.
-        </span>
-      </label>
-
-      {text('scopes', 'Scopes')}
-      {text(
-        'roleClaim',
-        'Role claim',
-        'Set it and the provider becomes authoritative: the mapped role is reapplied on every login. Blank leaves roles managed here.',
-        'roles',
-      )}
-      {text(
-        'roleMap',
-        'Role map',
-        'Matched exactly, including case. An unmapped value falls back to the default role and is logged.',
-        '{"admin":"admin","viewer":"viewer"}',
-      )}
-
-      <label className="field">
-        <span>
-          Role for anyone unmapped
-          {locked('defaultRole') && <span className="chip"> set by the environment</span>}
-        </span>
-        <select
-          value={current('defaultRole')}
-          disabled={locked('defaultRole')}
-          onChange={(event) => set('defaultRole', event.target.value)}
-        >
-          {USER_ROLES.map((role) => (
-            <option key={role} value={role}>
-              {role}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={(patch.allowLocalLogin ?? field('allowLocalLogin').value === 'true') === true}
-          disabled={locked('allowLocalLogin')}
-          onChange={(event) => set('allowLocalLogin', event.target.checked)}
-        />
-        Keep password login working
-        {locked('allowLocalLogin') && <span className="chip">set by the environment</span>}
-      </label>
-      <p className="field-hint">
-        Break-glass. Turning it off is refused until an SSO user has actually signed in, because a
-        mistyped redirect URI would otherwise lock everyone out.
-      </p>
-
-      {text(
-        'allowedEndpointOrigins',
-        'Extra endpoint origins',
-        'Only if the provider serves endpoints off its issuer’s origin. Google does; Entra, Auth0, Keycloak and Okta do not.',
-        'https://oauth2.googleapis.com',
-      )}
-
-      <div className="inline-form">
-        <button
-          type="button"
-          onClick={() => test.mutate(patch)}
-          disabled={test.isPending || current('issuer') === ''}
-        >
-          {test.isPending ? 'Testing…' : 'Test connection'}
-        </button>
-        <button
-          type="button"
-          className="primary"
-          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
-          disabled={!dirty || update.isPending}
-        >
-          {update.isPending ? 'Saving…' : 'Save'}
-        </button>
-        {dirty && <span className="muted">Unsaved changes</span>}
-      </div>
-
-      {test.isSuccess && (
-        <p className="field-hint">
-          Reached <code>{test.data.issuer}</code>. This proves the issuer resolves and its endpoints
-          are allowed — it does <em>not</em> check the client secret, which only a real sign-in
-          exercises.
+      {/* Collapsed by default: SSO is configured once and rarely revisited,
+          and expanded it dominates the screen. Unsaved edits survive a
+          collapse — the details element hides, never unmounts. */}
+      <details className="panel-details">
+        <summary>
+          <h2>Single sign-on</h2>
+          <span
+            className={`summary-state ${field('enabled').value === 'true' ? 'state-on' : 'state-off'}`}
+          >
+            {field('enabled').value === 'true' ? 'On' : 'Off'}
+          </span>
+          {dirty && <span className="muted"> · Unsaved changes</span>}
+        </summary>
+        <p className="muted">
+          Any OpenID Connect provider, with PKCE. Applies immediately — no restart. Register{' '}
+          <code>{view.redirectUri}</code> as the redirect URI with your provider.
         </p>
-      )}
-      {test.isError && <p className="error">{(test.error as Error).message}</p>}
-      {update.isError && <p className="error">{(update.error as Error).message}</p>}
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={locked('enabled')}
+            onChange={(event) => set('enabled', event.target.checked)}
+          />
+          Offer SSO on the login screen
+          {locked('enabled') && <span className="chip">set by the environment</span>}
+        </label>
+
+        {text(
+          'issuer',
+          'Issuer URL',
+          'The base URL; discovery appends /.well-known/openid-configuration. For Entra use your tenant id, never "common".',
+          'https://login.microsoftonline.com/<tenant>/v2.0',
+        )}
+        {text('clientId', 'Client ID')}
+
+        <label className="field">
+          <span>
+            Client secret
+            {locked('clientSecret') && <span className="chip"> set by the environment</span>}
+          </span>
+          <input
+            type="password"
+            value={patch.clientSecret ?? ''}
+            disabled={locked('clientSecret')}
+            placeholder={view.clientSecretSet ? 'Stored — leave blank to keep' : 'Not set'}
+            onChange={(event) => set('clientSecret', event.target.value)}
+          />
+          <span className="field-hint">
+            Stored encrypted and never shown again. Register the app as a <em>Web</em> client, not a
+            single-page application — the code is exchanged here, with this secret.
+          </span>
+        </label>
+
+        {text('scopes', 'Scopes')}
+        {text(
+          'roleClaim',
+          'Role claim',
+          'Set it and the provider becomes authoritative: the mapped role is reapplied on every login. Blank leaves roles managed here.',
+          'roles',
+        )}
+        {text(
+          'roleMap',
+          'Role map',
+          'Matched exactly, including case. An unmapped value falls back to the default role and is logged.',
+          '{"admin":"admin","viewer":"viewer"}',
+        )}
+
+        <label className="field">
+          <span>
+            Role for anyone unmapped
+            {locked('defaultRole') && <span className="chip"> set by the environment</span>}
+          </span>
+          <select
+            value={current('defaultRole')}
+            disabled={locked('defaultRole')}
+            onChange={(event) => set('defaultRole', event.target.value)}
+          >
+            {USER_ROLES.map((role) => (
+              <option key={role} value={role}>
+                {role}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={(patch.allowLocalLogin ?? field('allowLocalLogin').value === 'true') === true}
+            disabled={locked('allowLocalLogin')}
+            onChange={(event) => set('allowLocalLogin', event.target.checked)}
+          />
+          Keep password login working
+          {locked('allowLocalLogin') && <span className="chip">set by the environment</span>}
+        </label>
+        <p className="field-hint">
+          Break-glass. Turning it off is refused until an SSO user has actually signed in, because a
+          mistyped redirect URI would otherwise lock everyone out.
+        </p>
+
+        {text(
+          'allowedEndpointOrigins',
+          'Extra endpoint origins',
+          'Only if the provider serves endpoints off its issuer’s origin. Google does; Entra, Auth0, Keycloak and Okta do not.',
+          'https://oauth2.googleapis.com',
+        )}
+
+        <div className="inline-form">
+          <button
+            type="button"
+            onClick={() => test.mutate(patch)}
+            disabled={test.isPending || current('issuer') === ''}
+          >
+            {test.isPending ? 'Testing…' : 'Test connection'}
+          </button>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+            disabled={!dirty || update.isPending}
+          >
+            {update.isPending ? 'Saving…' : 'Save'}
+          </button>
+          {dirty && <span className="muted">Unsaved changes</span>}
+        </div>
+
+        {test.isSuccess && (
+          <p className="field-hint">
+            Reached <code>{test.data.issuer}</code>. This proves the issuer resolves and its
+            endpoints are allowed — it does <em>not</em> check the client secret, which only a real
+            sign-in exercises.
+          </p>
+        )}
+        {test.isError && <p className="error">{(test.error as Error).message}</p>}
+        {update.isError && <p className="error">{(update.error as Error).message}</p>}
+      </details>
     </div>
   );
 }
@@ -339,125 +352,134 @@ function EmailAlerts() {
 
   return (
     <div className="panel">
-      <h2>Email alerts</h2>
-      <p className="muted">
-        Emails each new alert at or above the threshold, and any alert that worsens. Repeats of an
-        open alert are deliberately silent — the Activity page keeps the count.
-      </p>
+      <details className="panel-details">
+        <summary>
+          <h2>Email alerts</h2>
+          <span className={`summary-state ${view.enabled ? 'state-on' : 'state-off'}`}>
+            {view.enabled ? 'On' : 'Off'}
+          </span>
+          {dirty && <span className="muted"> · Unsaved changes</span>}
+        </summary>
+        <p className="muted">
+          Emails each new alert at or above the threshold, and any alert that worsens. Repeats of an
+          open alert are deliberately silent — the Activity page keeps the count.
+        </p>
 
-      <label className="field">
-        <span>SMTP server</span>
-        <input
-          placeholder="e.g. smtp.mx.cloudflare.net"
-          value={current('host')}
-          onChange={(e) => set('host', e.target.value)}
-        />
-        <span className="field-hint">
-          For Cloudflare Email Sending: <code>smtp.mx.cloudflare.net</code>, port 465 with implicit
-          TLS on, username <code>api_token</code>, and an API token with Email Sending permission as
-          the password. The from address must be a domain onboarded for Email Sending.
-        </span>
-      </label>
-
-      <div className="inline-form">
-        <label htmlFor="email-port">Port</label>
-        <input
-          id="email-port"
-          type="number"
-          min={1}
-          max={65535}
-          value={current('port')}
-          onChange={(e) => set('port', Number(e.target.value))}
-        />
-        <label className="inline-check">
+        <label className="field">
+          <span>SMTP server</span>
           <input
-            type="checkbox"
-            checked={current('secure')}
-            onChange={(e) => set('secure', e.target.checked)}
+            placeholder="e.g. smtp.mx.cloudflare.net"
+            value={current('host')}
+            onChange={(e) => set('host', e.target.value)}
           />
-          Implicit TLS (port 465)
-        </label>
-      </div>
-
-      <div className="inline-form">
-        <label htmlFor="email-user">Username</label>
-        <input
-          id="email-user"
-          placeholder="blank = no authentication"
-          value={current('username')}
-          onChange={(e) => set('username', e.target.value)}
-        />
-        <label htmlFor="email-pass">Password</label>
-        <input
-          id="email-pass"
-          type="password"
-          placeholder={view.passwordSet ? 'Stored — leave blank to keep' : 'Not set'}
-          value={patch.password ?? ''}
-          onChange={(e) => set('password', e.target.value)}
-        />
-      </div>
-
-      <div className="inline-form">
-        <label htmlFor="email-from">From</label>
-        <input
-          id="email-from"
-          placeholder="hub@yourdomain.com"
-          value={current('from')}
-          onChange={(e) => set('from', e.target.value)}
-        />
-        <label htmlFor="email-to">To</label>
-        <input
-          id="email-to"
-          placeholder="you@yourdomain.com, other@…"
-          value={current('to')}
-          onChange={(e) => set('to', e.target.value)}
-        />
-      </div>
-
-      <div className="inline-form">
-        <label htmlFor="email-threshold">Email alerts at</label>
-        <select
-          id="email-threshold"
-          value={current('threshold')}
-          onChange={(e) => set('threshold', e.target.value as EmailSettings['threshold'])}
-        >
-          <option value="critical">critical only</option>
-          <option value="warning">warning and up</option>
-          <option value="info">everything</option>
-        </select>
-
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={current('enabled')}
-            onChange={(e) => set('enabled', e.target.checked)}
-          />
-          Enabled
+          <span className="field-hint">
+            For Cloudflare Email Sending: <code>smtp.mx.cloudflare.net</code>, port 465 with
+            implicit TLS on, username <code>api_token</code>, and an API token with Email Sending
+            permission as the password. The from address must be a domain onboarded for Email
+            Sending.
+          </span>
         </label>
 
-        <button
-          type="button"
-          className="primary"
-          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
-          disabled={!dirty || update.isPending}
-        >
-          {update.isPending ? 'Saving…' : 'Save'}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => test.mutate()}
-          disabled={test.isPending || dirty || view.host === ''}
-          title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
-        >
-          {test.isPending ? 'Sending…' : 'Send test email'}
-        </button>
-        {dirty && <span className="muted">Unsaved changes</span>}
-      </div>
+        <div className="inline-form">
+          <label htmlFor="email-port">Port</label>
+          <input
+            id="email-port"
+            type="number"
+            min={1}
+            max={65535}
+            value={current('port')}
+            onChange={(e) => set('port', Number(e.target.value))}
+          />
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={current('secure')}
+              onChange={(e) => set('secure', e.target.checked)}
+            />
+            Implicit TLS (port 465)
+          </label>
+        </div>
 
-      {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
-      {test.isError && <p className="error">{(test.error as Error).message}</p>}
-      {update.isError && <p className="error">{(update.error as Error).message}</p>}
+        <div className="inline-form">
+          <label htmlFor="email-user">Username</label>
+          <input
+            id="email-user"
+            placeholder="blank = no authentication"
+            value={current('username')}
+            onChange={(e) => set('username', e.target.value)}
+          />
+          <label htmlFor="email-pass">Password</label>
+          <input
+            id="email-pass"
+            type="password"
+            placeholder={view.passwordSet ? 'Stored — leave blank to keep' : 'Not set'}
+            value={patch.password ?? ''}
+            onChange={(e) => set('password', e.target.value)}
+          />
+        </div>
+
+        <div className="inline-form">
+          <label htmlFor="email-from">From</label>
+          <input
+            id="email-from"
+            placeholder="hub@yourdomain.com"
+            value={current('from')}
+            onChange={(e) => set('from', e.target.value)}
+          />
+          <label htmlFor="email-to">To</label>
+          <input
+            id="email-to"
+            placeholder="you@yourdomain.com, other@…"
+            value={current('to')}
+            onChange={(e) => set('to', e.target.value)}
+          />
+        </div>
+
+        <div className="inline-form">
+          <label htmlFor="email-threshold">Email alerts at</label>
+          <select
+            id="email-threshold"
+            value={current('threshold')}
+            onChange={(e) => set('threshold', e.target.value as EmailSettings['threshold'])}
+          >
+            <option value="critical">critical only</option>
+            <option value="warning">warning and up</option>
+            <option value="info">everything</option>
+          </select>
+
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={current('enabled')}
+              onChange={(e) => set('enabled', e.target.checked)}
+            />
+            Enabled
+          </label>
+
+          <button
+            type="button"
+            className="primary"
+            onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+            disabled={!dirty || update.isPending}
+          >
+            {update.isPending ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => test.mutate()}
+            disabled={test.isPending || dirty || view.host === ''}
+            title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
+          >
+            {test.isPending ? 'Sending…' : 'Send test email'}
+          </button>
+          {dirty && <span className="muted">Unsaved changes</span>}
+        </div>
+
+        {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
+        {test.isError && <p className="error">{(test.error as Error).message}</p>}
+        {update.isError && <p className="error">{(update.error as Error).message}</p>}
+      </details>
     </div>
   );
 }

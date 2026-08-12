@@ -1093,6 +1093,38 @@ button.sort {
   margin-bottom: 1.25rem;
 }
 
+/** A panel whose whole body is a disclosure — for sections configured once
+    and rarely revisited. The summary is the panel's own heading. */
+.panel-details > summary {
+  cursor: pointer;
+}
+
+/** Saved on/off state beside a collapsed panel's heading, so the row answers
+    the only question a closed section gets asked. Green is the pooled green —
+    the app's one "healthy" colour. */
+.summary-state {
+  margin-left: 0.75rem;
+  font-weight: 600;
+}
+
+.summary-state.state-on {
+  color: var(--pooled);
+}
+
+.summary-state.state-off {
+  color: var(--error);
+}
+
+.panel-details > summary:hover {
+  color: var(--accent, inherit);
+}
+
+.panel-details > summary > h2 {
+  display: inline-block;
+  margin: 0;
+  vertical-align: middle;
+}
+
 .allocation {
   padding: 0.75rem 0;
   border-top: 1px solid var(--border);

@@ -50,9 +50,11 @@ describe('parseRepricingPolicy', () => {
    * `__proto__` is the key that makes that concrete.
    */
   it('drops condition keys outside the SKU vocabulary, including __proto__', () => {
-    const raw = JSON.stringify({
-      conditionPercents: { NM: 100, MINT: 90, __proto__: 50, constructor: 50 },
-    });
+    // Raw JSON text, not an object literal: `__proto__: 50` in a literal is a
+    // (silently ignored) prototype-set attempt, so stringifying one never even
+    // emits the key — while JSON.parse of this creates a real own property
+    // named __proto__, which is exactly the payload a request can carry.
+    const raw = '{"conditionPercents":{"NM":100,"MINT":90,"__proto__":50,"constructor":50}}';
     const parsed = parseRepricingPolicy(raw);
     expect(parsed.conditionPercents).toEqual({ NM: 100 });
     expect(Object.getPrototypeOf(parsed.conditionPercents)).toBe(Object.prototype);

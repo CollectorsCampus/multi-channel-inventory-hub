@@ -50,6 +50,18 @@ updates:
       # not a weekly bump.
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+      # ioredis 6 switches the Redis wire protocol to RESP3 by default, under
+      # the queue layer — the part of this system whose failures are silent.
+      # Zero feature benefit here; taking it is a deliberate change with a
+      # live smoke test, not a weekly bump. (Assessed 2026-08-12, PR #94.)
+      - dependency-name: ioredis
+        update-types: [version-update:semver-major]
+      # react-table 9 is a rewrite: useReactTable is replaced by
+      # useTable({ features }), generics reorder, row models move. Migrating
+      # the one table that uses it is real work for no benefit until v9
+      # stabilises. (Assessed 2026-08-12, PR #95.)
+      - dependency-name: '@tanstack/react-table'
+        update-types: [version-update:semver-major]
 
   # ---------------------------------------------------------------------------
   # GitHub Actions. This is the one that already bit us: every action was

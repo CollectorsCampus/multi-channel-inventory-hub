@@ -15,6 +15,8 @@ export interface RepricingPolicy {
   floorCents?: number;
   autoApplyMaxPct?: number;
   minDeltaCents?: number;
+  /** Only reprice items with stock on hand; market figures are still recorded. */
+  inStockOnly?: boolean;
 }
 
 export interface RepriceProposal {

@@ -203,6 +203,7 @@ export class RepriceService {
       where: { allocations: { some: {} } },
       select: {
         id: true,
+        quantityOnHand: true,
         sku: {
           select: {
             condition: true,
@@ -398,6 +399,15 @@ export class RepriceService {
       for (const allocation of item.allocations) {
         const channel = policies.get(allocation.channelInstanceId);
         if (!channel) continue;
+
+        // Greater than zero, not merely non-zero: Shopify reports negative
+        // available for oversold stock, and an oversold item is the last one
+        // whose price should churn. Prices were still *recorded* above — the
+        // toggle gates repricing, not the market data.
+        if (channel.policy.inStockOnly && item.quantityOnHand <= 0) {
+          await this.prisma.repriceProposal.deleteMany({ where: { allocationId: allocation.id } });
+          continue;
+        }
 
         // No market figure for this exact printing means nothing to say —
         // never a fallback to another printing's number.

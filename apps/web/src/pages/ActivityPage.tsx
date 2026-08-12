@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAlertAction, useAlerts, useSyncEvents, type Alert, type SyncEvent } from '../api/sync';
+import { useListingUrl } from '../api/listings';
 
 /**
  * Sync activity and the conflict inbox (§7).
@@ -89,6 +90,8 @@ function AlertRow({
 
       {alert.detail && <p className="muted">{alert.detail}</p>}
 
+      <AlertListingLink alert={alert} />
+
       {alert.acknowledgedBy && alert.status !== 'open' && (
         <p className="field-hint">
           {alert.status === 'resolved' ? 'Resolved' : 'Acknowledged'} by {alert.acknowledgedBy}
@@ -122,6 +125,46 @@ function AlertRow({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Where the listing an alert is about lives, resolved from the channel itself.
+ *
+ * The inbound worker's unmapped-listing flag records the platform id of the
+ * listing that sold (`latestExternalListingId`), which names nothing a human
+ * can open. The channel can turn it into its admin page — the same
+ * `listing.url` read the item-detail screen uses. A channel that cannot
+ * answer (no `listing.url`, listing deleted, no channel at all) shows nothing
+ * rather than an error: the link is a convenience beside the alert, not data
+ * the inbox depends on.
+ */
+function AlertListingLink({ alert }: { alert: Alert }) {
+  const context = (alert.context ?? {}) as { latestExternalListingId?: unknown };
+  const externalListingId =
+    typeof context.latestExternalListingId === 'string' ? context.latestExternalListingId : null;
+
+  const link = useListingUrl(
+    alert.channelInstanceId ?? '',
+    externalListingId,
+    externalListingId !== null && alert.channelInstanceId !== null,
+  );
+
+  if (!link.data) return null;
+
+  return (
+    <p className="field-hint">
+      {link.data.adminUrl && (
+        <a href={link.data.adminUrl} target="_blank" rel="noreferrer">
+          Shopify admin ↗{' '}
+        </a>
+      )}
+      {link.data.url && (
+        <a href={link.data.url} target="_blank" rel="noreferrer">
+          View on store ↗{' '}
+        </a>
+      )}
+    </p>
   );
 }
 

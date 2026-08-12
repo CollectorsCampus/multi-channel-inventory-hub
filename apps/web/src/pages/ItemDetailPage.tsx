@@ -12,6 +12,7 @@ import {
   type AllocationMode,
   type InventoryItemDetail,
   type Ledger,
+  type MarketPriceView,
 } from '../api/inventory';
 import { STOCK_MOVEMENT_REASONS } from '../constants';
 import { useSyncEvents } from '../api/sync';
@@ -180,10 +181,21 @@ function ItemSyncHistory({ ledger }: { ledger: Ledger }) {
   );
 }
 
-function LedgerSummary({ ledger }: { ledger: Ledger }) {
+/** tcgcsv is TCGPlayer's market reference — the operator's primary figure. */
+const MARKET_SOURCE_ORDER = ['tcgcsv', 'scryfall'];
+
+function LedgerSummary({ ledger }: { ledger: InventoryItemDetail }) {
   const committed = ledger.allocations
     .filter((a) => a.mode === 'fixed')
     .reduce((sum, a) => sum + (a.quantityAllocated ?? 0), 0);
+
+  const markets = [...ledger.marketPrices].sort((a, b) => {
+    const rank = (s: string) => {
+      const i = MARKET_SOURCE_ORDER.indexOf(s);
+      return i === -1 ? MARKET_SOURCE_ORDER.length : i;
+    };
+    return rank(a.source) - rank(b.source) || a.source.localeCompare(b.source);
+  });
 
   return (
     <div className="stat-row">
@@ -191,8 +203,28 @@ function LedgerSummary({ ledger }: { ledger: Ledger }) {
       <Stat label="Fixed partitions" value={committed} hint="Committed to channels" />
       <Stat label="Reserved" value={ledger.reserveQuantity} hint="Held back everywhere" />
       <Stat label="Pool" value={ledger.pool} hint="Available to pooled channels" emphasis />
+      {markets.map((market) => (
+        <Stat
+          key={market.source}
+          label={`Market (${market.source})`}
+          value={formatPrice(market.price, market.currency)}
+          hint={marketHint(market)}
+        />
+      ))}
     </div>
   );
+}
+
+/**
+ * "was $x.xx" only when the figure actually moved — a sweep that confirms the
+ * same price is not a change worth a reader's attention.
+ */
+function marketHint(market: MarketPriceView): string {
+  const asOf = new Date(market.fetchedAt).toLocaleDateString();
+  if (market.previousPrice !== null && market.previousPrice !== market.price) {
+    return `was ${formatPrice(market.previousPrice, market.currency)} · ${asOf}`;
+  }
+  return `as of ${asOf}`;
 }
 
 function Stat({
@@ -202,7 +234,7 @@ function Stat({
   emphasis,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   hint: string;
   emphasis?: boolean;
 }) {

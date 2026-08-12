@@ -120,9 +120,21 @@ export function useInventoryGames() {
   });
 }
 
+/** The latest market figure the repricing sweep stored for one source. */
+export interface MarketPriceView {
+  source: string;
+  /** Cents. */
+  price: number;
+  currency: string;
+  previousPrice: number | null;
+  fetchedAt: string;
+}
+
 /** One item's ledger plus the identity needed to say what it is. */
 export type InventoryItemDetail = InventoryRow & {
   externalIds: Record<string, string>;
+  /** Empty until a repricing sweep has priced this item's printing. */
+  marketPrices: MarketPriceView[];
 };
 
 export function useInventoryItem(id: string) {

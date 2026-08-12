@@ -2,6 +2,7 @@ import { Injectable, Optional } from '@nestjs/common';
 import { decodeJson, encodeJson } from '@hub/db';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyslogService } from './syslog.service';
+import { EmailService } from './email.service';
 
 /**
  * The only writer of alerts (§7).
@@ -89,6 +90,7 @@ export class AlertsService {
     // Optional so the many tests that construct this service directly need
     // not care about shipping; when absent, nothing is emitted.
     @Optional() private readonly syslog?: SyslogService,
+    @Optional() private readonly email?: EmailService,
   ) {}
 
   /**
@@ -119,6 +121,13 @@ export class AlertsService {
       event: 'raised',
       kind: input.kind,
       severity: input.severity,
+      title: input.title,
+      detail: input.detail,
+      channelInstanceId: input.channelInstanceId,
+    });
+    this.email?.notifyAlert({
+      severity: input.severity,
+      kind: input.kind,
       title: input.title,
       detail: input.detail,
       channelInstanceId: input.channelInstanceId,
@@ -163,8 +172,8 @@ export class AlertsService {
           severityRank: rankOf(input.severity),
         },
       });
-      // Shipped on every refresh, unlike a future email digest: syslog is a
-      // log stream, and deduplication is the collector's job, not ours.
+      // Shipped on every refresh, unlike email: syslog is a log stream, and
+      // deduplication is the collector's job, not ours.
       this.syslog?.emitAlert({
         event: 'refreshed',
         kind: input.kind,
@@ -174,6 +183,19 @@ export class AlertsService {
         channelInstanceId: input.channelInstanceId,
         occurrences,
       });
+      // Email only when the condition *worsened* — a refresh at the same
+      // severity is occurrence n of a problem the operator already heard
+      // about, and re-sending it is how a sender gets filtered.
+      if (rankOf(input.severity) < rankOf(existing.severity)) {
+        this.email?.notifyAlert({
+          severity: input.severity,
+          kind: input.kind,
+          title,
+          detail,
+          channelInstanceId: input.channelInstanceId,
+          escalatedFrom: existing.severity,
+        });
+      }
       return { id: existing.id, occurrences };
     }
 
@@ -214,7 +236,7 @@ export class AlertsService {
     kind: string,
     channelInstanceId: string | null | undefined,
     source: string,
-  ): Promise<{ id: string; occurrences: number } | null> {
+  ): Promise<{ id: string; occurrences: number; severity: string } | null> {
     // Filtered in memory on `source` because it lives inside the JSON-encoded
     // context string (ADR 0001 §2) and there is no column to index. The set is
     // bounded by "open alerts of one kind on one channel", which flag semantics
@@ -224,13 +246,13 @@ export class AlertsService {
       // undefined filter entirely, which would match alerts on *every* channel
       // and let an unrelated one masquerade as this flag.
       where: { kind, channelInstanceId: channelInstanceId ?? null, status: 'open' },
-      select: { id: true, context: true },
+      select: { id: true, context: true, severity: true },
     });
 
     for (const alert of open) {
       const ctx = decodeJson<{ source?: string; occurrences?: number }>(alert.context, {});
       if (ctx.source === source) {
-        return { id: alert.id, occurrences: ctx.occurrences ?? 1 };
+        return { id: alert.id, occurrences: ctx.occurrences ?? 1, severity: alert.severity };
       }
     }
     return null;

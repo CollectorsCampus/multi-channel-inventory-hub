@@ -2,8 +2,13 @@ import { Body, Controller, Get, Post, Put } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequireRole } from '../auth/decorators';
 import { SyslogService } from '../sync/syslog.service';
+import { EmailService } from '../sync/email.service';
 import { SettingsService } from './settings.service';
-import { UpdateOidcSettingsDto, UpdateSyslogSettingsDto } from './settings.dto';
+import {
+  UpdateEmailSettingsDto,
+  UpdateOidcSettingsDto,
+  UpdateSyslogSettingsDto,
+} from './settings.dto';
 
 /**
  * Instance settings an admin may change without a shell.
@@ -20,7 +25,38 @@ export class SettingsController {
   constructor(
     private readonly settings: SettingsService,
     private readonly syslog: SyslogService,
+    private readonly email: EmailService,
   ) {}
+
+  @Get('email')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Email alerting configuration.',
+    description:
+      'SMTP settings for alert notifications. The password is never returned; `passwordSet` ' +
+      'says only whether one is stored.',
+  })
+  emailSettings() {
+    return this.email.view();
+  }
+
+  @Put('email')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Change email alerting configuration. Applies immediately — no restart.',
+  })
+  updateEmail(@Body() body: UpdateEmailSettingsDto) {
+    return this.email.update(body);
+  }
+
+  @Post('email/test')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Send one test email with the saved settings and report what SMTP said.',
+  })
+  testEmail() {
+    return this.email.test();
+  }
 
   @Get('syslog')
   @RequireRole('admin')

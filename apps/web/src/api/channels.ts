@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiFetch } from './client';
 import type { JsonSchema } from '../components/SchemaForm';
 import type { ListingMetafield } from './listings';
+import type { RepricingPolicy } from './pricing';
 
 export interface ConnectorSummary {
   key: string;
@@ -100,6 +101,8 @@ export interface Channel {
   autoListNewStock: boolean;
   /** Opt-in: draft a single's product when its pushed quantity reaches zero. */
   draftAtSellout: boolean;
+  /** How this channel turns market prices into asking prices. */
+  repricingPolicy: RepricingPolicy;
   /** What a listing created here carries. Applied verbatim; never derived. */
   listingDefaults: ChannelListingDefaults;
   webhookPath: string | null;
@@ -160,6 +163,7 @@ export function useUpdateChannel() {
       reconcileAutoCorrect?: boolean;
       autoListNewStock?: boolean;
       draftAtSellout?: boolean;
+      repricingPolicy?: RepricingPolicy;
       /** Replaced wholesale, not merged — sending `{ tags: [] }` clears them. */
       listingDefaults?: ChannelListingDefaults;
     }) => apiFetch<Channel>(`/channels/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),

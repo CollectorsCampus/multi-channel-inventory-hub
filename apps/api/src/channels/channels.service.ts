@@ -11,6 +11,11 @@ import {
   parseListingDefaults,
   type ChannelListingDefaults,
 } from './listing-defaults';
+import {
+  encodeRepricingPolicy,
+  parseRepricingPolicy,
+  type RepricingPolicy,
+} from '../pricing/repricing';
 
 /**
  * Channel instance management (§7 "Channels").
@@ -42,6 +47,8 @@ export interface ChannelSummary {
   autoListNewStock: boolean;
   /** Opt-in: draft a single's product when its pushed quantity reaches zero. */
   draftAtSellout: boolean;
+  /** How this channel turns market prices into asking prices. */
+  repricingPolicy: RepricingPolicy;
   /** What a listing created here carries, applied verbatim. Never derived. */
   listingDefaults: ChannelListingDefaults;
   /** Present only when the connector receives webhooks. */
@@ -65,6 +72,8 @@ export interface UpdateChannelInput {
   reconcileAutoCorrect?: boolean;
   autoListNewStock?: boolean;
   draftAtSellout?: boolean;
+  /** Replaced wholesale, like listingDefaults; sanitised through the tolerant parser. */
+  repricingPolicy?: Record<string, unknown>;
   /**
    * Replaced wholesale, not merged.
    *
@@ -195,6 +204,13 @@ export class ChannelsService {
           ? { autoListNewStock: input.autoListNewStock }
           : {}),
         ...(input.draftAtSellout !== undefined ? { draftAtSellout: input.draftAtSellout } : {}),
+        ...(input.repricingPolicy !== undefined
+          ? {
+              repricingPolicy: encodeRepricingPolicy(
+                parseRepricingPolicy(JSON.stringify(input.repricingPolicy)),
+              ),
+            }
+          : {}),
         ...(input.listingDefaults !== undefined
           ? { listingDefaults: encodeListingDefaults(input.listingDefaults) }
           : {}),
@@ -283,6 +299,7 @@ export class ChannelsService {
     reconcileAutoCorrect: boolean;
     autoListNewStock: boolean;
     draftAtSellout: boolean;
+    repricingPolicy: string;
     listingDefaults: string;
     createdAt: Date;
     _count: { allocations: number };
@@ -338,6 +355,7 @@ export class ChannelsService {
       // it and leaving the operator to wonder where it went.
       autoListNewStock: instance.autoListNewStock,
       draftAtSellout: instance.draftAtSellout,
+      repricingPolicy: parseRepricingPolicy(instance.repricingPolicy),
       listingDefaults: parseListingDefaults(instance.listingDefaults),
       webhookPath: receivesWebhooks ? `/api/webhooks/${instance.id}` : null,
       allocationCount: instance._count.allocations,

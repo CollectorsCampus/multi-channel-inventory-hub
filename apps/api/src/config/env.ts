@@ -90,6 +90,7 @@ export const envSchema = z.object({
   QUERY_CONSOLE_DATABASE_URL: z.string().optional(),
 
   RECONCILE_CRON: z.string().default('0 3 * * *'),
+  REPRICE_CRON: z.string().default('30 3 * * *'),
 
   /** Directory holding the built SPA. Resolved relative to the API's dist/ at runtime. */
   WEB_ROOT: z.string().optional(),

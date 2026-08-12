@@ -231,9 +231,16 @@ export function toCandidates(
     if (!first) continue;
 
     const printings: string[] = [];
+    // Each finish is its own row with its own market price, and a foil's
+    // market is not the normal's — so the per-printing figures ride along
+    // beside the scalar summary instead of being collapsed into it.
+    const pricesByPrinting: Record<string, number> = {};
     for (const row of group) {
       const { printing } = normalizePrinting(row.subTypeName);
       if (!printings.includes(printing)) printings.push(printing);
+      if (row.marketPriceCents !== undefined && pricesByPrinting[printing] === undefined) {
+        pricesByPrinting[printing] = row.marketPriceCents;
+      }
     }
 
     const normalRow = group.find((row) => normalizePrinting(row.subTypeName).printing === 'NORMAL');
@@ -262,6 +269,7 @@ export function toCandidates(
 
     if (first.imageUrl) candidate.imageUrl = first.imageUrl;
     if (marketPrice !== undefined) candidate.marketPrice = marketPrice;
+    if (Object.keys(pricesByPrinting).length > 0) candidate.pricesByPrinting = pricesByPrinting;
     if (printings.length > 0) candidate.printings = printings;
 
     candidates.push(candidate);

@@ -6,12 +6,17 @@ import { useQueryConsoleStatus } from '../api/queryConsole';
 import { useChannels } from '../api/channels';
 import { useCatalogClearPreview, useClearCatalog, useLocalSets } from '../api/catalog';
 import {
+  useEmailSettings,
   useOidcSettings,
   useSyslogSettings,
+  useTestEmail,
   useTestOidcSettings,
   useTestSyslog,
+  useUpdateEmailSettings,
   useUpdateOidcSettings,
   useUpdateSyslogSettings,
+  type EmailSettings,
+  type EmailSettingsPatch,
   type OidcField,
   type OidcSettingsPatch,
   type SyslogSettings,
@@ -62,6 +67,7 @@ export function SettingsPage() {
 
       <Deployment />
       {isAdmin && <SingleSignOn />}
+      {isAdmin && <EmailAlerts />}
       {isAdmin && <RemoteSyslog />}
       {isAdmin && <ClearCatalog />}
       <Navigation />
@@ -303,6 +309,153 @@ function SingleSignOn() {
           exercises.
         </p>
       )}
+      {test.isError && <p className="error">{(test.error as Error).message}</p>}
+      {update.isError && <p className="error">{(update.error as Error).message}</p>}
+    </div>
+  );
+}
+
+/**
+ * Email alerting: new alerts at or above a severity threshold, by SMTP.
+ *
+ * What deliberately does *not* email, because an inbox that hears about every
+ * occurrence filters the sender: a flag refreshed at the same severity, and
+ * resolutions. An escalation does — that is new information.
+ */
+function EmailAlerts() {
+  const settings = useEmailSettings(true);
+  const update = useUpdateEmailSettings();
+  const test = useTestEmail();
+
+  const [patch, setPatch] = useState<EmailSettingsPatch>({});
+  const view = settings.data;
+  if (!view) return null;
+
+  const current = <K extends keyof Omit<EmailSettings, 'passwordSet'>>(name: K): EmailSettings[K] =>
+    (patch[name] ?? view[name]) as EmailSettings[K];
+  const set = <K extends keyof EmailSettingsPatch>(name: K, value: EmailSettingsPatch[K]) =>
+    setPatch((p) => ({ ...p, [name]: value }));
+  const dirty = Object.keys(patch).length > 0;
+
+  return (
+    <div className="panel">
+      <h2>Email alerts</h2>
+      <p className="muted">
+        Emails each new alert at or above the threshold, and any alert that worsens. Repeats of an
+        open alert are deliberately silent — the Activity page keeps the count.
+      </p>
+
+      <label className="field">
+        <span>SMTP server</span>
+        <input
+          placeholder="e.g. smtp.mx.cloudflare.net"
+          value={current('host')}
+          onChange={(e) => set('host', e.target.value)}
+        />
+        <span className="field-hint">
+          For Cloudflare Email Sending: <code>smtp.mx.cloudflare.net</code>, port 465 with implicit
+          TLS on, username <code>api_token</code>, and an API token with Email Sending permission as
+          the password. The from address must be a domain onboarded for Email Sending.
+        </span>
+      </label>
+
+      <div className="inline-form">
+        <label htmlFor="email-port">Port</label>
+        <input
+          id="email-port"
+          type="number"
+          min={1}
+          max={65535}
+          value={current('port')}
+          onChange={(e) => set('port', Number(e.target.value))}
+        />
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={current('secure')}
+            onChange={(e) => set('secure', e.target.checked)}
+          />
+          Implicit TLS (port 465)
+        </label>
+      </div>
+
+      <div className="inline-form">
+        <label htmlFor="email-user">Username</label>
+        <input
+          id="email-user"
+          placeholder="blank = no authentication"
+          value={current('username')}
+          onChange={(e) => set('username', e.target.value)}
+        />
+        <label htmlFor="email-pass">Password</label>
+        <input
+          id="email-pass"
+          type="password"
+          placeholder={view.passwordSet ? 'Stored — leave blank to keep' : 'Not set'}
+          value={patch.password ?? ''}
+          onChange={(e) => set('password', e.target.value)}
+        />
+      </div>
+
+      <div className="inline-form">
+        <label htmlFor="email-from">From</label>
+        <input
+          id="email-from"
+          placeholder="hub@yourdomain.com"
+          value={current('from')}
+          onChange={(e) => set('from', e.target.value)}
+        />
+        <label htmlFor="email-to">To</label>
+        <input
+          id="email-to"
+          placeholder="you@yourdomain.com, other@…"
+          value={current('to')}
+          onChange={(e) => set('to', e.target.value)}
+        />
+      </div>
+
+      <div className="inline-form">
+        <label htmlFor="email-threshold">Email alerts at</label>
+        <select
+          id="email-threshold"
+          value={current('threshold')}
+          onChange={(e) => set('threshold', e.target.value as EmailSettings['threshold'])}
+        >
+          <option value="critical">critical only</option>
+          <option value="warning">warning and up</option>
+          <option value="info">everything</option>
+        </select>
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={current('enabled')}
+            onChange={(e) => set('enabled', e.target.checked)}
+          />
+          Enabled
+        </label>
+
+        <button
+          type="button"
+          className="primary"
+          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+          disabled={!dirty || update.isPending}
+        >
+          {update.isPending ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => test.mutate()}
+          disabled={test.isPending || dirty || view.host === ''}
+          title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
+        >
+          {test.isPending ? 'Sending…' : 'Send test email'}
+        </button>
+        {dirty && <span className="muted">Unsaved changes</span>}
+      </div>
+
+      {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
       {test.isError && <p className="error">{(test.error as Error).message}</p>}
       {update.isError && <p className="error">{(update.error as Error).message}</p>}
     </div>

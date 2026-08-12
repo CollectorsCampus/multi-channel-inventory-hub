@@ -114,3 +114,62 @@ export class UpdateSyslogSettingsDto {
   @IsIn(['udp', 'tcp'])
   protocol?: 'udp' | 'tcp';
 }
+
+/** Partial write for the email-alerting form; absent means "leave alone". */
+export class UpdateEmailSettingsDto {
+  @ApiPropertyOptional({ description: 'Email alerts at or above the threshold below.' })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ example: 'smtp.mx.cloudflare.net', description: 'SMTP server.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  host?: string;
+
+  @ApiPropertyOptional({ default: 587 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  port?: number;
+
+  @ApiPropertyOptional({ description: 'Implicit TLS (port 465). Off attempts STARTTLS.' })
+  @IsOptional()
+  @IsBoolean()
+  secure?: boolean;
+
+  @ApiPropertyOptional({ description: 'Blank sends without authentication.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  username?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Stored encrypted and never read back. Omit to keep the current one; send "" to clear it.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  password?: string;
+
+  @ApiPropertyOptional({ example: 'hub@example.com' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  from?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated recipients.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  to?: string;
+
+  @ApiPropertyOptional({ enum: ['critical', 'warning', 'info'], default: 'warning' })
+  @IsOptional()
+  @IsIn(['critical', 'warning', 'info'])
+  threshold?: 'critical' | 'warning' | 'info';
+}

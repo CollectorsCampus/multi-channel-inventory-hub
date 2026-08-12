@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { ConnectorsModule } from '../connectors/connectors.module';
 import { AlertsService } from './alerts.service';
 import { SyslogService } from './syslog.service';
+import { EmailService } from './email.service';
 
 /**
  * Alerts on their own, so anything can raise one.
@@ -16,10 +18,13 @@ import { SyslogService } from './syslog.service';
  * movable. `SyncModule` re-exports it so its existing consumers are unchanged.
  */
 @Module({
-  // SyslogService lives here rather than in SyncModule for the same reason
-  // AlertsService does: it depends on Prisma and nothing else, and both the
-  // alert writer here and SyncEventService over there need to reach it.
-  providers: [AlertsService, SyslogService],
-  exports: [AlertsService, SyslogService],
+  // ConnectorsModule for the CredentialStore the SMTP password lives in —
+  // provider-only, so no cycle risk.
+  imports: [ConnectorsModule],
+  // SyslogService and EmailService live here rather than in SyncModule for
+  // the same reason AlertsService does: both notification sinks hang off the
+  // alert writer, and SyncEventService over in SyncModule needs syslog too.
+  providers: [AlertsService, SyslogService, EmailService],
+  exports: [AlertsService, SyslogService, EmailService],
 })
 export class AlertsModule {}

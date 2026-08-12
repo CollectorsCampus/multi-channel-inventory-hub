@@ -140,3 +140,56 @@ export function useTestSyslog() {
       apiFetch<{ ok: boolean; detail: string }>('/settings/syslog/test', { method: 'POST' }),
   });
 }
+
+/** Email alerting: SMTP settings plus the severity threshold. */
+export interface EmailSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  from: string;
+  to: string;
+  threshold: 'critical' | 'warning' | 'info';
+  /** Whether a password is stored — never the password. */
+  passwordSet: boolean;
+}
+
+export type EmailSettingsPatch = Partial<Omit<EmailSettings, 'passwordSet'>> & {
+  /** Omit to keep the stored one; empty string clears it. */
+  password?: string;
+};
+
+export function useEmailSettings(enabled: boolean) {
+  return useQuery({
+    queryKey: ['settings', 'email'],
+    queryFn: () => apiFetch<EmailSettings>('/settings/email'),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useUpdateEmailSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: EmailSettingsPatch) =>
+      apiFetch<EmailSettings>('/settings/email', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['settings', 'email'] });
+    },
+  });
+}
+
+/** Sends a real email with the *saved* settings — save first. */
+export function useTestEmail() {
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ ok: boolean; detail: string }>('/settings/email/test', {
+        method: 'POST',
+        body: '{}',
+      }),
+  });
+}

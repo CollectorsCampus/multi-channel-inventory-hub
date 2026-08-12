@@ -1,4 +1,4 @@
-import { decodeJson } from '@hub/db';
+import { SKU_CONDITIONS, decodeJson } from '@hub/db';
 
 /**
  * Repricing policy: how a channel turns a market price into an asking price,
@@ -33,7 +33,9 @@ export interface RepricingPolicy {
   /**
    * Percent of market each condition sells at (100 = at market). A condition
    * absent here is never repriced. Keys are `Sku.condition` tokens; `SEALED`
-   * works like any other.
+   * works like any other, and a key outside `SKU_CONDITIONS` is dropped on
+   * read — it could never fire, and property names must not come off a
+   * request body unchecked.
    */
   conditionPercents?: Record<string, number>;
   /** Round the computed price to the nearest x.99, or leave it exact. */
@@ -79,16 +81,17 @@ export function parseRepricingPolicy(raw: string | null | undefined): RepricingP
 
   if (isPlainObject(decoded.conditionPercents)) {
     const percents: Record<string, number> = {};
-    for (const [condition, value] of Object.entries(decoded.conditionPercents)) {
-      const percent = asFiniteNumber(value);
+    // Keys come off a request body and become property names, so they are
+    // allow-listed against the closed SKU_CONDITIONS vocabulary rather than
+    // taken as strings — the same remote-property-injection finding CodeQL
+    // made against matching's candidate keys, and it is right again: without
+    // this, `__proto__` is a writable key. Nothing of value is lost, because
+    // a percentage for a condition no Sku can carry could never fire anyway.
+    for (const condition of SKU_CONDITIONS) {
+      const percent = asFiniteNumber(decoded.conditionPercents[condition]);
       // An out-of-bounds percentage is a rule that must not fire, not one to
       // clamp: clamping would reprice at a number the operator never typed.
-      if (
-        condition !== '' &&
-        percent !== undefined &&
-        percent > MIN_PERCENT &&
-        percent <= MAX_PERCENT
-      ) {
+      if (percent !== undefined && percent > MIN_PERCENT && percent <= MAX_PERCENT) {
         percents[condition] = percent;
       }
     }

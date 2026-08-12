@@ -44,6 +44,20 @@ describe('parseRepricingPolicy', () => {
     expect(parseRepricingPolicy('{"rounding":"95"}').rounding).toBeUndefined();
   });
 
+  /**
+   * Condition keys become property names, so they are allow-listed against
+   * SKU_CONDITIONS — a request must not choose what gets written to, and
+   * `__proto__` is the key that makes that concrete.
+   */
+  it('drops condition keys outside the SKU vocabulary, including __proto__', () => {
+    const raw = JSON.stringify({
+      conditionPercents: { NM: 100, MINT: 90, __proto__: 50, constructor: 50 },
+    });
+    const parsed = parseRepricingPolicy(raw);
+    expect(parsed.conditionPercents).toEqual({ NM: 100 });
+    expect(Object.getPrototypeOf(parsed.conditionPercents)).toBe(Object.prototype);
+  });
+
   it('ignores unknown keys', () => {
     expect(parseRepricingPolicy('{"enabled":true,"marginTarget":2}')).toEqual({ enabled: true });
   });

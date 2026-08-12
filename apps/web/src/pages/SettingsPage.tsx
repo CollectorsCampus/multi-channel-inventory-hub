@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useAuthStatus, useCurrentUser } from '../auth';
 import { useDevMode } from '../devMode';
+import { THEMES, useTheme, type ThemeKey } from '../theme';
 import { useQueryConsoleStatus } from '../api/queryConsole';
 import { useChannels } from '../api/channels';
 import { useCatalogClearPreview, useClearCatalog, useLocalSets } from '../api/catalog';
@@ -69,12 +70,18 @@ export function SettingsPage() {
       {isAdmin && <SingleSignOn />}
       {isAdmin && <EmailAlerts />}
       {isAdmin && <RemoteSyslog />}
-      {isAdmin && <ClearCatalog />}
+      {/* Every role: it is a per-browser viewing preference, and the person
+          who is not the admin is exactly who cannot ask anyone else to set it. */}
+      <Appearance />
       <Navigation />
 
       {/* Server-enforced; the panel is shown to everyone and explains itself,
           the same rule the channels screen follows. */}
       {isAdmin ? <Users /> : <p className="muted">User administration needs the admin role.</p>}
+
+      {/* Last and closed by default: the one destructive control on the page
+          belongs where nobody scrolls past it by accident. */}
+      {isAdmin && <ClearCatalog />}
     </section>
   );
 }
@@ -89,23 +96,44 @@ function Deployment() {
   const queryConsole = useQueryConsoleStatus();
   const channels = useChannels();
 
-  const rows: Array<[string, string]> = [
-    ['Sign-in', status.data?.providerDisplayName ?? '…'],
+  const rows: Array<[string, ReactNode]> = [
+    // The provider's own displayName is written for a login screen; here the
+    // question is "how does this deployment authenticate", so the local
+    // provider reads as what it is.
+    [
+      'Sign-in',
+      status.data
+        ? status.data.providerKey === 'local'
+          ? 'Local login'
+          : status.data.providerDisplayName
+        : '…',
+    ],
     [
       'Password login',
       status.data?.supportsDirectLogin
         ? status.data.ssoStartPath
-          ? 'Allowed alongside SSO (break-glass)'
-          : 'The only way in'
+          ? 'Enabled (break-glass beside SSO)'
+          : 'Enabled'
         : 'Disabled — SSO only',
     ],
-    ['Query console', queryConsole.data?.enabled ? 'Enabled' : 'Disabled'],
+    [
+      'Query console',
+      queryConsole.data ? (
+        queryConsole.data.enabled ? (
+          <strong className="state-on">Enabled</strong>
+        ) : (
+          <strong className="state-off">Disabled</strong>
+        )
+      ) : (
+        '…'
+      ),
+    ],
     ['Channels', channels.data ? String(channels.data.length) : '…'],
   ];
 
   return (
     <div className="panel">
-      <h2>This deployment</h2>
+      <h2>Deployment info</h2>
       <dl className="facts">
         {rows.map(([label, value]) => (
           <div key={label}>
@@ -186,131 +214,144 @@ function SingleSignOn() {
 
   return (
     <div className="panel">
-      <h2>Single sign-on</h2>
-      <p className="muted">
-        Any OpenID Connect provider, with PKCE. Applies immediately — no restart. Register{' '}
-        <code>{view.redirectUri}</code> as the redirect URI with your provider.
-      </p>
-
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={locked('enabled')}
-          onChange={(event) => set('enabled', event.target.checked)}
-        />
-        Offer SSO on the login screen
-        {locked('enabled') && <span className="chip">set by the environment</span>}
-      </label>
-
-      {text(
-        'issuer',
-        'Issuer URL',
-        'The base URL; discovery appends /.well-known/openid-configuration. For Entra use your tenant id, never "common".',
-        'https://login.microsoftonline.com/<tenant>/v2.0',
-      )}
-      {text('clientId', 'Client ID')}
-
-      <label className="field">
-        <span>
-          Client secret
-          {locked('clientSecret') && <span className="chip"> set by the environment</span>}
-        </span>
-        <input
-          type="password"
-          value={patch.clientSecret ?? ''}
-          disabled={locked('clientSecret')}
-          placeholder={view.clientSecretSet ? 'Stored — leave blank to keep' : 'Not set'}
-          onChange={(event) => set('clientSecret', event.target.value)}
-        />
-        <span className="field-hint">
-          Stored encrypted and never shown again. Register the app as a <em>Web</em> client, not a
-          single-page application — the code is exchanged here, with this secret.
-        </span>
-      </label>
-
-      {text('scopes', 'Scopes')}
-      {text(
-        'roleClaim',
-        'Role claim',
-        'Set it and the provider becomes authoritative: the mapped role is reapplied on every login. Blank leaves roles managed here.',
-        'roles',
-      )}
-      {text(
-        'roleMap',
-        'Role map',
-        'Matched exactly, including case. An unmapped value falls back to the default role and is logged.',
-        '{"admin":"admin","viewer":"viewer"}',
-      )}
-
-      <label className="field">
-        <span>
-          Role for anyone unmapped
-          {locked('defaultRole') && <span className="chip"> set by the environment</span>}
-        </span>
-        <select
-          value={current('defaultRole')}
-          disabled={locked('defaultRole')}
-          onChange={(event) => set('defaultRole', event.target.value)}
-        >
-          {USER_ROLES.map((role) => (
-            <option key={role} value={role}>
-              {role}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={(patch.allowLocalLogin ?? field('allowLocalLogin').value === 'true') === true}
-          disabled={locked('allowLocalLogin')}
-          onChange={(event) => set('allowLocalLogin', event.target.checked)}
-        />
-        Keep password login working
-        {locked('allowLocalLogin') && <span className="chip">set by the environment</span>}
-      </label>
-      <p className="field-hint">
-        Break-glass. Turning it off is refused until an SSO user has actually signed in, because a
-        mistyped redirect URI would otherwise lock everyone out.
-      </p>
-
-      {text(
-        'allowedEndpointOrigins',
-        'Extra endpoint origins',
-        'Only if the provider serves endpoints off its issuer’s origin. Google does; Entra, Auth0, Keycloak and Okta do not.',
-        'https://oauth2.googleapis.com',
-      )}
-
-      <div className="inline-form">
-        <button
-          type="button"
-          onClick={() => test.mutate(patch)}
-          disabled={test.isPending || current('issuer') === ''}
-        >
-          {test.isPending ? 'Testing…' : 'Test connection'}
-        </button>
-        <button
-          type="button"
-          className="primary"
-          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
-          disabled={!dirty || update.isPending}
-        >
-          {update.isPending ? 'Saving…' : 'Save'}
-        </button>
-        {dirty && <span className="muted">Unsaved changes</span>}
-      </div>
-
-      {test.isSuccess && (
-        <p className="field-hint">
-          Reached <code>{test.data.issuer}</code>. This proves the issuer resolves and its endpoints
-          are allowed — it does <em>not</em> check the client secret, which only a real sign-in
-          exercises.
+      {/* Collapsed by default: SSO is configured once and rarely revisited,
+          and expanded it dominates the screen. Unsaved edits survive a
+          collapse — the details element hides, never unmounts. */}
+      <details className="panel-details">
+        <summary>
+          <h2>Single sign-on</h2>
+          <span
+            className={`summary-state ${field('enabled').value === 'true' ? 'state-on' : 'state-off'}`}
+          >
+            {field('enabled').value === 'true' ? 'On' : 'Off'}
+          </span>
+          {dirty && <span className="muted"> · Unsaved changes</span>}
+        </summary>
+        <p className="muted">
+          Any OpenID Connect provider, with PKCE. Applies immediately — no restart. Register{' '}
+          <code>{view.redirectUri}</code> as the redirect URI with your provider.
         </p>
-      )}
-      {test.isError && <p className="error">{(test.error as Error).message}</p>}
-      {update.isError && <p className="error">{(update.error as Error).message}</p>}
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={locked('enabled')}
+            onChange={(event) => set('enabled', event.target.checked)}
+          />
+          Offer SSO on the login screen
+          {locked('enabled') && <span className="chip">set by the environment</span>}
+        </label>
+
+        {text(
+          'issuer',
+          'Issuer URL',
+          'The base URL; discovery appends /.well-known/openid-configuration. For Entra use your tenant id, never "common".',
+          'https://login.microsoftonline.com/<tenant>/v2.0',
+        )}
+        {text('clientId', 'Client ID')}
+
+        <label className="field">
+          <span>
+            Client secret
+            {locked('clientSecret') && <span className="chip"> set by the environment</span>}
+          </span>
+          <input
+            type="password"
+            value={patch.clientSecret ?? ''}
+            disabled={locked('clientSecret')}
+            placeholder={view.clientSecretSet ? 'Stored — leave blank to keep' : 'Not set'}
+            onChange={(event) => set('clientSecret', event.target.value)}
+          />
+          <span className="field-hint">
+            Stored encrypted and never shown again. Register the app as a <em>Web</em> client, not a
+            single-page application — the code is exchanged here, with this secret.
+          </span>
+        </label>
+
+        {text('scopes', 'Scopes')}
+        {text(
+          'roleClaim',
+          'Role claim',
+          'Set it and the provider becomes authoritative: the mapped role is reapplied on every login. Blank leaves roles managed here.',
+          'roles',
+        )}
+        {text(
+          'roleMap',
+          'Role map',
+          'Matched exactly, including case. An unmapped value falls back to the default role and is logged.',
+          '{"admin":"admin","viewer":"viewer"}',
+        )}
+
+        <label className="field">
+          <span>
+            Role for anyone unmapped
+            {locked('defaultRole') && <span className="chip"> set by the environment</span>}
+          </span>
+          <select
+            value={current('defaultRole')}
+            disabled={locked('defaultRole')}
+            onChange={(event) => set('defaultRole', event.target.value)}
+          >
+            {USER_ROLES.map((role) => (
+              <option key={role} value={role}>
+                {role}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={(patch.allowLocalLogin ?? field('allowLocalLogin').value === 'true') === true}
+            disabled={locked('allowLocalLogin')}
+            onChange={(event) => set('allowLocalLogin', event.target.checked)}
+          />
+          Keep password login working
+          {locked('allowLocalLogin') && <span className="chip">set by the environment</span>}
+        </label>
+        <p className="field-hint">
+          Break-glass. Turning it off is refused until an SSO user has actually signed in, because a
+          mistyped redirect URI would otherwise lock everyone out.
+        </p>
+
+        {text(
+          'allowedEndpointOrigins',
+          'Extra endpoint origins',
+          'Only if the provider serves endpoints off its issuer’s origin. Google does; Entra, Auth0, Keycloak and Okta do not.',
+          'https://oauth2.googleapis.com',
+        )}
+
+        <div className="inline-form">
+          <button
+            type="button"
+            onClick={() => test.mutate(patch)}
+            disabled={test.isPending || current('issuer') === ''}
+          >
+            {test.isPending ? 'Testing…' : 'Test connection'}
+          </button>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+            disabled={!dirty || update.isPending}
+          >
+            {update.isPending ? 'Saving…' : 'Save'}
+          </button>
+          {dirty && <span className="muted">Unsaved changes</span>}
+        </div>
+
+        {test.isSuccess && (
+          <p className="field-hint">
+            Reached <code>{test.data.issuer}</code>. This proves the issuer resolves and its
+            endpoints are allowed — it does <em>not</em> check the client secret, which only a real
+            sign-in exercises.
+          </p>
+        )}
+        {test.isError && <p className="error">{(test.error as Error).message}</p>}
+        {update.isError && <p className="error">{(update.error as Error).message}</p>}
+      </details>
     </div>
   );
 }
@@ -339,125 +380,134 @@ function EmailAlerts() {
 
   return (
     <div className="panel">
-      <h2>Email alerts</h2>
-      <p className="muted">
-        Emails each new alert at or above the threshold, and any alert that worsens. Repeats of an
-        open alert are deliberately silent — the Activity page keeps the count.
-      </p>
+      <details className="panel-details">
+        <summary>
+          <h2>Email alerts</h2>
+          <span className={`summary-state ${view.enabled ? 'state-on' : 'state-off'}`}>
+            {view.enabled ? 'On' : 'Off'}
+          </span>
+          {dirty && <span className="muted"> · Unsaved changes</span>}
+        </summary>
+        <p className="muted">
+          Emails each new alert at or above the threshold, and any alert that worsens. Repeats of an
+          open alert are deliberately silent — the Activity page keeps the count.
+        </p>
 
-      <label className="field">
-        <span>SMTP server</span>
-        <input
-          placeholder="e.g. smtp.mx.cloudflare.net"
-          value={current('host')}
-          onChange={(e) => set('host', e.target.value)}
-        />
-        <span className="field-hint">
-          For Cloudflare Email Sending: <code>smtp.mx.cloudflare.net</code>, port 465 with implicit
-          TLS on, username <code>api_token</code>, and an API token with Email Sending permission as
-          the password. The from address must be a domain onboarded for Email Sending.
-        </span>
-      </label>
-
-      <div className="inline-form">
-        <label htmlFor="email-port">Port</label>
-        <input
-          id="email-port"
-          type="number"
-          min={1}
-          max={65535}
-          value={current('port')}
-          onChange={(e) => set('port', Number(e.target.value))}
-        />
-        <label className="inline-check">
+        <label className="field">
+          <span>SMTP server</span>
           <input
-            type="checkbox"
-            checked={current('secure')}
-            onChange={(e) => set('secure', e.target.checked)}
+            placeholder="e.g. smtp.mx.cloudflare.net"
+            value={current('host')}
+            onChange={(e) => set('host', e.target.value)}
           />
-          Implicit TLS (port 465)
-        </label>
-      </div>
-
-      <div className="inline-form">
-        <label htmlFor="email-user">Username</label>
-        <input
-          id="email-user"
-          placeholder="blank = no authentication"
-          value={current('username')}
-          onChange={(e) => set('username', e.target.value)}
-        />
-        <label htmlFor="email-pass">Password</label>
-        <input
-          id="email-pass"
-          type="password"
-          placeholder={view.passwordSet ? 'Stored — leave blank to keep' : 'Not set'}
-          value={patch.password ?? ''}
-          onChange={(e) => set('password', e.target.value)}
-        />
-      </div>
-
-      <div className="inline-form">
-        <label htmlFor="email-from">From</label>
-        <input
-          id="email-from"
-          placeholder="hub@yourdomain.com"
-          value={current('from')}
-          onChange={(e) => set('from', e.target.value)}
-        />
-        <label htmlFor="email-to">To</label>
-        <input
-          id="email-to"
-          placeholder="you@yourdomain.com, other@…"
-          value={current('to')}
-          onChange={(e) => set('to', e.target.value)}
-        />
-      </div>
-
-      <div className="inline-form">
-        <label htmlFor="email-threshold">Email alerts at</label>
-        <select
-          id="email-threshold"
-          value={current('threshold')}
-          onChange={(e) => set('threshold', e.target.value as EmailSettings['threshold'])}
-        >
-          <option value="critical">critical only</option>
-          <option value="warning">warning and up</option>
-          <option value="info">everything</option>
-        </select>
-
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={current('enabled')}
-            onChange={(e) => set('enabled', e.target.checked)}
-          />
-          Enabled
+          <span className="field-hint">
+            For Cloudflare Email Sending: <code>smtp.mx.cloudflare.net</code>, port 465 with
+            implicit TLS on, username <code>api_token</code>, and an API token with Email Sending
+            permission as the password. The from address must be a domain onboarded for Email
+            Sending.
+          </span>
         </label>
 
-        <button
-          type="button"
-          className="primary"
-          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
-          disabled={!dirty || update.isPending}
-        >
-          {update.isPending ? 'Saving…' : 'Save'}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => test.mutate()}
-          disabled={test.isPending || dirty || view.host === ''}
-          title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
-        >
-          {test.isPending ? 'Sending…' : 'Send test email'}
-        </button>
-        {dirty && <span className="muted">Unsaved changes</span>}
-      </div>
+        <div className="inline-form">
+          <label htmlFor="email-port">Port</label>
+          <input
+            id="email-port"
+            type="number"
+            min={1}
+            max={65535}
+            value={current('port')}
+            onChange={(e) => set('port', Number(e.target.value))}
+          />
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={current('secure')}
+              onChange={(e) => set('secure', e.target.checked)}
+            />
+            Implicit TLS (port 465)
+          </label>
+        </div>
 
-      {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
-      {test.isError && <p className="error">{(test.error as Error).message}</p>}
-      {update.isError && <p className="error">{(update.error as Error).message}</p>}
+        <div className="inline-form">
+          <label htmlFor="email-user">Username</label>
+          <input
+            id="email-user"
+            placeholder="blank = no authentication"
+            value={current('username')}
+            onChange={(e) => set('username', e.target.value)}
+          />
+          <label htmlFor="email-pass">Password</label>
+          <input
+            id="email-pass"
+            type="password"
+            placeholder={view.passwordSet ? 'Stored — leave blank to keep' : 'Not set'}
+            value={patch.password ?? ''}
+            onChange={(e) => set('password', e.target.value)}
+          />
+        </div>
+
+        <div className="inline-form">
+          <label htmlFor="email-from">From</label>
+          <input
+            id="email-from"
+            placeholder="hub@yourdomain.com"
+            value={current('from')}
+            onChange={(e) => set('from', e.target.value)}
+          />
+          <label htmlFor="email-to">To</label>
+          <input
+            id="email-to"
+            placeholder="you@yourdomain.com, other@…"
+            value={current('to')}
+            onChange={(e) => set('to', e.target.value)}
+          />
+        </div>
+
+        <div className="inline-form">
+          <label htmlFor="email-threshold">Email alerts at</label>
+          <select
+            id="email-threshold"
+            value={current('threshold')}
+            onChange={(e) => set('threshold', e.target.value as EmailSettings['threshold'])}
+          >
+            <option value="critical">critical only</option>
+            <option value="warning">warning and up</option>
+            <option value="info">everything</option>
+          </select>
+
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={current('enabled')}
+              onChange={(e) => set('enabled', e.target.checked)}
+            />
+            Enabled
+          </label>
+
+          <button
+            type="button"
+            className="primary"
+            onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+            disabled={!dirty || update.isPending}
+          >
+            {update.isPending ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => test.mutate()}
+            disabled={test.isPending || dirty || view.host === ''}
+            title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
+          >
+            {test.isPending ? 'Sending…' : 'Send test email'}
+          </button>
+          {dirty && <span className="muted">Unsaved changes</span>}
+        </div>
+
+        {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
+        {test.isError && <p className="error">{(test.error as Error).message}</p>}
+        {update.isError && <p className="error">{(update.error as Error).message}</p>}
+      </details>
     </div>
   );
 }
@@ -486,74 +536,82 @@ function RemoteSyslog() {
 
   return (
     <div className="panel">
-      <h2>Remote syslog</h2>
-      <p className="muted">
-        Ships every alert and sync event to a collector as RFC 5424 messages with JSON bodies — what
-        the Activity page shows, as a log stream. Container logs are separate; point Docker&apos;s
-        syslog logging driver at the same collector for those.
-      </p>
+      <details className="panel-details">
+        <summary>
+          <h2>Remote syslog</h2>
+          <span className={`summary-state ${view.enabled ? 'state-on' : 'state-off'}`}>
+            {view.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+          {dirty && <span className="muted"> · Unsaved changes</span>}
+        </summary>
+        <p className="muted">
+          Ships every alert and sync event to a collector as RFC 5424 messages with JSON bodies —
+          what the Activity page shows, as a log stream. Container logs are separate; point
+          Docker&apos;s syslog logging driver at the same collector for those.
+        </p>
 
-      <div className="inline-form">
-        <label htmlFor="syslog-host">Collector</label>
-        <input
-          id="syslog-host"
-          placeholder="hostname or address"
-          value={current('host')}
-          onChange={(e) => set('host', e.target.value)}
-        />
-
-        <label htmlFor="syslog-port">Port</label>
-        <input
-          id="syslog-port"
-          type="number"
-          min={1}
-          max={65535}
-          value={current('port')}
-          onChange={(e) => set('port', Number(e.target.value))}
-        />
-
-        <label htmlFor="syslog-protocol">Protocol</label>
-        <select
-          id="syslog-protocol"
-          value={current('protocol')}
-          onChange={(e) => set('protocol', e.target.value as 'udp' | 'tcp')}
-        >
-          <option value="udp">UDP</option>
-          <option value="tcp">TCP</option>
-        </select>
-
-        <label className="inline-check">
+        <div className="inline-form">
+          <label htmlFor="syslog-host">Collector</label>
           <input
-            type="checkbox"
-            checked={current('enabled')}
-            onChange={(e) => set('enabled', e.target.checked)}
+            id="syslog-host"
+            placeholder="hostname or address"
+            value={current('host')}
+            onChange={(e) => set('host', e.target.value)}
           />
-          Enabled
-        </label>
 
-        <button
-          type="button"
-          className="primary"
-          onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
-          disabled={!dirty || update.isPending}
-        >
-          {update.isPending ? 'Saving…' : 'Save'}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => test.mutate()}
-          disabled={test.isPending || dirty || view.host === ''}
-          title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
-        >
-          {test.isPending ? 'Sending…' : 'Send test message'}
-        </button>
-        {dirty && <span className="muted">Unsaved changes</span>}
-      </div>
+          <label htmlFor="syslog-port">Port</label>
+          <input
+            id="syslog-port"
+            type="number"
+            min={1}
+            max={65535}
+            value={current('port')}
+            onChange={(e) => set('port', Number(e.target.value))}
+          />
 
-      {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
-      {test.isError && <p className="error">{(test.error as Error).message}</p>}
-      {update.isError && <p className="error">{(update.error as Error).message}</p>}
+          <label htmlFor="syslog-protocol">Protocol</label>
+          <select
+            id="syslog-protocol"
+            value={current('protocol')}
+            onChange={(e) => set('protocol', e.target.value as 'udp' | 'tcp')}
+          >
+            <option value="udp">UDP</option>
+            <option value="tcp">TCP</option>
+          </select>
+
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={current('enabled')}
+              onChange={(e) => set('enabled', e.target.checked)}
+            />
+            Enabled
+          </label>
+
+          <button
+            type="button"
+            className="primary"
+            onClick={() => update.mutate(patch, { onSuccess: () => setPatch({}) })}
+            disabled={!dirty || update.isPending}
+          >
+            {update.isPending ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => test.mutate()}
+            disabled={test.isPending || dirty || view.host === ''}
+            title={dirty ? 'Save first — the test sends with the saved settings.' : undefined}
+          >
+            {test.isPending ? 'Sending…' : 'Send test message'}
+          </button>
+          {dirty && <span className="muted">Unsaved changes</span>}
+        </div>
+
+        {test.data && <p className={test.data.ok ? 'field-hint' : 'error'}>{test.data.detail}</p>}
+        {test.isError && <p className="error">{(test.error as Error).message}</p>}
+        {update.isError && <p className="error">{(update.error as Error).message}</p>}
+      </details>
     </div>
   );
 }
@@ -595,61 +653,109 @@ function ClearCatalog() {
 
   return (
     <div className="panel">
-      <h2>Clear catalog</h2>
-      <p className="muted">
-        Removes catalog identity data an ingest built and nothing has since been added to the ledger
-        against — never a card, set or box you hold, whatever its quantity. Rebuilt by re-running an
-        ingest from <Link to="/catalog">Catalog</Link>.
-      </p>
+      <details className="panel-details">
+        <summary>
+          <h2>Clear catalog</h2>
+        </summary>
+        <p className="muted">
+          Removes catalog identity data an ingest built and nothing has since been added to the
+          ledger against — never a card, set or box you hold, whatever its quantity. Rebuilt by
+          re-running an ingest from <Link to="/catalog">Catalog</Link>.
+        </p>
 
-      <div className="inline-form">
-        <select value={game} onChange={(event) => scopedGame(event.target.value)} aria-label="Game">
-          <option value="">All games</option>
-          {games.map((g) => (
-            <option key={g} value={g}>
-              {g}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => setChecked(true)}
-          disabled={preview.isFetching && checked}
-        >
-          {preview.isFetching && checked ? 'Checking…' : 'Check what would be cleared'}
-        </button>
-      </div>
-
-      {checked && preview.data && (
-        <>
-          <p className="field-hint">
-            <strong>{preview.data.clearable}</strong> item(s) would be removed
-            {game ? ` for ${game}` : ' across every game'}.{' '}
-            <strong>{preview.data.protectedCount}</strong>{' '}
-            {preview.data.protectedCount === 1 ? 'is' : 'are'} kept — each holds at least one SKU,
-            meaning stock, a listing or history exists against it.
-          </p>
+        <div className="inline-form">
+          <select
+            value={game}
+            onChange={(event) => scopedGame(event.target.value)}
+            aria-label="Game"
+          >
+            <option value="">All games</option>
+            {games.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
-            className="ghost"
-            disabled={preview.data.clearable === 0 || clear.isPending}
-            onClick={() =>
-              clear.mutate({ ...(game ? { game } : {}) }, { onSuccess: () => setChecked(false) })
-            }
+            onClick={() => setChecked(true)}
+            disabled={preview.isFetching && checked}
           >
-            {clear.isPending ? 'Clearing…' : `Clear ${preview.data.clearable} item(s)`}
+            {preview.isFetching && checked ? 'Checking…' : 'Check what would be cleared'}
           </button>
-        </>
-      )}
+        </div>
 
-      {clear.isSuccess && clear.data && (
+        {checked && preview.data && (
+          <>
+            <p className="field-hint">
+              <strong>{preview.data.clearable}</strong> item(s) would be removed
+              {game ? ` for ${game}` : ' across every game'}.{' '}
+              <strong>{preview.data.protectedCount}</strong>{' '}
+              {preview.data.protectedCount === 1 ? 'is' : 'are'} kept — each holds at least one SKU,
+              meaning stock, a listing or history exists against it.
+            </p>
+            <button
+              type="button"
+              className="ghost"
+              disabled={preview.data.clearable === 0 || clear.isPending}
+              onClick={() =>
+                clear.mutate({ ...(game ? { game } : {}) }, { onSuccess: () => setChecked(false) })
+              }
+            >
+              {clear.isPending ? 'Clearing…' : `Clear ${preview.data.clearable} item(s)`}
+            </button>
+          </>
+        )}
+
+        {clear.isSuccess && clear.data && (
+          <p className="field-hint">
+            Cleared {clear.data.clearable} item(s) and {clear.data.externalRefsRemoved} external
+            reference(s). {clear.data.protectedCount} kept.
+          </p>
+        )}
+        {preview.isError && <p className="error">{(preview.error as Error).message}</p>}
+        {clear.isError && <p className="error">{(clear.error as Error).message}</p>}
+      </details>
+    </div>
+  );
+}
+
+/**
+ * Colour theme, applied live as the dropdown changes.
+ *
+ * Remembered per browser (theme.ts documents why), so each person keeps
+ * their own — the operator and an employee can read the same instance in
+ * different palettes without either overriding the other.
+ */
+function Appearance() {
+  const [theme, setTheme] = useTheme();
+
+  return (
+    <div className="panel">
+      <details className="panel-details" open>
+        <summary>
+          <h2>Appearance</h2>
+        </summary>
+
+        <div className="inline-form">
+          <label htmlFor="theme-select">Theme</label>
+          <select
+            id="theme-select"
+            value={theme}
+            onChange={(event) => setTheme(event.target.value as ThemeKey)}
+          >
+            {THEMES.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <p className="field-hint">
-          Cleared {clear.data.clearable} item(s) and {clear.data.externalRefsRemoved} external
-          reference(s). {clear.data.protectedCount} kept.
+          Colours only — light or dark still follows your system setting, and warnings stay the
+          colour warnings are. Remembered in this browser, so everyone keeps their own choice.
         </p>
-      )}
-      {preview.isError && <p className="error">{(preview.error as Error).message}</p>}
-      {clear.isError && <p className="error">{(clear.error as Error).message}</p>}
+      </details>
     </div>
   );
 }
@@ -667,39 +773,45 @@ function Navigation() {
 
   return (
     <div className="panel">
-      <h2>Navigation</h2>
+      {/* Collapsible for a tidy page, but open by default: unlike SSO and the
+          notification sinks, these are controls people actually revisit. */}
+      <details className="panel-details" open>
+        <summary>
+          <h2>Navigation</h2>
+        </summary>
 
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={devMode}
-          onChange={(event) => setDevMode(event.target.checked)}
-        />
-        Show every screen in the top navigation
-      </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={devMode}
+            onChange={(event) => setDevMode(event.target.checked)}
+          />
+          Show every screen in the top navigation
+        </label>
 
-      <p className="field-hint">
-        Matching, listing and the query console act on one channel, so they are normally reached
-        from it. This adds them to the nav as well. It only shows links — each screen still checks
-        your role, and typing the address always worked.
-      </p>
+        <p className="field-hint">
+          Matching, listing and the query console act on one channel, so they are normally reached
+          from it. This adds them to the nav as well. It only shows links — each screen still checks
+          your role, and typing the address always worked.
+        </p>
 
-      <ul className="link-list">
-        <li>
-          <Link to="/match">Match listings</Link> — link what a channel already sells to the
-          catalogue.
-        </li>
-        <li>
-          <Link to="/list">List on a channel</Link> — create listings for stock a channel does not
-          carry.
-        </li>
-        <li>
-          <Link to="/query">Query console</Link> —{' '}
-          {queryConsole.data?.enabled
-            ? 'read-only SQL, admin only.'
-            : 'disabled on this deployment.'}
-        </li>
-      </ul>
+        <ul className="link-list">
+          <li>
+            <Link to="/match">Match listings</Link> — link what a channel already sells to the
+            catalogue.
+          </li>
+          <li>
+            <Link to="/list">List on a channel</Link> — create listings for stock a channel does not
+            carry.
+          </li>
+          <li>
+            <Link to="/query">Query console</Link> —{' '}
+            {queryConsole.data?.enabled
+              ? 'read-only SQL, admin only.'
+              : 'disabled on this deployment.'}
+          </li>
+        </ul>
+      </details>
     </div>
   );
 }
@@ -709,30 +821,34 @@ function Users() {
 
   return (
     <div className="panel">
-      <h2>Users</h2>
+      <details className="panel-details" open>
+        <summary>
+          <h2>Users</h2>
+        </summary>
 
-      {users.isError && <p className="error">{(users.error as Error).message}</p>}
+        {users.isError && <p className="error">{(users.error as Error).message}</p>}
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Sign-in</th>
-              <th>Role</th>
-              <th>Last seen</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {users.data?.map((account) => (
-              <UserRow key={account.id} account={account} />
-            ))}
-          </tbody>
-        </table>
-      </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Sign-in</th>
+                <th>Role</th>
+                <th>Last seen</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {users.data?.map((account) => (
+                <UserRow key={account.id} account={account} />
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-      <NewUser />
+        <NewUser />
+      </details>
     </div>
   );
 }

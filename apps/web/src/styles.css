@@ -27,6 +27,61 @@
   }
 }
 
+/* Built-in themes (theme.ts stamps data-theme on the root). Each restates
+   only the chrome — background hue and accent — and never the semantic
+   colours: the error red and the pooled green mean the same thing whatever
+   the wallpaper. Light variants live in the same media query the default
+   light palette does. */
+:root[data-theme='emerald'] {
+  --bg: #0e1412;
+  --surface: #151d19;
+  --surface-2: #1a2420;
+  --border: #24322b;
+  --accent: #34c98e;
+}
+
+:root[data-theme='violet'] {
+  --bg: #12111a;
+  --surface: #191723;
+  --surface-2: #1f1d2b;
+  --border: #2a2739;
+  --accent: #8b7cf6;
+}
+
+:root[data-theme='sunset'] {
+  --bg: #151110;
+  --surface: #1d1715;
+  --surface-2: #241d1a;
+  --border: #332822;
+  --accent: #f08c4a;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme='emerald'] {
+    --bg: #f4f8f6;
+    --surface: #ffffff;
+    --surface-2: #eef4f1;
+    --border: #d8e4dd;
+    --accent: #0f8a5f;
+  }
+
+  :root[data-theme='violet'] {
+    --bg: #f7f6fb;
+    --surface: #ffffff;
+    --surface-2: #f1eff8;
+    --border: #ded9ee;
+    --accent: #6d5ce6;
+  }
+
+  :root[data-theme='sunset'] {
+    --bg: #faf7f4;
+    --surface: #ffffff;
+    --surface-2: #f6f0ea;
+    --border: #e8dcd2;
+    --accent: #c2622a;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1091,6 +1146,55 @@ button.sort {
   border: 1px solid var(--border);
   border-radius: 10px;
   margin-bottom: 1.25rem;
+}
+
+/** A panel whose whole body is a disclosure — for sections configured once
+    and rarely revisited. The summary is the panel's own heading. */
+.panel-details > summary {
+  cursor: pointer;
+}
+
+/** Saved on/off state beside a collapsed panel's heading, so the row answers
+    the only question a closed section gets asked. */
+.summary-state {
+  margin-left: 0.75rem;
+  font-weight: 600;
+}
+
+/** Standalone so a fact row can colour a value too. Green is the pooled
+    green — the app's one "healthy" colour. */
+.state-on {
+  color: var(--pooled);
+}
+
+.state-off {
+  color: var(--error);
+}
+
+.panel-details > summary:hover {
+  color: var(--accent, inherit);
+}
+
+/* Baseline, not middle: the state span beside it sits on the text baseline,
+   and middle-aligning the larger heading dropped it a few pixels below the
+   badge — the two read as misaligned rather than as one row. */
+.panel-details > summary > h2 {
+  display: inline-block;
+  margin: 0;
+  vertical-align: baseline;
+}
+
+.summary-state {
+  vertical-align: baseline;
+}
+
+/* A channel card's header is a full flex row; inline-flex at just under full
+   width keeps it on the disclosure marker's own line instead of dropping
+   below it. */
+.panel-details > summary > .channel-head {
+  display: inline-flex;
+  width: calc(100% - 1.6rem);
+  vertical-align: top;
 }
 
 .allocation {

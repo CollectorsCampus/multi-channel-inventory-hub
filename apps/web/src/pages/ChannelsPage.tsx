@@ -265,157 +265,164 @@ function ChannelCard({ channel }: { channel: Channel }) {
 
   return (
     <div className="panel" id={channel.id}>
-      <div className="channel-head">
-        <div>
-          <h2>{channel.displayName}</h2>
-          <p className="muted">
-            <code>{channel.connectorKey}</code> · {describeSyncMode(channel.syncMode)} ·{' '}
-            {channel.allocationCount} allocation{channel.allocationCount === 1 ? '' : 's'}
-          </p>
-        </div>
-        <span className={`chip ${channel.enabled ? 'chip-pooled' : ''}`}>
-          {channel.enabled ? 'enabled' : 'disabled'}
-        </span>
-      </div>
+      {/* Open by default: a channel card is a working surface, not a
+          set-and-forget section — collapsing is for scanning past the ones
+          not being worked on. */}
+      <details className="panel-details" open>
+        <summary>
+          <div className="channel-head">
+            <div>
+              <h2>{channel.displayName}</h2>
+              <p className="muted">
+                <code>{channel.connectorKey}</code> · {describeSyncMode(channel.syncMode)} ·{' '}
+                {channel.allocationCount} allocation{channel.allocationCount === 1 ? '' : 's'}
+              </p>
+            </div>
+            <span className={`chip ${channel.enabled ? 'chip-pooled' : ''}`}>
+              {channel.enabled ? 'enabled' : 'disabled'}
+            </span>
+          </div>
+        </summary>
 
-      {channel.healthStatus === 'error' && channel.healthDetail && (
-        <p className="error">{channel.healthDetail}</p>
-      )}
+        {channel.healthStatus === 'error' && channel.healthDetail && (
+          <p className="error">{channel.healthDetail}</p>
+        )}
 
-      {/* Until credentials exist the channel cannot authenticate, so say so
+        {/* Until credentials exist the channel cannot authenticate, so say so
           plainly rather than letting pushes fail mysteriously later. */}
-      {missingSecrets.length > 0 && (
-        <p className="error">Not connected yet — still needs: {missingSecrets.join(', ')}.</p>
-      )}
+        {missingSecrets.length > 0 && (
+          <p className="error">Not connected yet — still needs: {missingSecrets.join(', ')}.</p>
+        )}
 
-      {channel.webhookPath && (
-        <p className="field-hint">
-          Webhook endpoint:{' '}
-          <code>
-            {window.location.origin}
-            {channel.webhookPath}
-          </code>
-          <br />
-          Point the platform&apos;s order-created webhook here. Deliveries are rejected unless
-          signed with the secret above.
-        </p>
-      )}
+        {channel.webhookPath && (
+          <p className="field-hint">
+            Webhook endpoint:{' '}
+            <code>
+              {window.location.origin}
+              {channel.webhookPath}
+            </code>
+            <br />
+            Point the platform&apos;s order-created webhook here. Deliveries are rejected unless
+            signed with the secret above.
+          </p>
+        )}
 
-      {/* An allocation cannot push until it holds the channel's own listing id,
+        {/* An allocation cannot push until it holds the channel's own listing id,
           and for Shopify that id belongs to a variant the operator already
           created. This is where those get joined up. */}
-      {channel.capabilities.includes('listing.enumerate') && (
-        <p className="field-hint">
-          <Link to="/match">Match listings →</Link> Link products already on this channel to
-          inventory, one set at a time.
-        </p>
-      )}
+        {channel.capabilities.includes('listing.enumerate') && (
+          <p className="field-hint">
+            <Link to="/match">Match listings →</Link> Link products already on this channel to
+            inventory, one set at a time.
+          </p>
+        )}
 
-      {/* The other direction: stock the ledger holds and the channel does not.
+        {/* The other direction: stock the ledger holds and the channel does not.
           Drafts only, for items picked by hand. */}
-      {channel.capabilities.includes('listing.create') && (
-        <p className="field-hint">
-          <Link to="/list">List on this channel →</Link> Create draft listings for selected items
-          the channel does not carry yet.
-        </p>
-      )}
+        {channel.capabilities.includes('listing.create') && (
+          <p className="field-hint">
+            <Link to="/list">List on this channel →</Link> Create draft listings for selected items
+            the channel does not carry yet.
+          </p>
+        )}
 
-      <ListingDefaults channel={channel} />
+        <ListingDefaults channel={channel} />
 
-      <ListingImages channel={channel} />
+        <ListingImages channel={channel} />
 
-      <Repricing channel={channel} />
+        <Repricing channel={channel} />
 
-      <Reconciliation channel={channel} />
+        <Reconciliation channel={channel} />
 
-      <FileTransport channel={channel} />
+        <FileTransport channel={channel} />
 
-      {editing && connector ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            update.mutate(
-              {
-                id: channel.id,
-                config,
-                ...(Object.keys(secrets).length > 0 ? { secrets } : {}),
-              },
-              {
-                onSuccess: () => {
+        {editing && connector ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              update.mutate(
+                {
+                  id: channel.id,
+                  config,
+                  ...(Object.keys(secrets).length > 0 ? { secrets } : {}),
+                },
+                {
+                  onSuccess: () => {
+                    setSecrets({});
+                    setEditing(false);
+                  },
+                },
+              );
+            }}
+          >
+            <SchemaForm
+              schema={connector.configSchema}
+              value={config}
+              onChange={setConfig}
+              idPrefix={channel.id}
+            />
+            <SecretFields
+              fields={connector.secretFields}
+              alreadySet={channel.secretsSet}
+              optional={connector.optionalSecretFields}
+              value={secrets}
+              onChange={setSecrets}
+              idPrefix={channel.id}
+            />
+
+            <div className="inline-form">
+              <button type="submit" disabled={update.isPending}>
+                Save
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setConfig(channel.config);
                   setSecrets({});
                   setEditing(false);
-                },
-              },
-            );
-          }}
-        >
-          <SchemaForm
-            schema={connector.configSchema}
-            value={config}
-            onChange={setConfig}
-            idPrefix={channel.id}
-          />
-          <SecretFields
-            fields={connector.secretFields}
-            alreadySet={channel.secretsSet}
-            optional={connector.optionalSecretFields}
-            value={secrets}
-            onChange={setSecrets}
-            idPrefix={channel.id}
-          />
+                }}
+              >
+                Cancel
+              </button>
+            </div>
 
+            {update.isError && <FormError error={update.error as Error} />}
+          </form>
+        ) : (
           <div className="inline-form">
-            <button type="submit" disabled={update.isPending}>
-              Save
+            <button type="button" onClick={() => setEditing(true)}>
+              Settings
             </button>
             <button
               type="button"
               className="ghost"
-              onClick={() => {
-                setConfig(channel.config);
-                setSecrets({});
-                setEditing(false);
-              }}
+              onClick={() => update.mutate({ id: channel.id, enabled: !channel.enabled })}
+              disabled={update.isPending}
             >
-              Cancel
+              {channel.enabled ? 'Disable' : 'Enable'}
             </button>
+
+            {confirmDelete ? (
+              <>
+                <span className="muted">Delete permanently?</span>
+                <button type="button" onClick={() => remove.mutate(channel.id)}>
+                  Yes, delete
+                </button>
+                <button type="button" className="ghost" onClick={() => setConfirmDelete(false)}>
+                  No
+                </button>
+              </>
+            ) : (
+              <button type="button" className="ghost" onClick={() => setConfirmDelete(true)}>
+                Delete
+              </button>
+            )}
           </div>
+        )}
 
-          {update.isError && <FormError error={update.error as Error} />}
-        </form>
-      ) : (
-        <div className="inline-form">
-          <button type="button" onClick={() => setEditing(true)}>
-            Settings
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => update.mutate({ id: channel.id, enabled: !channel.enabled })}
-            disabled={update.isPending}
-          >
-            {channel.enabled ? 'Disable' : 'Enable'}
-          </button>
-
-          {confirmDelete ? (
-            <>
-              <span className="muted">Delete permanently?</span>
-              <button type="button" onClick={() => remove.mutate(channel.id)}>
-                Yes, delete
-              </button>
-              <button type="button" className="ghost" onClick={() => setConfirmDelete(false)}>
-                No
-              </button>
-            </>
-          ) : (
-            <button type="button" className="ghost" onClick={() => setConfirmDelete(true)}>
-              Delete
-            </button>
-          )}
-        </div>
-      )}
-
-      {remove.isError && <FormError error={remove.error as Error} />}
+        {remove.isError && <FormError error={remove.error as Error} />}
+      </details>
     </div>
   );
 }

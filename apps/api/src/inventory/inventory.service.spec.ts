@@ -463,4 +463,54 @@ describeDb('InventoryService', () => {
       ).toBe(1);
     });
   });
+
+  describe('item detail market prices', () => {
+    /**
+     * Scoped to the SKU's printing: the sweep stores per-printing rows, and a
+     * foil's figure surfacing on the plain printing's page would be the wrong
+     * number with no error.
+     */
+    it('carries the stored figures for this printing only', async () => {
+      const item = await seedItem(1);
+      const sku = await prisma.sku.findUniqueOrThrow({
+        where: { id: item.skuId },
+        select: { catalogItemId: true },
+      });
+
+      await prisma.marketPrice.createMany({
+        data: [
+          {
+            catalogItemId: sku.catalogItemId,
+            source: 'tcgcsv',
+            printing: 'NORMAL',
+            price: 1499,
+            previousPrice: 1250,
+            fetchedAt: new Date(),
+          },
+          {
+            catalogItemId: sku.catalogItemId,
+            source: 'tcgcsv',
+            printing: 'FOIL',
+            price: 4999,
+            fetchedAt: new Date(),
+          },
+        ],
+      });
+
+      const detail = await service.getItemDetail(item.id);
+
+      expect(detail.marketPrices).toHaveLength(1);
+      expect(detail.marketPrices[0]).toMatchObject({
+        source: 'tcgcsv',
+        price: 1499,
+        previousPrice: 1250,
+        currency: 'USD',
+      });
+    });
+
+    it('reports none when no sweep has priced the item', async () => {
+      const item = await seedItem(1);
+      expect((await service.getItemDetail(item.id)).marketPrices).toEqual([]);
+    });
+  });
 });

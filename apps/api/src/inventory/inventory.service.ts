@@ -152,10 +152,33 @@ export type InventoryRow = LedgerSnapshot & {
   language: string;
 };
 
+/**
+ * The latest market figure the repricing sweep stored for one source.
+ *
+ * A view over `market_prices`, which is latest-only by design — so this is
+ * "what the market says now" with one step of history for was/now, never a
+ * series.
+ */
+export interface MarketPriceView {
+  source: string;
+  /** Cents. */
+  price: number;
+  currency: string;
+  /** What the same row held before the last sweep, for was/now display. */
+  previousPrice: number | null;
+  fetchedAt: Date;
+}
+
 /** One item's ledger plus the identity a detail screen needs to name it. */
 export type InventoryItemDetail = InventoryRow & {
   /** Platform ids recorded against the catalog item, keyed by source. */
   externalIds: Record<string, string>;
+  /**
+   * Market figures for this item's printing, one per source. Empty until a
+   * repricing sweep has priced the item — the sweep only visits allocated
+   * items, so an unlisted card legitimately has none.
+   */
+  marketPrices: MarketPriceView[];
 };
 
 export interface InventoryPage {
@@ -282,6 +305,14 @@ export class InventoryService {
 
     const { catalogItem } = item.sku;
 
+    // Scoped to the SKU's printing: a foil's market figure on a plain
+    // printing's page would be the wrong number with no error (the
+    // pricesByPrinting argument, on the read side).
+    const marketPrices = await this.prisma.marketPrice.findMany({
+      where: { catalogItemId: item.sku.catalogItemId, printing: item.sku.printing },
+      orderBy: { source: 'asc' },
+    });
+
     return {
       ...toSnapshot(item),
       name: catalogItem.name,
@@ -294,6 +325,13 @@ export class InventoryService {
       externalIds: Object.fromEntries(
         catalogItem.externalRefs.map((ref) => [ref.source, ref.externalId]),
       ),
+      marketPrices: marketPrices.map((row) => ({
+        source: row.source,
+        price: row.price,
+        currency: row.currency,
+        previousPrice: row.previousPrice,
+        fetchedAt: row.fetchedAt,
+      })),
     };
   }
 

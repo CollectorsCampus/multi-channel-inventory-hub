@@ -1630,6 +1630,23 @@ until the operator moves the stack to 0.9.0** — the notification suite, alert 
 UI pass are in the new image only. The operator updated the stack to 0.8.0 on 2026-08-12
 and tested repricing live the same day (their in-stock-only follow-up shipped in 0.9.0).
 
+### v0.9.1 (2026-08-13) — link a sold, unlinked listing from its alert
+
+Tagged after the "Prepare v0.9.1" merge (#118), carrying #117 alone. Tags `0.9.1`, `0.9`
+and `latest` at digest `sha256:8a646c06…`, replacing 0.9.0's `sha256:792a5c71…`; verified
+anonymously and inside the artifact (version, the manual-link panel in the built bundle,
+`--prod` held). **No migration.**
+
+Born from a real production event: sales arrived for an unlinked listing and the match
+screen had no manual override — proposals only offer what resembles a catalogue name, one
+page of enumeration at a time. The fix is **UI-only**: `/match` gains a "Link one listing
+manually" panel (platform id + local-catalogue search + condition/printing/language), and
+the unmapped-sale alert carries "Link to inventory →" which lands there with the id
+prefilled via a new `listing` search param. The same `confirm` endpoint serves it — the
+server never required the pair to have been proposed — so every guard holds and linking
+credits no stock. After linking, the missed sales still need the ledger corrected: set On
+hand, or reconcile and "Set ledger".
+
 ### v0.9.0 (2026-08-12) — the notification suite and the UI pass
 
 Tagged after the "Prepare v0.9.0" merge (#115). Multi-arch image, tags `0.9.0`, `0.9` and

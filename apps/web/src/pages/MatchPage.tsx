@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from '@tanstack/react-router';
-import { useCatalogSources } from '../api/catalog';
+import { Link, useSearch } from '@tanstack/react-router';
+import { useCatalogSources, useLocalSearch, type CatalogCandidate } from '../api/catalog';
 import { useChannels } from '../api/channels';
 import { formatPrice } from '../api/inventory';
 import {
@@ -11,7 +11,7 @@ import {
   type MatchCandidate,
   type MatchProposal,
 } from '../api/matching';
-import { SKU_CONDITIONS } from '../constants';
+import { SKU_CONDITIONS, SKU_LANGUAGES } from '../constants';
 
 /**
  * Link a channel's existing listings to inventory, one set at a time (§7).
@@ -36,6 +36,7 @@ export function MatchPage() {
   const channels = useChannels();
   const sources = useCatalogSources();
   const propose = useProposeMatches();
+  const { listing: linkedFromAlert } = useSearch({ from: '/match' });
 
   const [channelId, setChannelId] = useState('');
   const [sourceKey, setSourceKey] = useState('');
@@ -160,6 +161,8 @@ export function MatchPage() {
         {propose.isError && <p className="error">{(propose.error as Error).message}</p>}
       </div>
 
+      <ManualLink channelId={channelId} initialListingId={linkedFromAlert} />
+
       {propose.isSuccess && propose.data && (
         <ReviewList
           key={`${channelId}:${setName}`}
@@ -169,6 +172,203 @@ export function MatchPage() {
         />
       )}
     </section>
+  );
+}
+
+/**
+ * Link one specific listing by hand.
+ *
+ * Proposals can only offer what resembles a catalogue name, and a page of
+ * enumeration at a time — so a listing whose title matches nothing, or one
+ * deep in a large store, has no path through the review list. This is that
+ * path: paste (or arrive from an alert with) the platform id, find the item
+ * in the local catalogue, and say "it is this one". The server re-verifies
+ * the pick exactly as it does a proposed one — the same confirm endpoint,
+ * the same guards.
+ */
+function ManualLink({
+  channelId,
+  initialListingId,
+}: {
+  channelId: string;
+  initialListingId?: string;
+}) {
+  const confirm = useConfirmMatches(channelId);
+
+  const [listingId, setListingId] = useState(initialListingId ?? '');
+  const [text, setText] = useState('');
+  const [game, setGame] = useState('');
+  const [picked, setPicked] = useState<CatalogCandidate | null>(null);
+  const [condition, setCondition] = useState('NM');
+  const [printing, setPrinting] = useState('NORMAL');
+  const [language, setLanguage] = useState('EN');
+
+  const search = useLocalSearch(text, game || undefined);
+  const results = search.data?.candidates ?? [];
+
+  const printings =
+    picked?.printings && picked.printings.length > 0 ? picked.printings : ['NORMAL', 'FOIL'];
+
+  const canLink = channelId !== '' && listingId.trim() !== '' && picked !== null;
+
+  return (
+    <div className="panel">
+      {/* Open when an alert brought a listing id here; otherwise folded, since
+          the review list above is the usual path. */}
+      <details className="panel-details" open={initialListingId !== undefined}>
+        <summary>
+          <h2>Link one listing manually</h2>
+        </summary>
+        <p className="muted">
+          For a listing the proposals cannot reach — a title that resembles no catalogue name, or a
+          sale that arrived for something unlinked. Paste the platform id, find the item, link it.
+          Searches the local catalogue, so the set must have been ingested.
+        </p>
+
+        <label className="field">
+          <span>Listing id</span>
+          <input
+            placeholder="gid://shopify/ProductVariant/…"
+            value={listingId}
+            onChange={(e) => setListingId(e.target.value)}
+          />
+        </label>
+
+        <div className="inline-form">
+          <input
+            type="text"
+            placeholder="Search the catalog by name"
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              setPicked(null);
+            }}
+            aria-label="Catalog search"
+          />
+          <input
+            type="text"
+            placeholder="Game (optional)"
+            value={game}
+            onChange={(e) => {
+              setGame(e.target.value);
+              setPicked(null);
+            }}
+            aria-label="Game filter"
+          />
+        </div>
+
+        {search.isFetching && <p className="muted">Searching…</p>}
+        {search.isSuccess && text.trim().length >= 2 && results.length === 0 && (
+          <p className="muted">
+            Nothing in the local catalogue matches. If the set was never ingested, ingest it from{' '}
+            <Link to="/catalog">Catalog</Link> first.
+          </p>
+        )}
+
+        {results.length > 0 && (
+          <ul className="candidates">
+            {results.slice(0, 12).map((candidate) => (
+              <li key={`${candidate.sourceKey}:${candidate.sourceId}`}>
+                <label className="inline-check">
+                  <input
+                    type="radio"
+                    name="manual-link-candidate"
+                    checked={
+                      picked?.sourceKey === candidate.sourceKey &&
+                      picked?.sourceId === candidate.sourceId
+                    }
+                    onChange={() => setPicked(candidate)}
+                  />
+                  <span className="candidate-body">
+                    <span className="cell-title">{candidate.name}</span>
+                    <span className="cell-sub">
+                      {[candidate.setName, candidate.game].filter(Boolean).join(' · ')} ·{' '}
+                      {candidate.sourceKey} {candidate.sourceId}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        {results.length > 12 && (
+          <p className="field-hint">Showing 12 of {results.length} — narrow the search.</p>
+        )}
+
+        <div className="inline-form">
+          <label htmlFor="manual-condition">Condition</label>
+          <select
+            id="manual-condition"
+            value={condition}
+            onChange={(e) => setCondition(e.target.value)}
+          >
+            {SKU_CONDITIONS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="manual-printing">Printing</label>
+          <select
+            id="manual-printing"
+            value={printing}
+            onChange={(e) => setPrinting(e.target.value)}
+          >
+            {[...new Set([printing, ...printings])].map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="manual-language">Language</label>
+          <select
+            id="manual-language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+          >
+            {SKU_LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            disabled={!canLink || confirm.isPending}
+            onClick={() =>
+              confirm.mutate({
+                links: [
+                  {
+                    externalListingId: listingId.trim(),
+                    sourceKey: picked!.sourceKey,
+                    sourceId: picked!.sourceId,
+                    condition,
+                    printing,
+                    language,
+                  },
+                ],
+              })
+            }
+          >
+            {confirm.isPending ? 'Linking…' : 'Link listing'}
+          </button>
+        </div>
+
+        {confirm.isError && <p className="error">{(confirm.error as Error).message}</p>}
+        {confirm.isSuccess && confirm.data && (
+          <p className={confirm.data.problems.length > 0 ? 'error' : 'field-hint'}>
+            {confirm.data.problems.length > 0
+              ? confirm.data.problems.map((p) => p.message).join('; ')
+              : `Linked. The next sale of this listing will decrement stock${
+                  confirm.data.skuWritten > 0 ? ', and its SKU now carries the hub code' : ''
+                }.`}
+          </p>
+        )}
+      </details>
+    </div>
   );
 }
 

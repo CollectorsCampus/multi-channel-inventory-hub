@@ -168,24 +168,29 @@ function AlertListingLink({ alert }: { alert: Alert }) {
     externalListingId !== null && alert.channelInstanceId !== null,
   );
 
-  if (!link.data) return null;
+  if (externalListingId === null) return null;
 
   // With a title the admin link *is* the item's name, which answers the
   // question the alert raises — "what actually sold?" — in the row itself.
-  const adminLabel = link.data.title ? displayListingTitle(link.data.title) : 'Shopify admin';
+  const adminLabel = link.data?.title ? displayListingTitle(link.data.title) : 'Shopify admin';
 
   return (
     <p className="field-hint">
-      {link.data.adminUrl && (
+      {link.data?.adminUrl && (
         <a href={link.data.adminUrl} target="_blank" rel="noreferrer">
           {adminLabel} ↗{' '}
         </a>
       )}
-      {link.data.url && (
+      {link.data?.url && (
         <a href={link.data.url} target="_blank" rel="noreferrer">
           View on store ↗{' '}
         </a>
       )}
+      {/* The remediation itself, one click away: the manual-link panel opens
+          with this listing's id already filled in. */}
+      <Link to="/match" search={{ listing: externalListingId }}>
+        Link to inventory →
+      </Link>
     </p>
   );
 }

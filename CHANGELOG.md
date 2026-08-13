@@ -3,6 +3,52 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.9.0] — 2026-08-12
+
+The hub tells you when something needs you. Alerts can reach your email inbox and your log
+pipeline, the screens that raise them link straight to the thing they are about, and the
+settings and channels pages fold away what you are not working on.
+
+**No schema migration** — a clean drop-in upgrade from 0.8.0.
+
+### Added
+
+- **Email alerts** (Settings → Email alerts). Each new alert at or above a severity
+  threshold you pick is emailed over SMTP, and an open alert that _worsens_ is emailed
+  again, saying what it was before. Repeats of an open alert are deliberately silent — an
+  inbox that hears every occurrence filters the sender; the Activity page keeps the count.
+  The password is stored encrypted and never shown again; a test button reports what the
+  server actually said. Works with any SMTP provider, including Cloudflare Email Sending
+  (port 465, implicit TLS, username `api_token`).
+- **Remote syslog** (Settings → Remote syslog). Every alert and completed sync attempt is
+  shipped to a collector as RFC 5424 messages with JSON bodies — the Activity page as a
+  log stream, over UDP or TCP. Fire-and-forget: a dead collector can never fail the write
+  it describes. Container logs are a separate stream; Docker's own syslog logging driver
+  covers those with no hub involvement.
+- **Alerts link to what they are about.** An unmapped-listing alert resolves the listing
+  it names and links to it — by product title, in Shopify admin, and on the storefront
+  when published. Channel names on alerts and log rows link to that channel's card.
+- **Market price on the item page.** The stored per-printing market figures sit beside
+  On hand / Reserved / Pool, with was/now when the figure moved. Filled by the repricing
+  sweep, so an unlisted item shows none until it is allocated and swept.
+- **Repricing: in-stock-only.** A per-channel toggle so the sweep skips items with
+  nothing on hand (oversold-negative counts as out of stock). Market figures are still
+  recorded for skipped items; a stale proposal clears when its item sells out.
+- **Themes.** Four built-in palettes (Hub blue, Emerald, Violet, Sunset) under
+  Settings → Appearance, applied live, each with dark and light variants. Remembered per
+  browser, so every person keeps their own. Warnings stay the colour warnings are.
+
+### Changed
+
+- **Settings and channels fold away what you are not working on.** SSO, Email alerts,
+  Remote syslog and Clear catalog collapse (closed by default) with their on/off state
+  coloured in the closed row; Navigation and Users collapse but start open; Clear catalog
+  moved to the very bottom, below Users. Every channel card collapses too, starting open.
+- Deployment facts read plainly: "Local login", "Enabled"/"Disabled" for password login,
+  and a coloured query-console state.
+- Dependencies: the weekly minor/patch group taken (fastify 5.11.3, jose 6.2.8 among
+  them); the ioredis 6 and react-table 9 majors assessed and deliberately deferred.
+
 ## [0.8.0] — 2026-08-11
 
 Prices follow the market. Current market figures are pulled at least daily for everything

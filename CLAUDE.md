@@ -28,7 +28,7 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1192 tests** (api 729, shopify 148, tcgplayer 102, sdk 61, tcgcsv 49,
+`main` is green: **1218 tests** (api 754, shopify 149, tcgplayer 102, sdk 61, tcgcsv 49,
 cardtrader 37, scryfall 28, web 31, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
@@ -1625,12 +1625,67 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#104** is on `main` (v0.8.0, the repricing engine), and **production runs v0.7.0 until the operator moves the stack to 0.8.0** — the repricing panel, sweep and migration are all in the new image only — verified
-over the tunnel after the operator updated the stack on 2026-08-10 (version, all new
-routes, the `draft_at_sellout` migration applied by the entrypoint, webhook ingress still
-verifying). The seeded rule set on the live Shopify channel has been **active since the
-0.6.x deploy** and is proven: the first rules-engine product came out with vendor, game
-metafield, tags, category and both sales channels applied.
+None. Everything through **#115** is on `main` (v0.9.0), and **production runs v0.8.0
+until the operator moves the stack to 0.9.0** — the notification suite, alert links and
+UI pass are in the new image only. The operator updated the stack to 0.8.0 on 2026-08-12
+and tested repricing live the same day (their in-stock-only follow-up shipped in 0.9.0).
+
+### v0.9.0 (2026-08-12) — the notification suite and the UI pass
+
+Tagged after the "Prepare v0.9.0" merge (#115). Multi-arch image, tags `0.9.0`, `0.9` and
+`latest`, all at digest `sha256:792a5c71…`, replacing v0.8.0's `sha256:42ee80b1…`.
+Everything from #106 to #114. **No schema migration** — a clean drop-in from 0.8.0.
+
+Verified the established way: anonymously, all three tags at the one digest with real
+amd64+arm64 children; inside the pulled artifact, version 0.9.0, `email.service.js` /
+`syslog.service.js` in the built sync dir, `nodemailer@9.0.5` in the prod tree with zero
+`vite`/`vitest`/`esbuild`, the syslog/email routes in the built settings controller, and
+the `data-theme` palettes in the built CSS.
+
+Decisions worth not re-deriving:
+
+- **Email and syslog disagree about repeats, on purpose.** A flag refreshed at the same
+  severity never re-emails (an inbox that hears every occurrence filters the sender —
+  only a new alert or an escalation sends, the subject saying what it was before), while
+  syslog ships every refresh because dedup is a log collector's job. Both are
+  fire-and-forget from `AlertsService`/`SyncEventService`: a dead sink can never fail the
+  write it describes.
+- **Notification settings live in the `Setting` table** (`notify.email.*`,
+  `notify.syslog.*` — the AuthSettings precedent, no migration), the SMTP password in the
+  encrypted credential store under `notify:email`. The operator's provider is **Cloudflare
+  Email Sending over SMTP** (`smtp.mx.cloudflare.net:465`, implicit TLS, username
+  literally `api_token`, an Email-Sending API token as password, from-domain onboarded) —
+  chosen over their REST API deliberately: SMTP is the provider-agnostic seam for
+  self-hosted software and the REST surface is beta. **Proven with a real delivered
+  email** by the operator; the fake-token path proved the transport (Cloudflare's real
+  `535` reported honestly in the panel).
+- **Container logs are deliberately not shipped by the in-app syslog** — Docker's syslog
+  logging driver covers stdout with zero hub code (commented lines in the production
+  stack.yml), and shipping both would duplicate every line. Azure Log Analytics stays
+  deferred: the legacy HTTP Data Collector API loses support 2026-09-14, and Azure
+  Monitor Agent can collect from a syslog collector anyway — possibly zero hub code ever.
+- **`ListingUrlResult` gained `title`** (variant `displayName`, verbatim including
+  " - Default Title"; the web trims at display time) so the unmapped-listing alert names
+  what sold. Resolved live per render, so old alerts get named too.
+- **Themes are chrome only.** Four palettes via `data-theme` variable overrides; the
+  error red and pooled green are deliberately unthemed. Per-browser localStorage via the
+  devMode store pattern — which is also what makes it per-user for the operator's
+  employee with editor access.
+- **A pnpm override must move with the dependency it pins** (found by #110's CI failure):
+  `pnpm update` bumped fastify's specifier in the lockfile while the `fastify@5` override
+  still said `^5.11.0`, and every `--frozen-lockfile` install then refused the lockfile —
+  pnpm compares against the override-rewritten specifier. The ioredis 6 (RESP3 under the
+  queue layer) and react-table 9 (`useReactTable` deleted) majors are on the ignore list,
+  assessed and deliberately deferred; security updates still override.
+- **The fast-iteration dev instance built this release**: Vite HMR on 5173 + watch-mode
+  API on 3005 against a throwaway `hub_dev` DB, workers off, fake channel credentials —
+  see the untracked memory notes. UI changes were verified live in seconds; the syslog
+  path was proven with a real UDP datagram caught in-session.
+  over the tunnel after the operator updated the stack on 2026-08-10 (version, all new
+  routes, the `draft_at_sellout` migration applied by the entrypoint, webhook ingress still
+  verifying). The seeded rule set on the live Shopify channel has been **active since the
+  0.6.x deploy** and is proven: the first rules-engine product came out with vendor, game
+  metafield, tags, category and both sales channels applied.
 
 **The sales loop is running in production.** At the v0.7.0 verification the ledger held
 **7 `sale` stock movements** where history had exactly one (the old test order) — real

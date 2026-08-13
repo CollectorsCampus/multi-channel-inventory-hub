@@ -3,6 +3,23 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.9.1] — 2026-08-13
+
+A sale for an unlinked listing can now be fixed from the alert that reports it.
+
+**No schema migration** — a clean drop-in upgrade.
+
+### Added
+
+- **Link one listing manually** (on Match listings). Proposals can only offer what
+  resembles a catalogue name, one page of enumeration at a time — so a listing whose
+  title matches nothing had no path to a link. The new panel takes the platform id,
+  a search of the local catalogue, and your pick of condition/printing/language; the
+  server re-verifies the pick exactly as it does a proposed one, and linking still
+  credits no stock.
+- **The unmapped-sale alert closes its own loop.** It now carries "Link to inventory →",
+  landing on the match screen with the listing id prefilled and the panel open.
+
 ## [0.9.0] — 2026-08-12
 
 The hub tells you when something needs you. Alerts can reach your email inbox and your log

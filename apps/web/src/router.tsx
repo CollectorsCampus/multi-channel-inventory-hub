@@ -135,6 +135,11 @@ const matchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/match',
   component: MatchPage,
+  // `listing` deep-links the manual-link panel — the unmapped-listing alert
+  // carries the platform id of what sold, and this is how it lands here.
+  validateSearch: (raw: Record<string, unknown>): { listing?: string } => ({
+    ...(typeof raw.listing === 'string' && raw.listing ? { listing: raw.listing } : {}),
+  }),
 });
 
 /**

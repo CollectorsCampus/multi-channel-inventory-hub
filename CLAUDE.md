@@ -1681,11 +1681,11 @@ Decisions worth not re-deriving:
   API on 3005 against a throwaway `hub_dev` DB, workers off, fake channel credentials —
   see the untracked memory notes. UI changes were verified live in seconds; the syslog
   path was proven with a real UDP datagram caught in-session.
-over the tunnel after the operator updated the stack on 2026-08-10 (version, all new
-routes, the `draft_at_sellout` migration applied by the entrypoint, webhook ingress still
-verifying). The seeded rule set on the live Shopify channel has been **active since the
-0.6.x deploy** and is proven: the first rules-engine product came out with vendor, game
-metafield, tags, category and both sales channels applied.
+  over the tunnel after the operator updated the stack on 2026-08-10 (version, all new
+  routes, the `draft_at_sellout` migration applied by the entrypoint, webhook ingress still
+  verifying). The seeded rule set on the live Shopify channel has been **active since the
+  0.6.x deploy** and is proven: the first rules-engine product came out with vendor, game
+  metafield, tags, category and both sales channels applied.
 
 **The sales loop is running in production.** At the v0.7.0 verification the ledger held
 **7 `sale` stock movements** where history had exactly one (the old test order) — real

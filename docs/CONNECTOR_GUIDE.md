@@ -22,18 +22,37 @@ Declare what you support; the core degrades around it. A connector without
 `orders.webhook` is automatically scheduled for `orders.poll`, and one with neither is a
 manual channel whose freshness depends on a human moving files.
 
-| Capability         | Method                             | Meaning                                      |
-| ------------------ | ---------------------------------- | -------------------------------------------- |
-| `listing.push`     | `pushListing`                      | Create or update a listing                   |
-| `listing.price`    | `updatePrice`                      | Change a listing's price                     |
-| `listing.quantity` | `updateQuantity`                   | Change advertised quantity                   |
-| `listing.delist`   | `delist`                           | Remove a listing                             |
-| `orders.webhook`   | `parseWebhook` (+ `verifyWebhook`) | Platform posts order events to us            |
-| `orders.poll`      | `pollChanges`                      | We poll for order events                     |
-| `reconcile`        | `fetchLiveState`                   | Fetch live state for drift detection         |
-| `listing.export`   | `exportListings`                   | Render listings to a file for manual upload  |
-| `orders.import`    | `importOrders`                     | Parse an operator-supplied order export      |
-| `inventory.import` | `importInventory`                  | Parse an inventory export for reconciliation |
+| Capability             | Method                             | Meaning                                        |
+| ---------------------- | ---------------------------------- | ---------------------------------------------- |
+| `listing.push`         | `pushListing`                      | Update an existing listing                     |
+| `listing.create`       | `createListing`                    | Bring a listing into existence                 |
+| `listing.price`        | `updatePrice`                      | Change a listing's price                       |
+| `listing.quantity`     | `updateQuantity`                   | Change advertised quantity                     |
+| `listing.delist`       | `delist`                           | Remove a listing                               |
+| `listing.enumerate`    | `enumerateListings`                | Report what the channel already sells          |
+| `listing.sku`          | `updateListingSku`                 | Write the hub's code into the seller-SKU field |
+| `listing.url`          | `listingUrl`                       | Where a listing lives, for a human to open     |
+| `listing.status`       | `updateListingStatus`              | Publish or unpublish a listing's product       |
+| `listing.image`        | `updateListingImage`               | Replace a listing's imagery                    |
+| `listing.tags`         | `listTags`                         | The tag vocabulary the store already uses      |
+| `listing.metafields`   | `listMetafields`                   | The custom fields the store models             |
+| `listing.publications` | `listPublications`                 | The sales channels a product can go on         |
+| `orders.webhook`       | `parseWebhook` (+ `verifyWebhook`) | Platform posts order events to us              |
+| `orders.poll`          | `pollChanges`                      | We poll for order events                       |
+| `reconcile`            | `fetchLiveState`                   | Fetch live state for drift detection           |
+| `listing.export`       | `exportListings`                   | Render listings to a file for manual upload    |
+| `orders.import`        | `importOrders`                     | Parse an operator-supplied order export        |
+| `inventory.import`     | `importInventory`                  | Parse an inventory export for reconciliation   |
+
+The last three are the file-based path (ADR 0002); everything above them needs an API.
+`listing.push` deliberately **cannot** create — a `PushListingRequest` carries no title,
+image or vendor, so a connector creating from one would be inventing them. That is what
+`listing.create` is for, and its content is an input the operator supplies.
+
+The read-only ones — `listing.tags`, `listing.metafields`, `listing.publications` — exist
+so the core can offer the store's **own** vocabulary rather than deriving values. A tag
+the hub invented puts a product in no collection: invisible in the shop, reported by
+nothing.
 
 Every method is optional. Declaring a capability without its method — or implementing a
 method without declaring the capability — is rejected at startup by `validateConnector`,

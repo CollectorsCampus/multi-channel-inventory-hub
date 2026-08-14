@@ -428,7 +428,7 @@ model SyncEvent {
 /// acknowledge/resolve state and an inbox workflow; SyncEvent is immutable.
 model Alert {
   id       String @id @default(uuid(7))
-  /// AlertKind: oversell | sync_failure | reconcile_drift | auth_failure | invariant_violation
+  /// AlertKind: oversell | sync_failure | reconcile_drift | auth_failure | invariant_violation | reprice_review
   kind     String
   /// AlertSeverity: info | warning | critical
   severity String @default("warning")

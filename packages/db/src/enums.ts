@@ -60,6 +60,11 @@ export const ALERT_KINDS = [
   'reconcile_drift',
   'auth_failure',
   'invariant_violation',
+  // Raised by the repricing sweep when moves exceed the auto-apply threshold.
+  // It was missing here until 2026-08-13, which did not stop the alert being
+  // written (AlertsService takes a plain string) but did make the inbox's
+  // `?kind=` filter reject it — the one kind you most want to filter to.
+  'reprice_review',
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 

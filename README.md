@@ -14,7 +14,7 @@ channel, so the same card is not sold twice.
 > Shopify is the only continuous-sync channel in v1. See
 > [ADR 0002](docs/adr/0002-tcgplayer-without-an-api.md).
 
-> **Status: v0.8.0.** All five phases are built and the sync loop runs end to end: a sale on
+> **Status: v0.9.1.** All five phases are built and the sync loop runs end to end: a sale on
 > Shopify decrements the ledger and pushes recomputed quantities back out, with oversells and
 > failures in an alert inbox, and a nightly reconciliation catching what the loop missed. The
 > Shopify path — authentication, reads, both write mutations, signed webhook delivery and a
@@ -40,7 +40,10 @@ channel, so the same card is not sold twice.
 > in bulk, items link to their pages on TCGplayer/Scryfall/CardTrader and your own store,
 > and a Japanese-language copy can be said to be one at intake. 0.8.0 adds repricing:
 > market prices are pulled daily and asking prices follow them under rules you set —
-> automatically for small moves, by your confirmation for big ones.
+> automatically for small moves, by your confirmation for big ones. 0.9.0 makes the hub
+> tell you when something needs attention: alerts reach your email inbox and your log
+> pipeline, and each one links to the thing it is about. 0.9.1 closes that loop — a sale
+> for a listing the hub does not manage can be linked to inventory from the alert itself.
 >
 > It is a `0.x` for honest reasons: MySQL and SQLite are not supported yet, only one identity
 > provider has ever completed a login, and it has one store's worth of production evidence.
@@ -61,8 +64,10 @@ _your_ database. No middleman sits between you and your money.
 - **Reconciliation.** A nightly sweep compares what each channel actually shows against
   what the hub believes, reports the difference, and — only if you opt in, per channel —
   re-pushes quantities. The ledger is never rewritten from a channel.
-- **An alert inbox.** Oversells, failed pushes and drift, ordered by urgency. Conditions
-  that persist stay one alert rather than one per occurrence, so the inbox is worth reading.
+- **An alert inbox that can reach you.** Oversells, failed pushes and drift, ordered by
+  urgency. Conditions that persist stay one alert rather than one per occurrence, so the
+  inbox is worth reading — and optionally each new or worsening alert is emailed, while
+  every alert and sync event can be shipped to a syslog collector.
 - **Match an existing storefront.** Read what a channel already sells and get proposed links
   to the catalogue, set at a time, each with its evidence ranked. Nothing is ever applied on
   its own, and a tie is reported as ambiguous rather than resolved by picking one.
@@ -150,15 +155,15 @@ default credentials ship with the image.
 To skip the build, pull the released image rather than compiling from source:
 
 ```bash
-docker pull ghcr.io/collectorscampus/multi-channel-inventory-hub:0.8.0
+docker pull ghcr.io/collectorscampus/multi-channel-inventory-hub:0.9.1
 ```
 
-Multi-arch (`linux/amd64`, `linux/arm64`), also tagged `0.8` and `latest`. Point
+Multi-arch (`linux/amd64`, `linux/arm64`), also tagged `0.9` and `latest`. Point
 `docker-compose.yml`'s `app` service at it — replace the `build:` block with
-`image: ghcr.io/collectorscampus/multi-channel-inventory-hub:0.8.0`.
+`image: ghcr.io/collectorscampus/multi-channel-inventory-hub:0.9.1`.
 
 Pin the exact version rather than `latest` for anything you rely on. While this is `0.x`, a
-minor bump may carry breaking changes; `0.8` tracks patches within the current minor.
+minor bump may carry breaking changes; `0.9` tracks patches within the current minor.
 
 ## Connecting Shopify
 
@@ -342,6 +347,11 @@ specific about which parts have met reality.
   provisioning a user keyed on its `sub`. **Microsoft Entra** then drove a real user's role
   from an app-role claim through `OIDC_ROLE_CLAIM` and `OIDC_ROLE_MAP`, reapplied in place on
   re-login — the half Google cannot test, since it issues no group or role claims.
+- **Email alerting**, over SMTP against a real provider, with a delivered message. A wrong
+  credential is reported as the server's own refusal rather than a generic failure.
+- **In production since 2026-08-09**, behind a tunnel with a registered `orders/create`
+  webhook: real customer orders decrement the ledger unprompted, and the repricing sweep
+  has moved real asking prices.
 
 **Not yet:**
 

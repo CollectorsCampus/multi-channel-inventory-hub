@@ -1625,10 +1625,17 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#115** is on `main` (v0.9.0), and **production runs v0.8.0
-until the operator moves the stack to 0.9.0** — the notification suite, alert links and
-UI pass are in the new image only. The operator updated the stack to 0.8.0 on 2026-08-12
-and tested repricing live the same day (their in-stock-only follow-up shipped in 0.9.0).
+None. Everything through **#119** is on `main` (v0.9.1), and **production runs v0.8.0
+until the operator moves the stack to 0.9.1** — the notification suite, alert links, the
+UI pass and the manual listing link are in the newer images only. The operator updated the
+stack to 0.8.0 on 2026-08-12 and tested repricing live the same day (their in-stock-only
+follow-up shipped in 0.9.0).
+
+**There is an open production task waiting on that upgrade**: sales arrived for
+`gid://shopify/ProductVariant/45781411627061`, which no allocation maps to. The remedy
+needs 0.9.1's manual link — Activity → the unmapped-sale alert → "Link to inventory →" →
+search, pick, link — and then the ledger corrected for the sales already missed (set On
+hand, or reconcile and "Set ledger"). Linking alone credits no stock, by design.
 
 ### v0.9.1 (2026-08-13) — link a sold, unlinked listing from its alert
 
@@ -2147,6 +2154,17 @@ Two things about it worth not re-deriving:
 
 Severity is refreshed when a flag is re-raised, so a condition that worsens
 moves up the inbox instead of staying where it was first filed.
+
+**A new alert kind must be added to `ALERT_KINDS`, and v0.8.0 forgot.** The repricing
+sweep raises `reprice_review`, but the kind was never added to the vocabulary in
+`packages/db/src/enums.ts` — and the failure is quiet in exactly the way that makes it
+survive: `AlertsService.raise` takes `kind: string`, so the alert is written, ordered and
+displayed perfectly, while `GET /sync/alerts?kind=…` rejects it with a 400 because
+`AlertQueryDto` validates against that list. The inbox looked right; only the filter for
+the newest kind was broken, which nobody exercises the day they ship the feature. Fixed
+2026-08-13. **When adding an alert kind, extend `ALERT_KINDS` and the `AlertKind` comment
+in `schema.prisma` in the same commit** — the enum is the declaration of record, and
+nothing in the type system forces the writer to consult it.
 
 ### Phase 5 so far: the query console
 
@@ -2822,10 +2840,21 @@ Worth stating plainly, because the README is optimistic by nature:
   Quantities (2/1/1) arrived by the normal worker, `custom.game` and `custom.set` are set,
   the category is Gaming Cards, and the draft is still on the store. Nothing about
   creation is untried any more.
-- **The ledger now holds 12 real singles** across Pokémon, Magic and One Piece, five
-  conditions and two printings, ingested from tcgcsv on 2026-08-01 (Bloomburrow 472 cards,
-  Romance Dawn 163). Three of them are listed; the rest are test stock nobody means to
-  sell, so treat their quantities as fiction.
-- **The ingest has never run at catalogue scale.** #24 built the bulk path and 27 Pokémon
-  sets (433 items) have been through it, but no full-game ingest — Magic is 453 groups —
-  has ever run.
+- **Notification sinks: email is proven against a real provider, syslog against a real
+  socket.** The operator delivered a test email through Cloudflare Email Sending on
+  2026-08-12, and the fake-token path proved the transport separately (Cloudflare's own
+  `535`, reported honestly rather than as a generic failure). Syslog was proven with a
+  real UDP datagram received in-session and TCP framing verified byte-exact — but only
+  against a listener on localhost: **no third-party collector has ever received one**,
+  so field quirks (rsyslog's framing preferences, a collector that wants RFC 3164) are
+  untried.
+- **The ledger is production data now, not test stock.** The early note here — "12 real
+  singles, treat their quantities as fiction" — described the dev database on 2026-08-01
+  and is long superseded: at the v0.7.0 verification production held **23,414 catalog
+  items and 218 allocations**, all entered through the production UI, with real orders
+  decrementing it since 2026-08-09. Any historical count in this file describes the moment
+  it was written; **read the live database before quoting one.**
+- **The ingest has still never run at whole-game scale in one go.** The catalogue grew to
+  its current size a set at a time through the production UI; no single full-game ingest —
+  Magic is 453 groups — has been attempted, so the `maxSets` refusal and the rate limiter
+  have not met that load.

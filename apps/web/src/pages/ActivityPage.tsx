@@ -109,6 +109,7 @@ function AlertRow({
       {alert.detail && <p className="muted">{alert.detail}</p>}
 
       <AlertListingLink alert={alert} />
+      <AlertActionLink alert={alert} />
 
       {alert.acknowledgedBy && alert.status !== 'open' && (
         <p className="field-hint">
@@ -143,6 +144,28 @@ function AlertRow({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Where an alert is acted on, for kinds whose remedy lives on a specific
+ * screen rather than in the inbox.
+ *
+ * An alert that says "review them on the channel's repricing panel" should
+ * take you there — the sentence already names the destination, so making the
+ * reader find it by hand is work the row could have done. The link targets
+ * the panel itself, not the card, and the channels page opens any disclosure
+ * above it before scrolling.
+ */
+function AlertActionLink({ alert }: { alert: Alert }) {
+  if (alert.kind !== 'reprice_review' || !alert.channelInstanceId) return null;
+
+  return (
+    <p className="field-hint">
+      <Link to="/channels" hash={`repricing-${alert.channelInstanceId}`}>
+        Review price changes →
+      </Link>
+    </p>
   );
 }
 

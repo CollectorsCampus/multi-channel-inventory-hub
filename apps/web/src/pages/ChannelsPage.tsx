@@ -87,14 +87,24 @@ export function ChannelsPage() {
   const connectors = useConnectors();
   const [adding, setAdding] = useState(false);
 
-  // Alert and log rows on the Activity page link here as /channels#<id>. The
-  // cards render only after the channels query resolves, so the browser's own
-  // load-time hash scroll finds nothing — scroll once the target exists.
+  // Alert and log rows on the Activity page link here — as /channels#<id> for
+  // a whole card, or #repricing-<id> for a panel inside one. The cards render
+  // only after the channels query resolves, so the browser's own load-time
+  // hash scroll finds nothing; scroll once the target exists.
   useEffect(() => {
     if (!channels.data) return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
-    document.getElementById(hash)?.scrollIntoView({ block: 'start' });
+    const target = document.getElementById(hash);
+    if (!target) return;
+    // A target inside a collapsed disclosure has no layout, so scrolling to it
+    // silently does nothing. Open every one above it first — otherwise a deep
+    // link works or not depending on whether the reader happened to fold the
+    // card earlier, which is the worst kind of intermittent.
+    for (let node = target.parentElement; node; node = node.parentElement) {
+      if (node instanceof HTMLDetailsElement) node.open = true;
+    }
+    target.scrollIntoView({ block: 'start' });
   }, [channels.data]);
 
   if (channels.isError) {
@@ -1248,7 +1258,10 @@ function Repricing({ channel }: { channel: Channel }) {
   };
 
   return (
-    <div className="file-transport">
+    // The reprice_review alert on the Activity page links straight here, so
+    // the alert that reports pending proposals lands on the panel that
+    // clears them rather than on the top of the card.
+    <div className="file-transport" id={`repricing-${channel.id}`}>
       <h3>Repricing</h3>
       <p className="muted">
         Market prices are pulled daily and asking prices follow them under these rules. Moves within

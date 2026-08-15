@@ -3,6 +3,30 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.9.2] — 2026-08-15
+
+A channel card you can take in at a glance, and an instance that says what it is running.
+
+**No schema migration** — a clean drop-in upgrade.
+
+### Added
+
+- **The version, on Settings.** Deployment info leads with what the server is actually
+  running, so "did the stack update?" is a glance rather than a guess.
+- **The reprice-review alert links to the repricing panel.** The alert already named the
+  destination; now it takes you there.
+
+### Changed
+
+- **Channel sub-sections fold.** New listings, Listing images, Repricing and
+  Reconciliation are collapsed by default, so a card with a large rule set no longer
+  buries everything under it. Manual sync stays open on file-based channels, where the
+  round trip is the point of the card. A folded section still reports its state — how many
+  rules are set and whether auto-listing is on, whether repricing is on and how many price
+  changes await review, whether reconciliation auto-corrects.
+- Links into a channel card now open whatever they land inside, so a deep link no longer
+  depends on which sections happened to be folded.
+
 ## [0.9.1] — 2026-08-13
 
 A sale for an unlinked listing can now be fixed from the alert that reports it.

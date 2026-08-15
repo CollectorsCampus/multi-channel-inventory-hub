@@ -9,6 +9,7 @@ import { useCatalogClearPreview, useClearCatalog, useLocalSets } from '../api/ca
 import {
   useEmailSettings,
   useOidcSettings,
+  useServerVersion,
   useSyslogSettings,
   useTestEmail,
   useTestOidcSettings,
@@ -95,8 +96,13 @@ function Deployment() {
   const status = useAuthStatus();
   const queryConsole = useQueryConsoleStatus();
   const channels = useChannels();
+  const version = useServerVersion();
 
   const rows: Array<[string, ReactNode]> = [
+    // First, because "what am I running" is the question this panel is opened
+    // with most often — before a release, and every time something behaves
+    // unlike the notes for it.
+    ['Version', version.data ? version.data.version : '…'],
     // The provider's own displayName is written for a login screen; here the
     // question is "how does this deployment authenticate", so the local
     // provider reads as what it is.

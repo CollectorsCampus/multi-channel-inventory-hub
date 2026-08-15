@@ -193,3 +193,19 @@ export function useTestEmail() {
       }),
   });
 }
+
+/**
+ * The running server's version.
+ *
+ * Read from the API rather than baked into the bundle: the API is what is
+ * actually deployed, and in the dev instance the two halves can legitimately
+ * differ. Effectively immutable for the life of a page, so it never refetches.
+ */
+export function useServerVersion() {
+  return useQuery({
+    queryKey: ['health', 'version'],
+    queryFn: () => apiFetch<{ version: string }>('/health/version'),
+    staleTime: Infinity,
+    retry: false,
+  });
+}

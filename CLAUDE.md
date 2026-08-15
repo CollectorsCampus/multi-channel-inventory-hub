@@ -1625,17 +1625,47 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#119** is on `main` (v0.9.1), and **production runs v0.8.0
-until the operator moves the stack to 0.9.1** — the notification suite, alert links, the
-UI pass and the manual listing link are in the newer images only. The operator updated the
-stack to 0.8.0 on 2026-08-12 and tested repricing live the same day (their in-stock-only
-follow-up shipped in 0.9.0).
+None. Everything through **#123** is on `main` (v0.9.2). **Production is on 0.9.1 or
+later** — the operator upgraded to use the manual listing link, then used it: the
+unmapped-listing incident below is closed. What is not yet live is 0.9.2 itself (the
+collapsible channel sections and the version on Settings), and the **email token still
+needs entering in production** — it exists only in the dev instance, and secrets do not
+travel with the image.
 
-**There is an open production task waiting on that upgrade**: sales arrived for
-`gid://shopify/ProductVariant/45781411627061`, which no allocation maps to. The remedy
-needs 0.9.1's manual link — Activity → the unmapped-sale alert → "Link to inventory →" →
-search, pick, link — and then the ledger corrected for the sales already missed (set On
-hand, or reconcile and "Set ledger"). Linking alone credits no stock, by design.
+**The first production run of the whole unmapped-sale remedy, and it worked** (2026-08-13
+to -15): sales had arrived for `gid://shopify/ProductVariant/45781411627061` with no
+allocation mapping to it. The operator linked it through 0.9.1's manual link (Activity →
+the unmapped-sale alert → "Link to inventory →") and then set On hand, because **linking
+credits no stock by design** and the ledger was still over-stated by the units already
+sold. Both halves were needed; the second is the one easy to forget, and worth stating in
+any future write-up of this path.
+
+### v0.9.2 (2026-08-15) — a channel card at a glance
+
+Tagged after the "Prepare v0.9.2" merge (#123), carrying #121 and #122. Tags `0.9.2`,
+`0.9` and `latest` at digest `sha256:7a1b13b4…`, replacing 0.9.1's `sha256:8a646c06…`;
+verified anonymously and inside the artifact (version, `dist/version.js`, the
+`health/version` route in the built controller, the folded-section strings in the built
+bundle, `--prod` held). **No migration.**
+
+- **Channel sub-sections fold** (`ChannelSection`), collapsed by default — a card with a
+  large rule set was burying repricing and reconciliation behind a scroll past rules
+  nobody was reading. Manual sync stays open on file channels: its round trip is the
+  card's purpose, not a setting. **A folded section reports its own state** (rule count,
+  repricing On/Off plus pending proposals, auto-correct) — that is what makes folding
+  safe rather than merely tidy, and the same argument as the settings panels' badges.
+- **The hash scroll now opens the target itself**, not only its ancestors. The repricing
+  section is both a disclosure and the id the `reprice_review` alert links to, so without
+  this the alert would have landed on a folded section. The general rule: a deep link
+  whose success depends on which sections the reader happened to fold is the worst kind
+  of intermittent.
+- **The version is reported by the server, not the bundle** (`apiVersion()` moved from
+  `main.ts` to `version.ts`, read once). `main.ts` had already written the argument in a
+  comment — a second copy of a version string is forgotten at a release — so the fix was
+  to share the reader rather than add a constant. `version.ts` compiles beside `main.js`,
+  so `join(__dirname, '..', 'package.json')` holds for any importer however deep.
+  **The endpoint is authenticated**, unlike the liveness probes in the same controller: a
+  version narrows which advisories apply, and nobody signed out needs it.
 
 ### v0.9.1 (2026-08-13) — link a sold, unlinked listing from its alert
 

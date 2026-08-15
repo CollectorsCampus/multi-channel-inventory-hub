@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   describeDriftKind,
@@ -75,6 +75,43 @@ function describeRuleValue(rule: { match: TagRule['match']; value: string }): st
 }
 
 /**
+ * One collapsible section of a channel card.
+ *
+ * A channel card grows without bound: a store with a dozen tag rules, a vendor
+ * per game and several custom-field rules runs to multiple screens, which
+ * pushes everything below it — repricing, reconciliation — out of reach behind
+ * a scroll past rules nobody is currently reading.
+ *
+ * Folded by default for that reason, with one exception the caller makes.
+ * `state` is what keeps a folded section honest: a summary that says how many
+ * rules are set, or whether repricing is on, means folding hides the controls
+ * without hiding the answer.
+ */
+function ChannelSection({
+  title,
+  state,
+  id,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  state?: ReactNode;
+  id?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="file-transport panel-details" open={defaultOpen} {...(id ? { id } : {})}>
+      <summary>
+        <h3>{title}</h3>
+        {state}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+/**
  * Channel configuration (§7).
  *
  * Admin-only on the server; this page simply reflects that. Every settings form
@@ -100,7 +137,10 @@ export function ChannelsPage() {
     // A target inside a collapsed disclosure has no layout, so scrolling to it
     // silently does nothing. Open every one above it first — otherwise a deep
     // link works or not depending on whether the reader happened to fold the
-    // card earlier, which is the worst kind of intermittent.
+    // card earlier, which is the worst kind of intermittent. The target may be
+    // a disclosure itself (the repricing section is), and landing on a folded
+    // section is only marginally better than landing nowhere.
+    if (target instanceof HTMLDetailsElement) target.open = true;
     for (let node = target.parentElement; node; node = node.parentElement) {
       if (node instanceof HTMLDetailsElement) node.open = true;
     }
@@ -635,9 +675,20 @@ function ListingDefaults({ channel }: { channel: Channel }) {
       },
     });
 
+  // What a folded section still tells you. Rules are the thing that grows, so
+  // the count is what a reader wants before deciding to open it.
+  const ruleCount = rules.length + vendorRules.length + metafieldRules.length;
+
   return (
-    <div className="file-transport">
-      <h3>New listings</h3>
+    <ChannelSection
+      title="New listings"
+      state={
+        <span className="summary-state summary-state-quiet">
+          {ruleCount > 0 ? `${ruleCount} rule${ruleCount === 1 ? '' : 's'}` : 'no rules yet'}
+          {channel.autoListNewStock && ' · auto-list on'}
+        </span>
+      }
+    >
       <p className="muted">
         Which tags a created product gets. Every tag here is one <em>you</em> picked from the
         store&rsquo;s own vocabulary — the rule just says which cards it applies to, so a mixed
@@ -1061,7 +1112,7 @@ function ListingDefaults({ channel }: { channel: Channel }) {
         </p>
       )}
       {update.isError && <FormError error={update.error as Error} />}
-    </div>
+    </ChannelSection>
   );
 }
 
@@ -1106,8 +1157,7 @@ function ListingImages({ channel }: { channel: Channel }) {
   };
 
   return (
-    <div className="file-transport">
-      <h3>Listing images</h3>
+    <ChannelSection title="Listing images">
       <p className="muted">
         Replace a listing&rsquo;s images with the catalogue&rsquo;s current one — for singles
         created before the image-resolution upgrade, whose storefront photo is still the thumbnail.
@@ -1195,7 +1245,7 @@ function ListingImages({ channel }: { channel: Channel }) {
         </p>
       ))}
       {push.isError && <FormError error={push.error as Error} />}
-    </div>
+    </ChannelSection>
   );
 }
 
@@ -1260,9 +1310,22 @@ function Repricing({ channel }: { channel: Channel }) {
   return (
     // The reprice_review alert on the Activity page links straight here, so
     // the alert that reports pending proposals lands on the panel that
-    // clears them rather than on the top of the card.
-    <div className="file-transport" id={`repricing-${channel.id}`}>
-      <h3>Repricing</h3>
+    // clears them rather than on the top of the card. The hash scroll opens
+    // this section as well as the card above it.
+    <ChannelSection
+      title="Repricing"
+      id={`repricing-${channel.id}`}
+      state={
+        <>
+          <span className={`summary-state ${stored.enabled ? 'state-on' : 'state-off'}`}>
+            {stored.enabled ? 'On' : 'Off'}
+          </span>
+          {mine.length > 0 && (
+            <span className="summary-state summary-state-quiet">{mine.length} awaiting review</span>
+          )}
+        </>
+      }
+    >
       <p className="muted">
         Market prices are pulled daily and asking prices follow them under these rules. Moves within
         the auto-apply line happen on their own; bigger ones wait below for your confirmation. A
@@ -1416,7 +1479,7 @@ function Repricing({ channel }: { channel: Channel }) {
       {(sweep.isError || apply.isError || dismiss.isError) && (
         <FormError error={(sweep.error ?? apply.error ?? dismiss.error) as Error} />
       )}
-    </div>
+    </ChannelSection>
   );
 }
 
@@ -1436,8 +1499,14 @@ function Reconciliation({ channel }: { channel: Channel }) {
   if (!channel.capabilities.includes('reconcile')) return null;
 
   return (
-    <div className="file-transport">
-      <h3>Reconciliation</h3>
+    <ChannelSection
+      title="Reconciliation"
+      state={
+        channel.reconcileAutoCorrect ? (
+          <span className="summary-state summary-state-quiet">auto-correct on</span>
+        ) : undefined
+      }
+    >
       <p className="muted">
         Compares every listing against what we last pushed. Runs nightly on its own;{' '}
         {channel.lastReconciledAt ? (
@@ -1482,7 +1551,7 @@ function Reconciliation({ channel }: { channel: Channel }) {
 
       {reconcile.isError && <FormError error={reconcile.error as Error} />}
       {outcome && <ReconcileResult outcome={outcome} />}
-    </div>
+    </ChannelSection>
   );
 }
 
@@ -1677,8 +1746,10 @@ function FileTransport({ channel }: { channel: Channel }) {
   if (!canExport && !canImportOrders && !canImportInventory) return null;
 
   return (
-    <div className="file-transport">
-      <h3>Manual sync</h3>
+    // Open by default, unlike the rest: a manual channel's file round trip is
+    // the only way its data moves at all, so it is the card's main action
+    // rather than a setting to revisit.
+    <ChannelSection title="Manual sync" defaultOpen>
       <p className="muted">
         This channel has no API, so data moves by file. Upload the sales export{' '}
         <strong>before</strong> you ship — a pull sheet only lists orders still awaiting fulfilment,
@@ -1755,7 +1826,7 @@ function FileTransport({ channel }: { channel: Channel }) {
       )}
 
       {summary && <ImportResult summary={summary} />}
-    </div>
+    </ChannelSection>
   );
 }
 

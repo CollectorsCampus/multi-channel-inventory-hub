@@ -1178,10 +1178,25 @@ button.sort {
 /* Baseline, not middle: the state span beside it sits on the text baseline,
    and middle-aligning the larger heading dropped it a few pixels below the
    badge — the two read as misaligned rather than as one row. */
-.panel-details > summary > h2 {
+.panel-details > summary > h2,
+.panel-details > summary > h3 {
   display: inline-block;
   margin: 0;
   vertical-align: baseline;
+}
+
+/* A channel sub-section's own disclosure. `.file-transport` already draws the
+   separating rule above it; this only makes the heading row clickable. */
+details.file-transport > summary {
+  cursor: pointer;
+}
+
+/* Counts and "auto-correct on" — informative, not a status, so they stay
+   muted rather than borrowing the green/red an on/off badge uses. */
+.summary-state-quiet {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.82rem;
 }
 
 .summary-state {

@@ -131,6 +131,13 @@ export interface InventoryQuery {
   channelInstanceId?: string;
   /** Items whose catalog item has no game — non-TCG goods, hand-entered rows. */
   noGame?: boolean;
+  /**
+   * Exact set name. Case-sensitive, like every other set comparison here —
+   * there is no lower-cased copy of `setName` the way `searchName` exists for
+   * names, and `mode: "insensitive"` is PostgreSQL-only (rule 2). Callers take
+   * a name from `listSets` rather than typing one.
+   */
+  setName?: string;
   /** Items on no channel at all. Mutually sensible with `channelInstanceId`, not with it. */
   unlisted?: boolean;
   /** Only items physically held — `quantityOnHand > 0`. */
@@ -395,6 +402,7 @@ export class InventoryService {
           // hand-entered items carry no game, and "show me those" is a
           // question the browser must be able to ask.
           ...(query.noGame ? { game: null } : {}),
+          ...(query.setName ? { setName: query.setName } : {}),
         },
       },
       ...(query.channelInstanceId
@@ -491,6 +499,58 @@ export class InventoryService {
         }),
       })),
     );
+  }
+
+  /**
+   * Sets present in the ledger for one game, with how many items each has.
+   *
+   * **Scoped to a game, deliberately.** A set name only means something inside
+   * one — an unscoped list would be every set of every game the operator has
+   * ever touched, in one dropdown, which is a worse way to find "Phantasmal
+   * Flames" than typing it. The caller keeps the two in step by clearing the
+   * set whenever the game changes.
+   *
+   * Counted in **one** query rather than one per set, unlike {@link listGames}:
+   * a game can hold hundreds of sets, and this walks the *ledger* — a few
+   * hundred rows — not the catalogue, which is tens of thousands. Selecting
+   * only the set name keeps that cheap.
+   *
+   * Items with no set are omitted rather than bucketed: unlike a null game,
+   * which is a real category (non-TCG goods), a missing set is just a gap in
+   * the record and filtering to it answers no question anyone has.
+   */
+  async listSets(scope: {
+    game?: string;
+    noGame?: boolean;
+  }): Promise<Array<{ setName: string; items: number }>> {
+    if (!scope.game && !scope.noGame) return [];
+
+    const rows = await this.prisma.inventoryItem.findMany({
+      where: {
+        sku: {
+          catalogItem: {
+            ...(scope.noGame ? { game: null } : { game: scope.game }),
+            // An efficiency, not the guard: the tally below has to narrow the
+            // nullable column anyway, so correctness lives there and this only
+            // avoids fetching rows that would be discarded. Removing it changes
+            // no result, which is why no test pins it.
+            setName: { not: null },
+          },
+        },
+      },
+      select: { sku: { select: { catalogItem: { select: { setName: true } } } } },
+    });
+
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const setName = row.sku.catalogItem.setName;
+      if (!setName) continue;
+      counts.set(setName, (counts.get(setName) ?? 0) + 1);
+    }
+
+    return [...counts.entries()]
+      .map(([setName, items]) => ({ setName, items }))
+      .sort((a, b) => a.setName.localeCompare(b.setName));
   }
 
   /**

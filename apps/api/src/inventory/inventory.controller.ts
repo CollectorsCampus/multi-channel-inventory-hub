@@ -88,6 +88,27 @@ export class InventoryController {
     return this.inventory.listGames();
   }
 
+  /**
+   * Declared before `:id` for the same reason `games` is.
+   *
+   * Scoped to one game, because a set name only means something inside one and
+   * an unscoped list would be every set of every game in a single dropdown.
+   * With neither `game` nor `noGame` it answers an empty list rather than
+   * everything — the caller has not asked a question yet.
+   */
+  @Get('sets')
+  @RequireRole('viewer')
+  @ApiOperation({
+    summary: 'Sets held for one game, with counts, for a filter.',
+    description:
+      'Derived from what is actually held, like /inventory/games, so no option can return ' +
+      'nothing. Items with no set are omitted: unlike a null game, a missing set is a gap in ' +
+      'the record rather than a category worth filtering to.',
+  })
+  sets(@Query('game') game?: string, @Query('noGame') noGame?: string) {
+    return this.inventory.listSets({ game, noGame: noGame === 'true' });
+  }
+
   @Get(':id')
   @RequireRole('viewer')
   @ApiOperation({

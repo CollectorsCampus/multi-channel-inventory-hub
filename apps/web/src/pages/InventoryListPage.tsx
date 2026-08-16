@@ -7,6 +7,7 @@ import {
   useCreateInventoryItem,
   useInventoryGames,
   useInventoryList,
+  useInventorySets,
   type InventoryRow,
   type StockUpdateResult,
 } from '../api/inventory';
@@ -211,6 +212,9 @@ export function InventoryListPage() {
   const [inStockOnly, setInStockOnly] = useInStockOnly();
   const channels = useChannels();
   const games = useInventoryGames();
+  // Scoped to whichever game is chosen, and asked for only then — a set name
+  // means nothing without one.
+  const sets = useInventorySets(search.game === NO_GAME ? { noGame: true } : { game: search.game });
   const pageSize = search.pageSize ?? 25;
 
   const query = useInventoryList({
@@ -219,6 +223,7 @@ export function InventoryListPage() {
     // Same shape as the channel filter below: a named game is an equality
     // filter, "none" is the opposite question.
     ...(search.game === NO_GAME ? { noGame: true } : search.game ? { game: search.game } : {}),
+    ...(search.set ? { setName: search.set } : {}),
     // One dropdown, two different questions for the API: a named channel is a
     // `some` filter, "none" is the opposite.
     ...(search.channel === NO_CHANNEL
@@ -369,7 +374,16 @@ export function InventoryListPage() {
           aria-label="Filter by game"
           onChange={(e) =>
             void navigate({
-              search: (prev) => ({ ...prev, game: e.target.value || undefined, page: 1 }),
+              search: (prev) => ({
+                ...prev,
+                game: e.target.value || undefined,
+                // Cleared with the game, always. A set belongs to exactly one
+                // game, so one carried across would match nothing — and a
+                // filter that silently empties the table reads as a broken
+                // page rather than as a filter doing its job.
+                set: undefined,
+                page: 1,
+              }),
             })
           }
         >
@@ -377,6 +391,37 @@ export function InventoryListPage() {
           {(games.data ?? []).map((g) => (
             <option key={g.game ?? NO_GAME} value={g.game ?? NO_GAME}>
               {g.game ?? 'No game'} ({g.items})
+            </option>
+          ))}
+        </select>
+
+        {/* Present but disabled rather than hidden, so the filter is
+            discoverable before it is usable and the row does not reflow when a
+            game is picked. Its own sets carry counts for the same reason the
+            games do: an option that returns nothing is worse than no option. */}
+        <select
+          value={search.set ?? ''}
+          disabled={!search.game || (sets.data?.length ?? 0) === 0}
+          aria-label="Filter by set"
+          title={search.game ? undefined : 'Pick a game first'}
+          onChange={(e) =>
+            void navigate({
+              search: (prev) => ({ ...prev, set: e.target.value || undefined, page: 1 }),
+            })
+          }
+        >
+          <option value="">
+            {!search.game
+              ? 'Any set — pick a game'
+              : sets.isLoading
+                ? 'Loading sets…'
+                : (sets.data?.length ?? 0) === 0
+                  ? 'No sets recorded'
+                  : 'Any set'}
+          </option>
+          {(sets.data ?? []).map((s) => (
+            <option key={s.setName} value={s.setName}>
+              {s.setName} ({s.items})
             </option>
           ))}
         </select>

@@ -36,6 +36,17 @@ export class ListInventoryQueryDto {
   @MaxLength(100)
   game?: string;
 
+  @ApiPropertyOptional({
+    example: 'ME02: Phantasmal Flames',
+    description:
+      'Exact set name, case-sensitive — take one from GET /inventory/sets rather than typing ' +
+      'it. Independent of `game` on the server, though the browser scopes the two together.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  setName?: string;
+
   @ApiPropertyOptional({ enum: SKU_CONDITIONS })
   @IsOptional()
   @IsIn(SKU_CONDITIONS as unknown as string[])

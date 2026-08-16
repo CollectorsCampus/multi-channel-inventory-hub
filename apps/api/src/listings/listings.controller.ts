@@ -4,7 +4,9 @@ import { CurrentUser, RequireRole } from '../auth/decorators';
 import type { AuthenticatedPrincipal } from '../auth/auth-provider.interface';
 import { ListingCreationService } from './listing-creation.service';
 import { ListingImagesService } from './listing-images.service';
+import { ListingTagsService } from './listing-tags.service';
 import {
+  BackfillTagsDto,
   CreateListingsDto,
   IntakeAndListDto,
   ListTagsQueryDto,
@@ -24,7 +26,38 @@ export class ListingsController {
   constructor(
     private readonly creation: ListingCreationService,
     private readonly images: ListingImagesService,
+    private readonly tagBackfill: ListingTagsService,
   ) {}
+
+  @Get('tags/pending')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'Linked listings and the tags this channel’s rules give them.',
+    description:
+      'For back-filling rules written after a listing was created. Answered from the ledger, ' +
+      'not the platform: the tags are what the rules resolve to, and applying adds only the ' +
+      'ones a listing is actually missing.',
+  })
+  pendingTags(@Param('id') channelInstanceId: string) {
+    return this.tagBackfill.pending(channelInstanceId);
+  }
+
+  @Post('tags/backfill')
+  @RequireRole('editor')
+  @ApiOperation({
+    summary: 'Add the rules’ tags to the selected existing listings.',
+    description:
+      'Additive: a tag already on the listing, or one applied by hand, is left alone, and a ' +
+      'listing needing nothing is reported unchanged without a write. Explicit ids only, ' +
+      'capped like every other batch of storefront writes.',
+  })
+  backfillTags(
+    @Param('id') channelInstanceId: string,
+    @Body() body: BackfillTagsDto,
+    @CurrentUser() user: AuthenticatedPrincipal,
+  ) {
+    return this.tagBackfill.apply(channelInstanceId, body.inventoryItemIds, user.userId);
+  }
 
   @Get('tags')
   @RequireRole('editor')

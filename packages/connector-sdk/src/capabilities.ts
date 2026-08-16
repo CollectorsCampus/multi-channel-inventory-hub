@@ -191,6 +191,26 @@ export const CAPABILITIES = [
    */
   'listing.publications',
 
+  /**
+   * Add attributes to a listing that already exists — today, tags.
+   *
+   * Creation applies the operator's rules once, at birth. A rule written
+   * afterwards therefore reaches nothing that already exists, and on a
+   * tag-driven storefront (every collection in the operator's shop is a tag
+   * rule) an untagged product is in no collection: present in the admin,
+   * invisible in the shop. This is the deliberate second pass, the same shape
+   * `listing.image` is for imagery that improved after creation.
+   *
+   * **Additive, never destructive.** The connector adds what it is given and
+   * leaves the rest untouched; a tag the seller applied by hand is not the
+   * hub's to remove. Where the platform's update replaces the whole set, the
+   * connector reads first and writes the union — which also makes a re-run a
+   * no-op rather than a second write.
+   *
+   * Selected by the operator, never swept: it writes to a live storefront.
+   */
+  'listing.attributes',
+
   // --- file transport (ADR 0002) --------------------------------------------
   /** Render desired listings to a file for the operator to upload. */
   'listing.export',
@@ -226,6 +246,7 @@ export const CAPABILITY_METHODS = {
   'listing.url': 'listingUrl',
   'listing.status': 'updateListingStatus',
   'listing.image': 'updateListingImage',
+  'listing.attributes': 'updateListingAttributes',
   'listing.sku': 'updateListingSku',
   'listing.export': 'exportListings',
   'orders.import': 'importOrders',

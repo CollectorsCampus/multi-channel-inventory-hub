@@ -20,6 +20,8 @@ import type {
   NormalizedEvent,
   PushListingRequest,
   PushListingResult,
+  UpdateListingAttributesRequest,
+  UpdateListingAttributesResult,
   UpdateListingImageRequest,
   UpdateListingSkuRequest,
   UpdateListingStatusRequest,
@@ -146,6 +148,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       'listing.url',
       'listing.status',
       'listing.image',
+      'listing.attributes',
       'listing.sku',
     ],
 
@@ -440,6 +443,58 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
         result.title = data.node.displayName;
       }
       return result;
+    },
+
+    /**
+     * Add tags to a variant's product, keeping everything already there.
+     *
+     * `productUpdate` **replaces** the whole tag list, so this reads first and
+     * writes the union. That is not an optimisation: sending only the new tags
+     * would silently strip every tag the seller applied by hand, and on this
+     * store every collection is a tag rule — the product would vanish from the
+     * shop while still looking fine in the admin.
+     *
+     * A listing that already carries all of them is left alone entirely: no
+     * mutation, `added: []`. That makes a re-run free and keeps the caller's
+     * report honest about what actually changed.
+     */
+    async updateListingAttributes(
+      ctx: Ctx,
+      req: UpdateListingAttributesRequest,
+    ): Promise<UpdateListingAttributesResult> {
+      requireListing(req.externalListingId);
+
+      const current = await client.request<{
+        node: { product?: { id?: string; tags?: string[] } } | null;
+      }>(ctx, LISTING_TAGS_QUERY, { id: req.externalListingId });
+
+      const product = current.node?.product;
+      if (!product?.id) {
+        throw new Error(
+          `Shopify variant ${req.externalListingId} has no product; it may be deleted.`,
+        );
+      }
+
+      const existing = product.tags ?? [];
+      // Compared case-sensitively, deliberately: "Pokémon" and "pokemon" are
+      // different tags to Shopify and select different collections, so
+      // folding case here would report a tag as present that is not.
+      const have = new Set(existing);
+      const added = [...new Set(req.addTags)].filter((tag) => tag !== '' && !have.has(tag));
+
+      if (added.length === 0) return { added: [], tags: existing };
+
+      const tags = [...existing, ...added];
+      const result = await client.request<{
+        productUpdate: {
+          product?: { tags?: string[] };
+          userErrors: Array<{ field?: string[] | null; message: string }>;
+        };
+      }>(ctx, ADD_TAGS_MUTATION, { input: { id: product.id, tags } });
+
+      throwOnUserErrors(result.productUpdate?.userErrors, 'Adding tags');
+
+      return { added, tags: result.productUpdate.product?.tags ?? tags };
     },
 
     /**
@@ -1729,6 +1784,34 @@ const LISTING_STATUS_QUERY = /* GraphQL */ `
 const SET_STATUS_MUTATION = /* GraphQL */ `
   mutation HubSetStatus($product: ProductUpdateInput!) {
     productUpdate(product: $product) {
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const LISTING_TAGS_QUERY = /* GraphQL */ `
+  query HubListingTags($id: ID!) {
+    node(id: $id) {
+      ... on ProductVariant {
+        product {
+          id
+          tags
+        }
+      }
+    }
+  }
+`;
+
+const ADD_TAGS_MUTATION = /* GraphQL */ `
+  mutation HubAddTags($input: ProductUpdateInput!) {
+    productUpdate(product: $input) {
+      product {
+        id
+        tags
+      }
       userErrors {
         field
         message

@@ -299,3 +299,44 @@ export function describeOutcome(outcome: CreateListingOutcome): string {
       return 'already linked';
   }
 }
+
+/** A linked listing and the tags this channel's rules give it. */
+export interface PendingTagBackfill {
+  inventoryItemId: string;
+  name: string;
+  setName: string | null;
+  game: string | null;
+  condition: string;
+  externalListingId: string;
+  tags: string[];
+}
+
+export interface BackfillTagsResult {
+  updated: Array<{ inventoryItemId: string; name: string; added: string[] }>;
+  unchanged: Array<{ inventoryItemId: string; name: string }>;
+  problems: Array<{ inventoryItemId: string; name?: string; message: string }>;
+}
+
+/**
+ * What a tag back-fill could act on. Loaded only when the panel is opened —
+ * it is a maintenance action, not something every page view needs.
+ */
+export function useChannelPendingTags(channelInstanceId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['channels', channelInstanceId, 'tags', 'pending'],
+    queryFn: () =>
+      apiFetch<PendingTagBackfill[]>(`/channels/${channelInstanceId}/listings/tags/pending`),
+    enabled: enabled && channelInstanceId !== '',
+    retry: false,
+  });
+}
+
+export function useBackfillTags(channelInstanceId: string) {
+  return useMutation({
+    mutationFn: (inventoryItemIds: string[]) =>
+      apiFetch<BackfillTagsResult>(`/channels/${channelInstanceId}/listings/tags/backfill`, {
+        method: 'POST',
+        body: JSON.stringify({ inventoryItemIds }),
+      }),
+  });
+}

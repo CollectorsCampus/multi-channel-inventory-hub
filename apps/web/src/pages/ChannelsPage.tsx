@@ -22,8 +22,10 @@ import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
 import {
   MAX_ITEMS,
+  useBackfillTags,
   useChannelMetafields,
   useChannelPendingImages,
+  useChannelPendingTags,
   useChannelPublications,
   useChannelTags,
   usePushListingImages,
@@ -377,6 +379,10 @@ function ChannelCard({ channel }: { channel: Channel }) {
         )}
 
         <ListingDefaults channel={channel} />
+
+        {/* Directly under the rules it applies: the operator edits a rule and
+            the way to reach what already exists is the next thing they see. */}
+        <ListingTagBackfill channel={channel} />
 
         <ListingImages channel={channel} />
 
@@ -1112,6 +1118,164 @@ function ListingDefaults({ channel }: { channel: Channel }) {
         </p>
       )}
       {update.isError && <FormError error={update.error as Error} />}
+    </ChannelSection>
+  );
+}
+
+/**
+ * Apply the channel's tag rules to listings that already exist.
+ *
+ * Creation tags a product once, at birth, so a rule written afterwards reaches
+ * nothing already on the storefront. On a tag-driven store that is not
+ * cosmetic — an untagged product is in no collection, so it is invisible in
+ * the shop while looking perfectly fine in the admin.
+ *
+ * Additive throughout: the connector adds and never removes, so a tag applied
+ * by hand survives, and a listing that already carries everything is reported
+ * as unchanged rather than as work done.
+ */
+function ListingTagBackfill({ channel }: { channel: Channel }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
+  const pending = useChannelPendingTags(channel.id, open);
+  const backfill = useBackfillTags(channel.id);
+
+  if (!channel.capabilities.includes('listing.attributes')) return null;
+
+  const rows = pending.data ?? [];
+  const chosen = rows.filter((r) => selected.has(r.inventoryItemId));
+
+  const toggle = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < MAX_ITEMS) next.add(id);
+      return next;
+    });
+
+  const selectAll = () =>
+    setSelected(new Set(rows.slice(0, MAX_ITEMS).map((r) => r.inventoryItemId)));
+
+  const apply = () => {
+    setConfirming(false);
+    backfill.mutate(
+      chosen.map((r) => r.inventoryItemId),
+      { onSuccess: () => setSelected(new Set()) },
+    );
+  };
+
+  return (
+    <ChannelSection title="Apply tag rules to existing listings">
+      <p className="muted">
+        Rules tag a product when it is created, so a rule written later never reaches what is
+        already on the storefront. This adds the tags each listing&rsquo;s rules produce.{' '}
+        <strong>Nothing is removed</strong> — a tag you applied by hand stays, and a listing that
+        already has them all is left untouched.
+      </p>
+
+      {!open ? (
+        <button type="button" className="ghost" onClick={() => setOpen(true)}>
+          Show listings and their rule tags
+        </button>
+      ) : pending.isError ? (
+        <p className="field-hint">{(pending.error as Error).message}</p>
+      ) : pending.isLoading ? (
+        <p className="muted">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="field-hint">
+          No linked listing on this channel matches a tag rule. Nothing to apply.
+        </p>
+      ) : (
+        <>
+          <div className="inline-form">
+            <button type="button" className="ghost" onClick={selectAll}>
+              Select {rows.length > MAX_ITEMS ? `first ${MAX_ITEMS}` : 'all'} ({rows.length})
+            </button>
+            {rows.length > MAX_ITEMS && (
+              <span className="muted">
+                One run updates at most {MAX_ITEMS}; run again for the rest.
+              </span>
+            )}
+          </div>
+
+          <table className="compact">
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.inventoryItemId}>
+                  <td>
+                    <label className="inline-check">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(row.inventoryItemId)}
+                        onChange={() => toggle(row.inventoryItemId)}
+                      />
+                      {row.name}
+                    </label>
+                  </td>
+                  <td className="muted">{row.setName ?? ''}</td>
+                  <td className="muted">{row.condition}</td>
+                  <td>
+                    <span className="chips">
+                      {row.tags.map((tag) => (
+                        <span key={tag} className="chip">
+                          {tag}
+                        </span>
+                      ))}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="inline-form">
+            {confirming ? (
+              <>
+                <span className="muted">
+                  Add these tags to {chosen.length} listing(s) on the live store?
+                </span>
+                <button type="button" onClick={apply} disabled={backfill.isPending}>
+                  Yes, apply
+                </button>
+                <button type="button" className="ghost" onClick={() => setConfirming(false)}>
+                  No
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={chosen.length === 0 || backfill.isPending}
+                onClick={() => setConfirming(true)}
+              >
+                {backfill.isPending ? 'Applying…' : `Apply to ${chosen.length} listing(s)`}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {backfill.data && (
+        <div className="import-result">
+          <p className={backfill.data.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
+            {backfill.data.updated.length} tagged
+            {backfill.data.unchanged.length > 0 &&
+              `, ${backfill.data.unchanged.length} already had them`}
+            {backfill.data.problems.length > 0 && `, ${backfill.data.problems.length} failed`}.
+          </p>
+          {backfill.data.updated.slice(0, 10).map((row) => (
+            <p key={row.inventoryItemId} className="field-hint">
+              {row.name}: added {row.added.join(', ')}
+            </p>
+          ))}
+          {backfill.data.problems.map((p) => (
+            <p key={p.inventoryItemId} className="error">
+              {p.name ?? p.inventoryItemId}: {p.message}
+            </p>
+          ))}
+        </div>
+      )}
+      {backfill.isError && <FormError error={backfill.error as Error} />}
     </ChannelSection>
   );
 }

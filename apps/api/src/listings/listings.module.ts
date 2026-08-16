@@ -3,6 +3,7 @@ import { ConnectorsModule } from '../connectors/connectors.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { ListingCreationService } from './listing-creation.service';
 import { ListingImagesService } from './listing-images.service';
+import { ListingTagsService } from './listing-tags.service';
 import { ListingsController } from './listings.controller';
 
 /**
@@ -16,7 +17,7 @@ import { ListingsController } from './listings.controller';
 @Module({
   imports: [ConnectorsModule, InventoryModule],
   controllers: [ListingsController],
-  providers: [ListingCreationService, ListingImagesService],
+  providers: [ListingCreationService, ListingImagesService, ListingTagsService],
   exports: [ListingCreationService],
 })
 export class ListingsModule {}

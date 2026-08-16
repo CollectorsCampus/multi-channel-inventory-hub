@@ -169,6 +169,21 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         return { productUpdate: { userErrors: overrides.setStatusErrors ?? [] } } as T;
       }
 
+      if (query.includes('HubListingTags')) {
+        return (overrides.listingTags ?? {
+          node: { product: { id: PRODUCT, tags: ['Pokémon', 'Hand-added'] } },
+        }) as T;
+      }
+
+      if (query.includes('HubAddTags')) {
+        return {
+          productUpdate: {
+            product: { id: PRODUCT, tags: (variables?.input as { tags?: string[] })?.tags ?? [] },
+            userErrors: overrides.addTagsErrors ?? [],
+          },
+        } as T;
+      }
+
       if (query.includes('HubListingUrl')) {
         return (overrides.listingUrl ?? {
           node: {
@@ -1671,6 +1686,102 @@ describe('updating a listing status', () => {
     await expect(
       connector.updateListingStatus!(ctx(), { externalListingId: VARIANT, status: 'draft' }),
     ).rejects.toThrow(/cannot be updated/);
+  });
+});
+
+describe('adding tags to an existing listing', () => {
+  /**
+   * The whole safety story: `productUpdate` replaces the tag list, so sending
+   * only the new tags would strip whatever the seller applied by hand. On a
+   * store where every collection is a tag rule, that empties collections while
+   * the admin still looks correct.
+   */
+  it('writes the union, keeping tags it was not asked about', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: ['SV 151', 'Pokémon'],
+    });
+
+    // "Pokémon" was already there; only the genuinely new one is reported.
+    expect(result.added).toEqual(['SV 151']);
+
+    const mutation = calls.find((c) => c.query.includes('HubAddTags'));
+    expect(mutation?.variables?.input).toEqual({
+      id: PRODUCT,
+      tags: ['Pokémon', 'Hand-added', 'SV 151'],
+    });
+  });
+
+  /**
+   * A re-run must cost nothing and report nothing — otherwise the operator
+   * cannot tell a second pass from a first, and every run looks like a change.
+   */
+  it('does not mutate at all when every tag is already present', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: ['Pokémon', 'Hand-added'],
+    });
+
+    expect(result.added).toEqual([]);
+    expect(result.tags).toEqual(['Pokémon', 'Hand-added']);
+    expect(calls.some((c) => c.query.includes('HubAddTags'))).toBe(false);
+  });
+
+  /**
+   * Shopify treats tags case-sensitively and selects collections on the exact
+   * string, so folding case here would report a tag as present when the
+   * collection rule it feeds would never match it.
+   */
+  it('treats a differently-cased tag as missing', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: ['pokémon'],
+    });
+
+    expect(result.added).toEqual(['pokémon']);
+  });
+
+  it('drops empty tags rather than writing a blank one', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: ['', 'New'],
+    });
+
+    expect(result.added).toEqual(['New']);
+    expect(
+      (calls.find((c) => c.query.includes('HubAddTags'))?.variables?.input as { tags: string[] })
+        .tags,
+    ).not.toContain('');
+  });
+
+  it('reports a deleted variant rather than writing nothing silently', async () => {
+    const { client } = mockClient({ listingTags: { node: null } });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingAttributes!(ctx(), { externalListingId: VARIANT, addTags: ['x'] }),
+    ).rejects.toThrow(/may be deleted/);
+  });
+
+  it('surfaces a user error from the mutation', async () => {
+    const { client } = mockClient({ addTagsErrors: [{ field: ['tags'], message: 'too many' }] });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingAttributes!(ctx(), { externalListingId: VARIANT, addTags: ['x'] }),
+    ).rejects.toThrow(/too many/);
   });
 });
 

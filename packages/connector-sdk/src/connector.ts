@@ -27,6 +27,8 @@ import type {
   NormalizedEvent,
   PushListingRequest,
   PushListingResult,
+  UpdateListingAttributesRequest,
+  UpdateListingAttributesResult,
   UpdateListingImageRequest,
   UpdateListingSkuRequest,
   UpdateListingStatusRequest,
@@ -147,6 +149,19 @@ export interface Connector {
    * hand is not the hub's to overwrite uninvited.
    */
   updateListingImage?(ctx: Ctx, req: UpdateListingImageRequest): Promise<void>;
+
+  /**
+   * Add attributes to a listing that already exists.
+   *
+   * **Additive.** Add what you are given, leave everything else exactly as
+   * found, and report only what actually changed — a listing that already
+   * carries every value must come back with `added: []` and no write, so a
+   * re-run costs nothing and reports nothing.
+   */
+  updateListingAttributes?(
+    ctx: Ctx,
+    req: UpdateListingAttributesRequest,
+  ): Promise<UpdateListingAttributesResult>;
 
   /**
    * Where this listing lives on the channel, as URLs a human can open.

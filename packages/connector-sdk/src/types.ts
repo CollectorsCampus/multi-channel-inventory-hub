@@ -159,6 +159,41 @@ export interface UpdateListingImageRequest {
 }
 
 /**
+ * Add attributes to a listing that already exists.
+ *
+ * The counterpart to creation, for the values creation would have supplied had
+ * the rules existed at the time. Distinct from `listing.push`, which carries
+ * quantities and prices and nothing describing the product.
+ *
+ * **Additive by contract, and this is the whole safety story.** A connector
+ * must add what it is given and leave everything else exactly as it found it —
+ * a tag the seller applied by hand is not this hub's to remove, and on a
+ * tag-driven storefront removing one silently empties a collection. Platforms
+ * whose update replaces the whole set (Shopify's `productUpdate` does) must
+ * therefore read the current values and write the union.
+ *
+ * Only tags today. The shape admits vendor and custom fields later without a
+ * second capability, which is why it is named for attributes rather than tags —
+ * and note `listing.tags` is already taken by *reading* the store's vocabulary.
+ */
+export interface UpdateListingAttributesRequest {
+  externalListingId: string;
+  /** Applied verbatim, exactly as at creation. Never derived by a connector. */
+  addTags: readonly string[];
+}
+
+export interface UpdateListingAttributesResult {
+  /**
+   * What this call actually added — empty when the listing already carried
+   * every one, which is the common case on a re-run and must not be reported
+   * as a change.
+   */
+  added: readonly string[];
+  /** The listing's full tag set afterwards, so a caller can show the result. */
+  tags: readonly string[];
+}
+
+/**
  * Bring a listing into existence on a platform that does not have it.
  *
  * Everything a platform needs to render a product is an **input**, not

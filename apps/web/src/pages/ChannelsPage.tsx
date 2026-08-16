@@ -1138,12 +1138,23 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  /**
+   * Listings this session has already put through, so successive runs march
+   * down the list instead of re-offering the same first batch.
+   *
+   * Needed because `pending` answers from the *rules*, not from what the store
+   * currently carries — it cannot know a listing was just tagged, and without
+   * this a store with 195 matches would re-select the same 50 every time and
+   * the remaining 145 would have to be ticked by hand.
+   */
+  const [done, setDone] = useState<ReadonlySet<string>>(new Set());
   const pending = useChannelPendingTags(channel.id, open);
   const backfill = useBackfillTags(channel.id);
 
   if (!channel.capabilities.includes('listing.attributes')) return null;
 
-  const rows = pending.data ?? [];
+  const all = pending.data ?? [];
+  const rows = all.filter((r) => !done.has(r.inventoryItemId));
   const chosen = rows.filter((r) => selected.has(r.inventoryItemId));
 
   const toggle = (id: string) =>
@@ -1154,15 +1165,28 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
       return next;
     });
 
+  // Capped at MAX_ITEMS because the server refuses a larger run — a partial
+  // batch of storefront writes is indistinguishable from a complete one
+  // afterwards. So "all" means "as many as one run may take", and the count
+  // beside it says how many are left to go.
   const selectAll = () =>
     setSelected(new Set(rows.slice(0, MAX_ITEMS).map((r) => r.inventoryItemId)));
 
   const apply = () => {
     setConfirming(false);
-    backfill.mutate(
-      chosen.map((r) => r.inventoryItemId),
-      { onSuccess: () => setSelected(new Set()) },
-    );
+    const ids = chosen.map((r) => r.inventoryItemId);
+    backfill.mutate(ids, {
+      onSuccess: (result) => {
+        setSelected(new Set());
+        // Everything the server accounted for — tagged or already tagged — is
+        // finished with. Failures stay on the list so they can be retried.
+        const settled = [
+          ...result.updated.map((r) => r.inventoryItemId),
+          ...result.unchanged.map((r) => r.inventoryItemId),
+        ];
+        setDone((current) => new Set([...current, ...settled]));
+      },
+    });
   };
 
   return (
@@ -1184,19 +1208,33 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
         <p className="muted">Loading…</p>
       ) : rows.length === 0 ? (
         <p className="field-hint">
-          No linked listing on this channel matches a tag rule. Nothing to apply.
+          {done.size > 0
+            ? `All ${done.size} listing(s) have been through. Nothing left to apply.`
+            : 'No linked listing on this channel matches a tag rule. Nothing to apply.'}
         </p>
       ) : (
         <>
           <div className="inline-form">
             <button type="button" className="ghost" onClick={selectAll}>
-              Select {rows.length > MAX_ITEMS ? `first ${MAX_ITEMS}` : 'all'} ({rows.length})
+              {rows.length > MAX_ITEMS
+                ? `Select next ${MAX_ITEMS} of ${rows.length}`
+                : `Select all ${rows.length}`}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setSelected(new Set())}
+              disabled={selected.size === 0}
+            >
+              Clear
             </button>
             {rows.length > MAX_ITEMS && (
               <span className="muted">
-                One run updates at most {MAX_ITEMS}; run again for the rest.
+                One run updates at most {MAX_ITEMS}. Apply, then select the next batch — done
+                listings drop off this list.
               </span>
             )}
+            {done.size > 0 && <span className="muted">{done.size} done so far</span>}
           </div>
 
           <table className="compact">

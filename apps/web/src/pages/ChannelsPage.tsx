@@ -1214,6 +1214,31 @@ function ListingDefaults({ channel }: { channel: Channel }) {
             Singles only is the default because sealed product is restocked far more often than a
             given card is, so hiding a booster box that will be back next week is churn for nothing.
           </p>
+
+          {/* Nested under the policy it reverses: publishing again is only ever
+              a question about something this setting unpublished. */}
+          {channel.draftAtSellout && (
+            <>
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={channel.reactivateOnRestock}
+                  disabled={update.isPending}
+                  onChange={(event) =>
+                    update.mutate({ id: channel.id, reactivateOnRestock: event.target.checked })
+                  }
+                />
+                Publish again when stock comes back
+              </label>
+              <p className="field-hint">
+                Only a listing the hub unpublished itself — it records which ones those were.
+                Anything you drafted by hand stays drafted, and so does anything unpublished before
+                this setting existed. Off by default: leaving a sold-out page up costs nothing,
+                while publishing something you held back on purpose is a decision you never made.
+              </p>
+            </>
+          )}
+
           <DraftSoldOutNow channel={channel} />
         </>
       )}

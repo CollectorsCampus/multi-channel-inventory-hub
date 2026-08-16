@@ -134,6 +134,18 @@ export class UpdateChannelDto {
   selloutScope?: string;
 
   @ApiPropertyOptional({
+    description:
+      'Publish a listing again when stock returns — but only one this hub unpublished itself, ' +
+      'which it records per allocation. A listing drafted by hand carries no such record and ' +
+      'is never touched. Separate from draftAtSellout because the risks differ: a sold-out ' +
+      'page left up costs nothing, while publishing something held back deliberately is a ' +
+      'decision the operator never made.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  reactivateOnRestock?: boolean;
+
+  @ApiPropertyOptional({
     type: Object,
     description:
       'How this channel turns market prices into asking prices: enabled, conditionPercents ' +

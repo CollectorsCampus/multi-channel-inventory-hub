@@ -43,14 +43,23 @@ import { AlertsService } from './alerts.service';
  * in-stock sibling variant, or stock at a location the hub does not manage, is
  * left alone.
  *
- * ## One direction, always
+ * ## Coming back is opt-in, and needs a permission slip
  *
- * A restock never re-publishes. Nothing should become buyable on a storefront
- * because a background job ran, and the asymmetry is deliberate rather than an
- * omission: drafting an in-stock card costs a sale until someone notices,
- * while publishing something the operator meant to keep back is a decision
- * they never made. They activate by hand, exactly as they do for a newly
- * created draft.
+ * For a long time a restock never re-published, on the reasoning that nothing
+ * should become buyable because a background job ran. That is still the
+ * default, and still the right one — but it was the hub deciding for the
+ * operator, and a shop whose sealed product turns over weekly wants the other
+ * answer. {@link reactivateIfRestocked} is that, behind its own per-channel
+ * toggle, separate from `draftAtSellout` because the two are different risks:
+ * leaving a sold-out page up costs nothing, while publishing something the
+ * operator deliberately held back is a decision they never made.
+ *
+ * **It only ever re-publishes a listing this hub unpublished.** No platform can
+ * say who drafted a product, so `ChannelAllocation.selloutDraftedAt` is the
+ * only honest answer — stamped when the hub drafts, cleared the moment it is
+ * spent. A listing the operator drafted for their own reasons carries no stamp
+ * and is never touched, and neither is anything drafted before the column
+ * existed.
  */
 
 /** What one listing's evaluation came to. */
@@ -133,9 +142,74 @@ export class SelloutService {
       onlyIfSoldOut: true,
     });
 
+    if (!result.changed) return { drafted: false, reason: result.reason ?? 'no change' };
+
+    // Stamped only on a draft this call actually performed, so the permission
+    // to re-publish records something that really happened rather than
+    // something that was merely asked for.
+    await this.prisma.channelAllocation.updateMany({
+      where: { channelInstanceId, inventoryItemId: listing.inventoryItemId },
+      data: { selloutDraftedAt: new Date() },
+    });
+
+    return { drafted: true };
+  }
+
+  /**
+   * Publish a listing again, if the hub is the one that unpublished it.
+   *
+   * The counterpart to {@link draftIfSoldOut}, called by the outbound worker
+   * when a quantity push takes an allocation back above zero. Every gate is
+   * separate from the drafting side on purpose — a channel may want stock hidden
+   * as it sells out and still not want it published again without a person
+   * looking.
+   *
+   * `selloutDraftedAt` is the gate that matters, and it is cleared **before**
+   * the channel is asked rather than after. A failed activation that left the
+   * stamp would retry on every subsequent push, and a listing the operator had
+   * meanwhile drafted on purpose would keep being pushed at — the stamp is
+   * permission for one attempt, not a standing instruction.
+   */
+  async reactivateIfRestocked(
+    connector: Connector,
+    ctx: Ctx,
+    channelInstanceId: string,
+    listing: { externalListingId: string | null; inventoryItemId: string },
+  ): Promise<{ activated: boolean; reason?: string }> {
+    if (!listing.externalListingId) return { activated: false, reason: 'not linked' };
+    if (!hasCapability(connector.capabilities, 'listing.status')) {
+      return { activated: false, reason: `${connector.displayName} cannot change listing status` };
+    }
+
+    const channel = await this.prisma.channelInstance.findUnique({
+      where: { id: channelInstanceId },
+      select: { reactivateOnRestock: true },
+    });
+    if (!channel?.reactivateOnRestock) {
+      return { activated: false, reason: 'not enabled on this channel' };
+    }
+
+    const allocation = await this.prisma.channelAllocation.findFirst({
+      where: { channelInstanceId, inventoryItemId: listing.inventoryItemId },
+      select: { id: true, selloutDraftedAt: true },
+    });
+    if (!allocation?.selloutDraftedAt) {
+      return { activated: false, reason: 'not unpublished by the hub' };
+    }
+
+    await this.prisma.channelAllocation.update({
+      where: { id: allocation.id },
+      data: { selloutDraftedAt: null },
+    });
+
+    const result = await connector.updateListingStatus!(ctx, {
+      externalListingId: listing.externalListingId,
+      status: 'active',
+    });
+
     return result.changed
-      ? { drafted: true }
-      : { drafted: false, reason: result.reason ?? 'no change' };
+      ? { activated: true }
+      : { activated: false, reason: result.reason ?? 'no change' };
   }
 
   /**

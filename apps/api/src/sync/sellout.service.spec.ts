@@ -55,13 +55,18 @@ const alerts = {
   clearFlag: vi.fn(async () => true),
 } as unknown as AlertsService;
 
-async function seedChannel(draftAtSellout = true, selloutScope?: string) {
+async function seedChannel(
+  draftAtSellout = true,
+  selloutScope?: string,
+  reactivateOnRestock = false,
+) {
   return prisma.channelInstance.create({
     data: {
       connectorKey: 'shopify',
       displayName: 'Test Store',
       config: '{}',
       draftAtSellout,
+      reactivateOnRestock,
       ...(selloutScope ? { selloutScope } : {}),
     },
   });
@@ -358,6 +363,105 @@ describeDb('SelloutService', () => {
 
     expect(alerts.raiseFlag).not.toHaveBeenCalled();
     expect(alerts.clearFlag).toHaveBeenCalledWith('sync_failure', channel.id, 'sellout:sweep');
+  });
+
+  /**
+   * The permission slip. No platform can say who drafted a product, so the
+   * hub's own stamp is the only honest answer to "was this ours to
+   * re-publish" — and every one of these is a listing that must stay hidden
+   * without it.
+   */
+  describe('publishing again when stock returns', () => {
+    async function draftedListing(reactivateOnRestock: boolean) {
+      const channel = await seedChannel(true, 'singles', reactivateOnRestock);
+      const itemId = await seedListing({
+        channelId: channel.id,
+        condition: 'NM',
+        quantityOnHand: 0,
+        listedQuantity: 0,
+        externalListingId: 'gid://shopify/ProductVariant/1',
+      });
+      return { channel, itemId };
+    }
+
+    const listing = (inventoryItemId: string) => ({
+      externalListingId: 'gid://shopify/ProductVariant/1',
+      inventoryItemId,
+    });
+
+    it('publishes again a listing the hub unpublished, once', async () => {
+      const { channel, itemId } = await draftedListing(true);
+      const { service, calls, connector } = build();
+
+      // The hub hides it, which is what records the permission.
+      await service.sweepChannel(channel.id);
+
+      const first = await service.reactivateIfRestocked(
+        connector as never,
+        {} as never,
+        channel.id,
+        listing(itemId),
+      );
+      expect(first.activated).toBe(true);
+      expect(calls.at(-1)).toEqual({
+        externalListingId: 'gid://shopify/ProductVariant/1',
+        status: 'active',
+      });
+
+      // Spent, not standing: a second restock does not push at the storefront
+      // again, and a listing drafted by hand meanwhile is left alone.
+      const before = calls.length;
+      const second = await service.reactivateIfRestocked(
+        connector as never,
+        {} as never,
+        channel.id,
+        listing(itemId),
+      );
+      expect(second.activated).toBe(false);
+      expect(second.reason).toMatch(/not unpublished by the hub/);
+      expect(calls).toHaveLength(before);
+    });
+
+    /**
+     * The case the whole design exists to refuse: a listing the operator
+     * drafted for their own reasons carries no stamp, so restocking it must
+     * not put it back on the storefront.
+     */
+    it('never publishes a listing it did not unpublish', async () => {
+      const { channel, itemId } = await draftedListing(true);
+      const { service, calls, connector } = build();
+
+      const outcome = await service.reactivateIfRestocked(
+        connector as never,
+        {} as never,
+        channel.id,
+        listing(itemId),
+      );
+
+      expect(outcome.activated).toBe(false);
+      expect(outcome.reason).toMatch(/not unpublished by the hub/);
+      expect(calls).toEqual([]);
+    });
+
+    /** Its own toggle, separate from drafting: the risks differ. */
+    it('does nothing when the channel has not asked for it', async () => {
+      const { channel, itemId } = await draftedListing(false);
+      const { service, calls, connector } = build();
+
+      await service.sweepChannel(channel.id);
+      const before = calls.length;
+
+      const outcome = await service.reactivateIfRestocked(
+        connector as never,
+        {} as never,
+        channel.id,
+        listing(itemId),
+      );
+
+      expect(outcome.activated).toBe(false);
+      expect(outcome.reason).toMatch(/not enabled/);
+      expect(calls).toHaveLength(before);
+    });
   });
 
   /** The sweep only visits channels that asked for it. */

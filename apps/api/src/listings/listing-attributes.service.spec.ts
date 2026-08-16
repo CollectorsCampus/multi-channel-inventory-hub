@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@hub/db';
-import { ListingTagsService } from './listing-tags.service';
+import { ListingAttributesService } from './listing-attributes.service';
 import { encodeListingDefaults } from '../channels/listing-defaults';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { ChannelContextFactory } from '../connectors/channel-context.service';
@@ -9,11 +9,11 @@ import type { ChannelContextFactory } from '../connectors/channel-context.servic
  * The back-fill's own judgement, with the connector faked at its seam.
  *
  * What is worth pinning is what the service decides, not what Shopify does:
- * which listings are offered, that the tags come from the rules rather than
- * anything stored on the allocation, that a listing needing nothing is
- * reported as unchanged rather than as work, and that a run is refused
- * outright when there are no rules — the case where a naive implementation
- * would happily "apply" nothing to everything.
+ * which listings are offered, that the tags and custom fields come from the
+ * rules rather than anything stored on the allocation, that a listing needing
+ * nothing is reported as unchanged rather than as work, and that a run is
+ * refused outright when there are no rules — the case where a naive
+ * implementation would happily "apply" nothing to everything.
  */
 
 const url = process.env.TEST_DATABASE_URL;
@@ -22,17 +22,22 @@ const describeDb = url ? describe : describe.skip;
 let prisma: PrismaClient;
 let channelId: string;
 
-/** Records what the connector was asked to add, and reports it back. */
+interface FakeRequest {
+  externalListingId: string;
+  addTags: readonly string[];
+  setMetafields?: readonly { namespace: string; key: string }[];
+  category?: string;
+}
+
+/** Records what the connector was asked to apply, and reports it back. */
 function fakeConnector(alreadyOn: Record<string, string[]> = {}) {
-  const calls: Array<{ externalListingId: string; addTags: readonly string[] }> = [];
-  const updateListingAttributes = vi.fn(
-    async (_ctx: unknown, req: { externalListingId: string; addTags: readonly string[] }) => {
-      calls.push(req);
-      const have = new Set(alreadyOn[req.externalListingId] ?? []);
-      const added = req.addTags.filter((tag) => !have.has(tag));
-      return { added, tags: [...have, ...added] };
-    },
-  );
+  const calls: FakeRequest[] = [];
+  const updateListingAttributes = vi.fn(async (_ctx: unknown, req: FakeRequest) => {
+    calls.push(req);
+    const have = new Set(alreadyOn[req.externalListingId] ?? []);
+    const added = req.addTags.filter((tag) => !have.has(tag));
+    return { added, tags: [...have, ...added], metafieldsSet: req.setMetafields ?? [] };
+  });
 
   const connector = {
     key: 'shopify',
@@ -84,18 +89,30 @@ async function seedListing(options: {
   return item.id;
 }
 
-async function setRules(rules: Array<{ match: string; value: string; tag: string }>) {
+async function setRules(
+  rules: Array<{ match: string; value: string; tag: string }>,
+  extra: Record<string, unknown> = {},
+) {
   await prisma.channelInstance.update({
     where: { id: channelId },
     data: {
       listingDefaults: encodeListingDefaults({
         tagRules: rules as never,
-      }),
+        ...extra,
+      } as never),
     },
   });
 }
 
-describeDb('ListingTagsService', () => {
+const GAME_FIELD = {
+  owner: 'product' as const,
+  namespace: 'custom',
+  key: 'game',
+  type: 'metaobject_reference',
+  value: 'gid://shopify/Metaobject/1',
+};
+
+describeDb('ListingAttributesService', () => {
   beforeAll(async () => {
     prisma = new PrismaClient({ datasources: { db: { url } } });
     await prisma.$connect();
@@ -121,7 +138,7 @@ describeDb('ListingTagsService', () => {
   function build(alreadyOn: Record<string, string[]> = {}) {
     const { channels, calls } = fakeConnector(alreadyOn);
     return {
-      service: new ListingTagsService(prisma as unknown as PrismaService, channels),
+      service: new ListingAttributesService(prisma as unknown as PrismaService, channels),
       calls,
     };
   }
@@ -184,7 +201,7 @@ describeDb('ListingTagsService', () => {
    * matching listings" are different problems with different fixes, and only
    * one of them is fixed on this screen.
    */
-  it('refuses when the channel has no tag rules at all', async () => {
+  it('refuses when the channel has no rules at all', async () => {
     await seedListing({
       name: 'Charizard ex',
       game: 'Pokemon',
@@ -193,7 +210,82 @@ describeDb('ListingTagsService', () => {
       externalListingId: 'gid://shopify/ProductVariant/1',
     });
 
-    await expect(build().service.pending(channelId)).rejects.toThrow(/no tag rules/);
+    await expect(build().service.pending(channelId)).rejects.toThrow(
+      /no tag or custom-field rules/,
+    );
+  });
+
+  /**
+   * The back-fill exists for whichever half is behind. A store that tags by
+   * hand but drives its custom fields from rules must still be able to run it,
+   * so custom-field rules alone are enough — and a listing that gains only a
+   * field is offered rather than dropped for having no tag.
+   */
+  it('offers a listing whose only work is a custom field', async () => {
+    await setRules([], {
+      metafieldRules: [{ match: 'game', value: 'Pokemon', metafield: GAME_FIELD }],
+    });
+    const id = await seedListing({
+      name: 'Charizard ex',
+      game: 'Pokemon',
+      setName: null,
+      condition: 'NM',
+      externalListingId: 'gid://shopify/ProductVariant/1',
+    });
+
+    const pending = await build().service.pending(channelId);
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.inventoryItemId).toBe(id);
+    expect(pending[0]!.tags).toEqual([]);
+    expect(pending[0]!.metafields).toEqual([{ ...GAME_FIELD, label: 'custom.game' }]);
+  });
+
+  it('sends the resolved custom fields and the channel’s category', async () => {
+    await setRules([], {
+      category: 'ae-2-2-3-2',
+      metafieldRules: [{ match: 'game', value: 'Pokemon', metafield: GAME_FIELD }],
+    });
+    const id = await seedListing({
+      name: 'Charizard ex',
+      game: 'Pokemon',
+      setName: null,
+      condition: 'NM',
+      externalListingId: 'gid://shopify/ProductVariant/1',
+    });
+
+    const { service, calls } = build();
+    const result = await service.apply(channelId, [id]);
+
+    // The display label never reaches the connector: what is sent is the
+    // metafield exactly as the operator stored it.
+    expect(calls[0]!.setMetafields).toEqual([GAME_FIELD]);
+    // Carried so a conditional field can be satisfied on a product with no
+    // classification. Whether it is applied is the connector's judgement.
+    expect(calls[0]!.category).toBe('ae-2-2-3-2');
+    expect(result.updated).toEqual([
+      { inventoryItemId: id, name: 'Charizard ex', added: [], metafieldsSet: ['custom.game'] },
+    ]);
+  });
+
+  /**
+   * A rule matching nothing must not make the listing look like work: the
+   * connector would be called, and a call that can change nothing is a
+   * storefront round trip spent for a row nobody needed to tick.
+   */
+  it('omits a listing whose custom-field rule does not match it', async () => {
+    await setRules([], {
+      metafieldRules: [{ match: 'game', value: 'Magic', metafield: GAME_FIELD }],
+    });
+    await seedListing({
+      name: 'Charizard ex',
+      game: 'Pokemon',
+      setName: null,
+      condition: 'NM',
+      externalListingId: 'gid://shopify/ProductVariant/1',
+    });
+
+    expect(await build().service.pending(channelId)).toEqual([]);
   });
 
   it('sends the resolved tags and reports what was added', async () => {
@@ -210,10 +302,14 @@ describeDb('ListingTagsService', () => {
     const result = await service.apply(channelId, [id]);
 
     expect(calls).toEqual([
-      { externalListingId: 'gid://shopify/ProductVariant/1', addTags: ['Pokémon'] },
+      {
+        externalListingId: 'gid://shopify/ProductVariant/1',
+        addTags: ['Pokémon'],
+        setMetafields: [],
+      },
     ]);
     expect(result.updated).toEqual([
-      { inventoryItemId: id, name: 'Charizard ex', added: ['Pokémon'] },
+      { inventoryItemId: id, name: 'Charizard ex', added: ['Pokémon'], metafieldsSet: [] },
     ]);
     expect(result.unchanged).toEqual([]);
   });

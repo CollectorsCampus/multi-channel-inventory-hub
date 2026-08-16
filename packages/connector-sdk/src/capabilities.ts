@@ -192,7 +192,7 @@ export const CAPABILITIES = [
   'listing.publications',
 
   /**
-   * Add attributes to a listing that already exists — today, tags.
+   * Add attributes to a listing that already exists — tags and custom fields.
    *
    * Creation applies the operator's rules once, at birth. A rule written
    * afterwards therefore reaches nothing that already exists, and on a
@@ -205,7 +205,8 @@ export const CAPABILITIES = [
    * leaves the rest untouched; a tag the seller applied by hand is not the
    * hub's to remove. Where the platform's update replaces the whole set, the
    * connector reads first and writes the union — which also makes a re-run a
-   * no-op rather than a second write.
+   * no-op rather than a second write. A single-valued attribute cannot be added
+   * to, so a custom field is written only where the listing has none.
    *
    * Selected by the operator, never swept: it writes to a live storefront.
    */

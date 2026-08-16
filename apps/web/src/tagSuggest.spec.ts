@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeForMatch, previewItemKind, previewTags, suggestTag } from './tagSuggest';
+import {
+  normalizeForMatch,
+  previewItemKind,
+  previewTags,
+  suggestChoice,
+  suggestTag,
+} from './tagSuggest';
 
 /**
  * The values here are real: catalogue spellings from tcgcsv and tags from the
@@ -71,6 +77,55 @@ describe('suggestTag', () => {
 
   it('returns the exact tag when it is already exact', () => {
     expect(suggestTag('Elite Trainer Box', STORE_TAGS)).toBe('Elite Trainer Box');
+  });
+});
+
+describe('suggestChoice', () => {
+  /**
+   * Metaobject entries as the store really spells them: the operator's
+   * `custom.set` uses the tag spelling, not the catalogue's `ME02: Phantasmal
+   * Flames`, which is why matching by label rather than by equality is what
+   * makes this useful at all.
+   */
+  const GAMES = [
+    { value: 'gid://shopify/Metaobject/1', label: 'Pokémon' },
+    { value: 'gid://shopify/Metaobject/2', label: 'Magic: The Gathering' },
+  ];
+  const SETS = [
+    { value: 'gid://shopify/Metaobject/9', label: 'ME02 Phantasmal Flames' },
+    { value: 'gid://shopify/Metaobject/10', label: 'SV04 Paradox Rift' },
+  ];
+
+  it('finds the entry for a catalogue game or set name', () => {
+    expect(suggestChoice('Pokemon', GAMES)?.value).toBe('gid://shopify/Metaobject/1');
+    expect(suggestChoice('ME02: Phantasmal Flames', SETS)?.value).toBe(
+      'gid://shopify/Metaobject/9',
+    );
+  });
+
+  /**
+   * What makes offering every field against every value safe rather than a
+   * shotgun: a set name finds nothing among the games, so only the pairings
+   * that could be right are ever proposed.
+   */
+  it('finds nothing for a value belonging to a different field', () => {
+    expect(suggestChoice('ME02: Phantasmal Flames', GAMES)).toBeNull();
+    expect(suggestChoice('Pokemon', SETS)).toBeNull();
+  });
+
+  /** Ambiguity is not a tie to break — two entries are two real records. */
+  it('refuses when two entries normalise the same way', () => {
+    expect(
+      suggestChoice('Pokemon', [
+        { value: 'a', label: 'Pokémon' },
+        { value: 'b', label: 'POKEMON' },
+      ]),
+    ).toBeNull();
+  });
+
+  it('handles an empty value and an empty vocabulary', () => {
+    expect(suggestChoice('', GAMES)).toBeNull();
+    expect(suggestChoice('Pokemon', [])).toBeNull();
   });
 });
 

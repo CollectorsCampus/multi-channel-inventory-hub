@@ -107,3 +107,27 @@ export function suggestTag(value: string, vocabulary: readonly string[]): string
   // path — it is the same answer, arrived at more obviously.
   return matches.length === 1 ? matches[0]! : null;
 }
+
+/**
+ * The one entry in a custom field's vocabulary that plainly means `value`.
+ *
+ * {@link suggestTag} for metaobject fields, and the same refusal on ambiguity
+ * for the same reason. Matched on the **label**, because the value is a
+ * metaobject id that means nothing outside one shop — which is also what makes
+ * this worth doing: an operator matching `custom.set` by hand is reading a
+ * dropdown of dozens of set names to find the one they just typed.
+ *
+ * It also self-filters across fields: `custom.game`'s entries are game names
+ * and `custom.set`'s are set names, so offering every field for every value
+ * proposes only the pairings that could be right.
+ */
+export function suggestChoice<T extends { label: string }>(
+  value: string,
+  choices: readonly T[],
+): T | null {
+  const target = normalizeForMatch(value);
+  if (target === '') return null;
+
+  const matches = choices.filter((choice) => normalizeForMatch(choice.label) === target);
+  return matches.length === 1 ? matches[0]! : null;
+}

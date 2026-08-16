@@ -64,13 +64,14 @@ export class PushListingImagesDto {
   inventoryItemIds!: string[];
 }
 
-export class BackfillTagsDto {
+export class BackfillAttributesDto {
   @ApiProperty({
     type: [String],
     description:
-      'Ledger items whose listings should receive their rules’ tags, chosen from ' +
-      'GET .../listings/tags/pending. Additive — nothing is removed — but it writes to a live ' +
-      'storefront, so this is explicit ids rather than a filter.',
+      'Ledger items whose listings should receive their rules’ tags and custom fields, chosen ' +
+      'from GET .../listings/attributes/pending. Nothing is removed and no existing custom ' +
+      'field is overwritten — but it writes to a live storefront, so this is explicit ids ' +
+      'rather than a filter.',
   })
   @IsArray()
   @ArrayNotEmpty()

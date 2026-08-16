@@ -64,6 +64,16 @@ export interface ProposalRow {
   channelName: string;
   name: string;
   setName: string | null;
+  /**
+   * The catalogue's external ids, keyed by source — what a reviewer needs to
+   * open the page the market figure came from.
+   *
+   * Ids, never URLs: which sources have a linkable public page is a fact about
+   * the web that has already changed once (Cardmarket's product pages went
+   * behind bot protection), and the web app owns that judgement in
+   * `externalLinks`. A URL built here would put it in two places.
+   */
+  externalIds: Record<string, string>;
   condition: string;
   printing: string;
   currentPrice: number | null;
@@ -141,7 +151,23 @@ export class RepriceService {
             channelInstance: { select: { displayName: true } },
             inventoryItem: {
               include: {
-                sku: { include: { catalogItem: { select: { name: true, setName: true } } } },
+                sku: {
+                  include: {
+                    catalogItem: {
+                      select: {
+                        name: true,
+                        setName: true,
+                        // The ids behind the market figure. Reviewing a price
+                        // means checking it against the page it came from, and
+                        // the id is the only thing that can address that page —
+                        // the caller turns it into a URL, since which sources
+                        // have a linkable public page is a fact about the web
+                        // rather than about the ledger.
+                        externalRefs: { select: { source: true, externalId: true } },
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -156,6 +182,12 @@ export class RepriceService {
       channelName: row.allocation.channelInstance.displayName,
       name: row.allocation.inventoryItem.sku.catalogItem.name,
       setName: row.allocation.inventoryItem.sku.catalogItem.setName,
+      externalIds: Object.fromEntries(
+        row.allocation.inventoryItem.sku.catalogItem.externalRefs.map((ref) => [
+          ref.source,
+          ref.externalId,
+        ]),
+      ),
       condition: row.allocation.inventoryItem.sku.condition,
       printing: row.allocation.inventoryItem.sku.printing,
       currentPrice: row.currentPrice,

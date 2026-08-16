@@ -1087,6 +1087,14 @@ button.sort {
   color: var(--fixed);
 }
 
+/* An outbound link sitting after a figure it lets you go and check — the
+   repricing review's market price. Left margin rather than a gap, because the
+   number and the link are one phrase. */
+.market-link {
+  margin-left: 0.4rem;
+  white-space: nowrap;
+}
+
 /*
  * A chip naming a custom field rather than a tag. Muted and dashed because the
  * two sit in one row on the back-fill list, and a reader scanning it needs to

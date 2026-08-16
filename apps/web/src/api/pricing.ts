@@ -26,6 +26,12 @@ export interface RepriceProposal {
   channelName: string;
   name: string;
   setName: string | null;
+  /**
+   * The catalogue's external ids, keyed by source. Ids rather than URLs: which
+   * sources have a linkable public page is `externalLinks`' judgement, and the
+   * server deliberately does not hold a second copy of it.
+   */
+  externalIds: Record<string, string>;
   condition: string;
   printing: string;
   currentPrice: number | null;

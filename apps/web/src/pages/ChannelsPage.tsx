@@ -1093,14 +1093,38 @@ function ListingDefaults({ channel }: { channel: Channel }) {
                 update.mutate({ id: channel.id, draftAtSellout: event.target.checked })
               }
             />
-            Draft sold-out singles
+            Draft sold-out listings
           </label>
+
+          {/* Shown only once the policy is on: a scope for something switched
+              off is a question about nothing. */}
+          {channel.draftAtSellout && (
+            <div className="inline-form">
+              <label htmlFor={`sellout-scope-${channel.id}`}>Applies to</label>
+              <select
+                id={`sellout-scope-${channel.id}`}
+                value={channel.selloutScope}
+                disabled={update.isPending}
+                onChange={(event) =>
+                  update.mutate({ id: channel.id, selloutScope: event.target.value })
+                }
+              >
+                <option value="singles">Singles only</option>
+                <option value="all">Everything — singles, sealed and the rest</option>
+              </select>
+            </div>
+          )}
+
           <p className="field-hint">
-            When a single&rsquo;s quantity is pushed to zero, its product is unpublished — only if
+            When a listing&rsquo;s quantity is pushed to zero, its product is unpublished — only if
             the store shows the <em>whole</em> product out of stock, so a sibling condition with
             copies keeps it live. Restocking never re-activates automatically; you publish it
             yourself, as with any draft. A nightly sweep catches anything that reached zero without
             a push.
+          </p>
+          <p className="field-hint">
+            Singles only is the default because sealed product is restocked far more often than a
+            given card is, so hiding a booster box that will be back next week is churn for nothing.
           </p>
           <DraftSoldOutNow channel={channel} />
         </>
@@ -1363,7 +1387,8 @@ function DraftSoldOutNow({ channel }: { channel: Channel }) {
         {confirming ? (
           <>
             <span className="muted">
-              Unpublish every sold-out single on the live store? You publish them again yourself.
+              Unpublish every sold-out listing in scope on the live store? You publish them again
+              yourself.
             </span>
             <button
               type="button"
@@ -1386,7 +1411,7 @@ function DraftSoldOutNow({ channel }: { channel: Channel }) {
             disabled={run.isPending}
             onClick={() => setConfirming(true)}
           >
-            {run.isPending ? 'Checking…' : 'Draft sold-out singles now'}
+            {run.isPending ? 'Checking…' : 'Draft sold-out listings now'}
           </button>
         )}
       </div>
@@ -1396,7 +1421,7 @@ function DraftSoldOutNow({ channel }: { channel: Channel }) {
       {report && (
         <>
           <p className={report.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
-            {report.checked} sold-out single(s) checked, {report.drafted} drafted
+            {report.checked} sold-out listing(s) checked, {report.drafted} drafted
             {report.skipped > 0 && `, ${report.skipped} left alone`}
             {report.problems.length > 0 && `, ${report.problems.length} failed`}.
           </p>

@@ -101,6 +101,8 @@ export interface Channel {
   autoListNewStock: boolean;
   /** Opt-in: draft a single's product when its pushed quantity reaches zero. */
   draftAtSellout: boolean;
+  /** What that applies to: "singles" (the default) or "all". */
+  selloutScope: string;
   /** How this channel turns market prices into asking prices. */
   repricingPolicy: RepricingPolicy;
   /** What a listing created here carries. Applied verbatim; never derived. */
@@ -163,6 +165,7 @@ export function useUpdateChannel() {
       reconcileAutoCorrect?: boolean;
       autoListNewStock?: boolean;
       draftAtSellout?: boolean;
+      selloutScope?: string;
       repricingPolicy?: RepricingPolicy;
       /** Replaced wholesale, not merged — sending `{ tags: [] }` clears them. */
       listingDefaults?: ChannelListingDefaults;

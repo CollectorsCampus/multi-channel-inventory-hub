@@ -249,6 +249,17 @@ model ChannelInstance {
   /// become buyable on a storefront because a background job ran.
   draftAtSellout Boolean @default(false) @map("draft_at_sellout")
 
+  /// SelloutScope: "singles" | "all". What draftAtSellout applies to.
+  ///
+  /// Defaults to singles because sealed product is restocked far more often
+  /// than a given card is: unpublishing a booster box that will be back next
+  /// week churns the storefront for nothing, and re-publishing is a manual step
+  /// by design. A shop that would rather hide everything it cannot sell says so
+  /// here. An unrecognised value is read as "singles" — the conservative
+  /// direction, since the cost of a typo should not be a storefront emptied of
+  /// its sealed product.
+  selloutScope String @default("singles") @map("sellout_scope")
+
   /// JSON-encoded repricing policy for this channel — condition percentages of
   /// market, rounding, floor, the auto-apply threshold. String, not Json, the
   /// same choice `listingDefaults` makes: read entire, written entire, never

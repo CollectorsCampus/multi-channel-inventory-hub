@@ -3,7 +3,7 @@ import { hasCapability, type Connector, type Ctx } from '@hub/connector-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChannelContextFactory } from '../connectors/channel-context.service';
 import { MinIntervalLimiter, intervalFor } from '../catalog/rate-limiter';
-import { itemKind } from '../channels/listing-defaults';
+import { inSelloutScope } from '../channels/listing-defaults';
 import { AlertsService } from './alerts.service';
 
 /**
@@ -33,12 +33,15 @@ import { AlertsService } from './alerts.service';
  * ## The gates, cheapest first
  *
  * The channel must have opted in (`draftAtSellout`); the connector must
- * declare `listing.status`; and the item must be a **single**. A sealed
- * listing was created and photographed by the operator and its visibility is
- * theirs — an Elite Trainer Box out of stock is a page a shop may well want to
- * keep. The connector then enforces the fourth gate against the platform's own
- * numbers (`onlyIfSoldOut`), so a product with an in-stock sibling variant, or
- * stock at a location the hub does not manage, is left alone.
+ * declare `listing.status`; and the item must fall inside the channel's
+ * `selloutScope`, which defaults to singles only. Sealed product is restocked
+ * far more often than a given card, so unpublishing a booster box that will be
+ * back next week churns the storefront for nothing — and re-publishing is a
+ * manual step by design. A shop that would rather hide everything it cannot
+ * sell sets the scope to `all`. The connector then enforces the fourth gate
+ * against the platform's own numbers (`onlyIfSoldOut`), so a product with an
+ * in-stock sibling variant, or stock at a location the hub does not manage, is
+ * left alone.
  *
  * ## One direction, always
  *
@@ -111,7 +114,7 @@ export class SelloutService {
 
     const channel = await this.prisma.channelInstance.findUnique({
       where: { id: channelInstanceId },
-      select: { draftAtSellout: true },
+      select: { draftAtSellout: true, selloutScope: true },
     });
     if (!channel?.draftAtSellout) return { drafted: false, reason: 'not enabled on this channel' };
 
@@ -120,8 +123,8 @@ export class SelloutService {
       select: { sku: { select: { condition: true } } },
     });
     if (!item) return { drafted: false, reason: 'no such ledger item' };
-    if (itemKind(item.sku.condition) !== 'single') {
-      return { drafted: false, reason: 'not a single' };
+    if (!inSelloutScope(channel.selloutScope, item.sku.condition)) {
+      return { drafted: false, reason: `outside this channel's scope (${channel.selloutScope})` };
     }
 
     const result = await connector.updateListingStatus!(ctx, {
@@ -210,7 +213,7 @@ export class SelloutService {
 
     const channel = await this.prisma.channelInstance.findUniqueOrThrow({
       where: { id: channelInstanceId },
-      select: { draftAtSellout: true },
+      select: { draftAtSellout: true, selloutScope: true },
     });
     // Refused rather than answered with an empty report: "off" and "nothing
     // sold out" are different facts, and only one of them is a setting.
@@ -249,7 +252,11 @@ export class SelloutService {
 
     for (const candidate of candidates) {
       const { sku } = candidate.inventoryItem;
-      if (itemKind(sku.condition) !== 'single') continue;
+      // Filtered here as well as in `draftIfSoldOut` — not redundantly: this
+      // decides what the run *reports having checked*, and a row counted and
+      // then declined by the shared gate would read as work considered when
+      // the channel never asked for it to be.
+      if (!inSelloutScope(channel.selloutScope, sku.condition)) continue;
 
       report.checked += 1;
 

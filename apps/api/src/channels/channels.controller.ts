@@ -16,6 +16,7 @@ import {
 import { ApiBody, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsIn,
   IsObject,
   IsOptional,
   IsString,
@@ -27,6 +28,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RequireRole } from '../auth/decorators';
 import { ChannelsService } from './channels.service';
 import { ChannelListingDefaultsDto } from './listing-defaults.dto';
+import { SELLOUT_SCOPES } from './listing-defaults';
 import { ChannelFilesService } from './channel-files.service';
 import { ReconcileService } from '../sync/reconcile.service';
 import { SelloutService } from '../sync/sellout.service';
@@ -118,6 +120,18 @@ export class UpdateChannelDto {
   @IsOptional()
   @IsBoolean()
   draftAtSellout?: boolean;
+
+  @ApiPropertyOptional({
+    enum: SELLOUT_SCOPES,
+    description:
+      'What draftAtSellout applies to. "singles" (the default) leaves sealed product and ' +
+      'anything non-applicable published, because those are restocked far more often than a ' +
+      'given card and re-publishing is a manual step. "all" hides everything out of stock. ' +
+      'An unrecognised value is read as "singles".',
+  })
+  @IsOptional()
+  @IsIn(SELLOUT_SCOPES as readonly string[])
+  selloutScope?: string;
 
   @ApiPropertyOptional({
     type: Object,

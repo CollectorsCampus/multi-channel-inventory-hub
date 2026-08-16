@@ -47,7 +47,7 @@ function fakeConnector(options: { capable?: boolean; failOn?: string } = {}) {
     resolve: async () => ({ connector, ctx: {}, displayName: 'Test Store' }),
   } as unknown as ChannelContextFactory;
 
-  return { channels, calls };
+  return { channels, calls, connector };
 }
 
 const alerts = {
@@ -55,13 +55,14 @@ const alerts = {
   clearFlag: vi.fn(async () => true),
 } as unknown as AlertsService;
 
-async function seedChannel(draftAtSellout = true) {
+async function seedChannel(draftAtSellout = true, selloutScope?: string) {
   return prisma.channelInstance.create({
     data: {
       connectorKey: 'shopify',
       displayName: 'Test Store',
       config: '{}',
       draftAtSellout,
+      ...(selloutScope ? { selloutScope } : {}),
     },
   });
 }
@@ -117,10 +118,11 @@ describeDb('SelloutService', () => {
   });
 
   function build(options: Parameters<typeof fakeConnector>[0] = {}) {
-    const { channels, calls } = fakeConnector(options);
+    const { channels, calls, connector } = fakeConnector(options);
     return {
       service: new SelloutService(prisma as unknown as PrismaService, channels, alerts),
       calls,
+      connector,
     };
   }
 
@@ -152,11 +154,12 @@ describeDb('SelloutService', () => {
   });
 
   /**
-   * A sealed listing was created and photographed by the operator, and an
-   * Elite Trainer Box out of stock is a page a shop may well want to keep.
-   * Its visibility is theirs.
+   * The default scope, and the operator's own reason for it: sealed product is
+   * restocked far more often than a given card, so unpublishing a booster box
+   * that will be back next week churns the storefront for nothing — and
+   * re-publishing is a manual step.
    */
-  it('leaves sealed and non-applicable stock alone', async () => {
+  it('leaves sealed and non-applicable stock alone by default', async () => {
     const channel = await seedChannel();
     for (const condition of ['SEALED', 'NA']) {
       await seedListing({
@@ -172,6 +175,72 @@ describeDb('SelloutService', () => {
     const report = await service.sweepChannel(channel.id);
 
     expect(report.checked).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  it('includes everything when the channel asks for it', async () => {
+    const channel = await seedChannel(true, 'all');
+    for (const condition of ['NM', 'SEALED', 'NA']) {
+      await seedListing({
+        channelId: channel.id,
+        condition,
+        quantityOnHand: 0,
+        listedQuantity: 0,
+        externalListingId: `gid://shopify/ProductVariant/${condition}`,
+      });
+    }
+
+    const { service, calls } = build();
+    const report = await service.sweepChannel(channel.id);
+
+    expect(report.checked).toBe(3);
+    expect(report.drafted).toBe(3);
+    expect(calls).toHaveLength(3);
+  });
+
+  /**
+   * The failure direction that matters. A value nobody recognises — a typo, a
+   * stale row, something from a future version — must not be read as "hide
+   * everything", because widening what gets unpublished has to be a choice
+   * somebody made. Mutation-checked: `scope !== 'singles'` fails this.
+   */
+  it('reads an unrecognised scope as singles, not as everything', async () => {
+    const channel = await seedChannel(true, 'everythin');
+    await seedListing({
+      channelId: channel.id,
+      condition: 'SEALED',
+      quantityOnHand: 0,
+      listedQuantity: 0,
+      externalListingId: 'gid://shopify/ProductVariant/typo',
+    });
+
+    const { service, calls } = build();
+    expect((await service.sweepChannel(channel.id)).checked).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  /**
+   * The scope gates the event path too, since both go through the same method
+   * — which is the whole reason it is one method.
+   */
+  it('applies the scope to a single listing asked about directly', async () => {
+    const channel = await seedChannel(true, 'singles');
+    const itemId = await seedListing({
+      channelId: channel.id,
+      condition: 'SEALED',
+      quantityOnHand: 0,
+      listedQuantity: 0,
+      externalListingId: 'gid://shopify/ProductVariant/sealed',
+    });
+
+    const { service, calls, connector } = build();
+    const outcome = await service.draftIfSoldOut(connector as never, {} as never, channel.id, {
+      externalListingId: 'gid://shopify/ProductVariant/sealed',
+      inventoryItemId: itemId,
+    });
+
+    expect(outcome.drafted).toBe(false);
+    expect(outcome.reason).toMatch(/scope \(singles\)/);
     expect(calls).toEqual([]);
   });
 

@@ -229,6 +229,33 @@ export function useReconcileChannel() {
   });
 }
 
+/** What one sold-out run did, per listing and in total. */
+export interface SelloutReport {
+  checked: number;
+  drafted: number;
+  skipped: number;
+  rows: Array<{
+    inventoryItemId: string;
+    name: string;
+    setName: string | null;
+    condition: string;
+    externalListingId: string;
+    drafted: boolean;
+    reason?: string;
+  }>;
+  problems: Array<{ inventoryItemId?: string; message: string }>;
+}
+
+export function useDraftSoldOut() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (channelId: string) =>
+      apiFetch<SelloutReport>(`/channels/${channelId}/sellout`, { method: 'POST' }),
+    // A run may clear the flag it raised last time.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: channelKeys.list }),
+  });
+}
+
 /** Plain-language name for a finding, since "kind" is our word, not an operator's. */
 export function describeDriftKind(kind: DriftKind): string {
   switch (kind) {

@@ -7,6 +7,8 @@ import { OutboundWorker } from './outbound.worker';
 import { InboundWorker } from './inbound.worker';
 import { ReconcileService } from './reconcile.service';
 import { ReconcileWorker } from './reconcile.worker';
+import { SelloutService } from './sellout.service';
+import { SelloutWorker } from './sellout.worker';
 import { SyncActivityService } from './sync-activity.service';
 import { SyncActivityController } from './sync-activity.controller';
 
@@ -27,11 +29,13 @@ import { SyncActivityController } from './sync-activity.controller';
     OutboundWorker,
     InboundWorker,
     ReconcileWorker,
+    SelloutService,
+    SelloutWorker,
   ],
   // `AlertsModule` rather than `AlertsService`: Nest will not re-export a
   // provider it does not itself provide, and says so at boot. Exporting the
   // module keeps every existing consumer of `SyncModule` working unchanged
   // now that alerts live somewhere the ledger can reach them too.
-  exports: [SyncEventService, ReconcileService, AlertsModule],
+  exports: [SyncEventService, ReconcileService, SelloutService, AlertsModule],
 })
 export class SyncModule {}

@@ -70,6 +70,15 @@ export const REPRICE_SWEEP_JOB = 'daily-reprice';
 /** Carries nothing: the sweep reads everything at run time. */
 export type RepriceJob = Record<string, never>;
 
+/** The sold-out sweep's queue — same shape again, for the same reasons. */
+export const SELLOUT_QUEUE = 'sellout';
+
+/** The job scheduler's fixed id, so re-registering replaces rather than adds. */
+export const SELLOUT_SWEEP_JOB = 'daily-sellout';
+
+/** Carries nothing: the sweep finds its own channels at run time. */
+export type SelloutJob = Record<string, never>;
+
 @Injectable()
 export class OutboundQueue implements OnModuleDestroy {
   private readonly logger = new Logger(OutboundQueue.name);

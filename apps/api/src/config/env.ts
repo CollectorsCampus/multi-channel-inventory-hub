@@ -91,6 +91,10 @@ export const envSchema = z.object({
 
   RECONCILE_CRON: z.string().default('0 3 * * *'),
   REPRICE_CRON: z.string().default('30 3 * * *'),
+  // Last of the three, deliberately: reconciliation may correct a quantity the
+  // hub had wrong, and a card the ledger only now believes is at zero should be
+  // drafted the same night rather than the next one.
+  SELLOUT_CRON: z.string().default('0 4 * * *'),
 
   /** Directory holding the built SPA. Resolved relative to the API's dist/ at runtime. */
   WEB_ROOT: z.string().optional(),

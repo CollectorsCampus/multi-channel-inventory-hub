@@ -29,6 +29,7 @@ import { ChannelsService } from './channels.service';
 import { ChannelListingDefaultsDto } from './listing-defaults.dto';
 import { ChannelFilesService } from './channel-files.service';
 import { ReconcileService } from '../sync/reconcile.service';
+import { SelloutService } from '../sync/sellout.service';
 import { IMPORT_KINDS, type ImportKind, type ImportSummary } from './file-transport';
 
 /**
@@ -150,6 +151,7 @@ export class ChannelsController {
     private readonly channels: ChannelsService,
     private readonly files: ChannelFilesService,
     private readonly reconciler: ReconcileService,
+    private readonly selloutService: SelloutService,
   ) {}
 
   /**
@@ -216,6 +218,31 @@ export class ChannelsController {
   @ApiOperation({ summary: 'Compare this channel against the ledger and report differences.' })
   reconcile(@Param('id') id: string, @Query('comparePrices') comparePrices?: string) {
     return this.reconciler.reconcileChannel(id, { comparePrices: comparePrices === 'true' });
+  }
+
+  /**
+   * Draft every sold-out single on this channel now.
+   *
+   * The catch-up for the event path, which only fires where a push happened:
+   * it reaches nothing that sold out before the channel opted in, and nothing
+   * whose stock reached zero by a route that queued no push. Synchronous and
+   * returning the report, for the same reason reconciliation is.
+   *
+   * Refused when the channel has the policy switched off — "off" and "nothing
+   * sold out" are different facts, and only one of them is a setting.
+   */
+  @Post(':id/sellout')
+  @RequireRole('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Draft this channel’s sold-out singles.',
+    description:
+      'Every linked single the ledger has at zero, subject to the same gates as the automatic ' +
+      'path — including the platform’s own stock check, so a product with an in-stock sibling ' +
+      'variant is left alone. One direction only: nothing is ever re-published.',
+  })
+  sellout(@Param('id') id: string) {
+    return this.selloutService.sweepChannel(id);
   }
 
   // ---------------------------------------------------------------------------

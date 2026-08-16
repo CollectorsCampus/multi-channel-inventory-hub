@@ -1087,6 +1087,17 @@ button.sort {
   color: var(--fixed);
 }
 
+/*
+ * A chip naming a custom field rather than a tag. Muted and dashed because the
+ * two sit in one row on the back-fill list, and a reader scanning it needs to
+ * see at a glance which of these is a collection rule and which is a field —
+ * `custom.set` and `SV08 Surging Sparks` are otherwise the same shape.
+ */
+.chip-field {
+  color: var(--muted);
+  border-style: dashed;
+}
+
 .chip-pooled {
   color: var(--pooled);
 }

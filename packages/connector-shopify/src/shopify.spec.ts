@@ -169,13 +169,20 @@ function mockClient(overrides: Record<string, unknown> = {}) {
         return { productUpdate: { userErrors: overrides.setStatusErrors ?? [] } } as T;
       }
 
-      if (query.includes('HubListingTags')) {
+      if (query.includes('HubListingAttributes')) {
         return (overrides.listingTags ?? {
-          node: { product: { id: PRODUCT, tags: ['Pokémon', 'Hand-added'] } },
+          node: {
+            product: {
+              id: PRODUCT,
+              tags: ['Pokémon', 'Hand-added'],
+              category: { id: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2' },
+              metafields: { nodes: [{ namespace: 'custom', key: 'game', value: 'gid://x/1' }] },
+            },
+          },
         }) as T;
       }
 
-      if (query.includes('HubAddTags')) {
+      if (query.includes('HubUpdateListingAttributes')) {
         return {
           productUpdate: {
             product: { id: PRODUCT, tags: (variables?.input as { tags?: string[] })?.tags ?? [] },
@@ -1689,7 +1696,7 @@ describe('updating a listing status', () => {
   });
 });
 
-describe('adding tags to an existing listing', () => {
+describe('adding attributes to an existing listing', () => {
   /**
    * The whole safety story: `productUpdate` replaces the tag list, so sending
    * only the new tags would strip whatever the seller applied by hand. On a
@@ -1708,7 +1715,7 @@ describe('adding tags to an existing listing', () => {
     // "Pokémon" was already there; only the genuinely new one is reported.
     expect(result.added).toEqual(['SV 151']);
 
-    const mutation = calls.find((c) => c.query.includes('HubAddTags'));
+    const mutation = calls.find((c) => c.query.includes('HubUpdateListingAttributes'));
     expect(mutation?.variables?.input).toEqual({
       id: PRODUCT,
       tags: ['Pokémon', 'Hand-added', 'SV 151'],
@@ -1730,7 +1737,7 @@ describe('adding tags to an existing listing', () => {
 
     expect(result.added).toEqual([]);
     expect(result.tags).toEqual(['Pokémon', 'Hand-added']);
-    expect(calls.some((c) => c.query.includes('HubAddTags'))).toBe(false);
+    expect(calls.some((c) => c.query.includes('HubUpdateListingAttributes'))).toBe(false);
   });
 
   /**
@@ -1761,8 +1768,11 @@ describe('adding tags to an existing listing', () => {
 
     expect(result.added).toEqual(['New']);
     expect(
-      (calls.find((c) => c.query.includes('HubAddTags'))?.variables?.input as { tags: string[] })
-        .tags,
+      (
+        calls.find((c) => c.query.includes('HubUpdateListingAttributes'))?.variables?.input as {
+          tags: string[];
+        }
+      ).tags,
     ).not.toContain('');
   });
 
@@ -1782,6 +1792,196 @@ describe('adding tags to an existing listing', () => {
     await expect(
       connector.updateListingAttributes!(ctx(), { externalListingId: VARIANT, addTags: ['x'] }),
     ).rejects.toThrow(/too many/);
+  });
+
+  /**
+   * The asymmetry with tags, and the reason for it: a tag set can be added to,
+   * a metafield holds one value. A rule firing on the game cannot know the
+   * operator hand-picked something else for this one card, so what is there
+   * stays. Mutation-checked: dropping the filter fails this.
+   */
+  it('never overwrites a custom field the product already carries', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: [],
+      setMetafields: [
+        { owner: 'product', namespace: 'custom', key: 'game', type: 'x', value: 'gid://x/9' },
+      ],
+    });
+
+    expect(result.metafieldsSet).toEqual([]);
+    expect(calls.some((c) => c.query.includes('HubUpdateListingAttributes'))).toBe(false);
+  });
+
+  it('fills in a custom field the product is missing', async () => {
+    const { client, calls } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: [],
+      setMetafields: [
+        { owner: 'product', namespace: 'custom', key: 'set', type: 'ref', value: 'gid://s/2' },
+      ],
+    });
+
+    expect(result.metafieldsSet).toEqual([
+      { owner: 'product', namespace: 'custom', key: 'set', type: 'ref', value: 'gid://s/2' },
+    ]);
+    const input = calls.find((c) => c.query.includes('HubUpdateListingAttributes'))?.variables
+      ?.input as { tags?: string[]; metafields?: unknown[] };
+    // No tags key at all: nothing was asked for, and sending the current list
+    // back is a write that could race with an edit made in the admin.
+    expect(input.tags).toBeUndefined();
+    expect(input.metafields).toEqual([
+      { namespace: 'custom', key: 'set', type: 'ref', value: 'gid://s/2' },
+    ]);
+  });
+
+  /**
+   * Shopify deletes a metafield set to the empty string, so a row surviving
+   * with `""` is a field with no value. Reading it as present would leave the
+   * listing permanently unfillable.
+   */
+  it('treats an empty stored value as missing', async () => {
+    const { client } = mockClient({
+      listingTags: {
+        node: {
+          product: {
+            id: PRODUCT,
+            tags: [],
+            category: { id: 'gid://shopify/TaxonomyCategory/ae-2-2-3-2' },
+            metafields: { nodes: [{ namespace: 'custom', key: 'game', value: '' }] },
+          },
+        },
+      },
+    });
+    const connector = createShopifyConnector({ client });
+
+    const result = await connector.updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: [],
+      setMetafields: [
+        { owner: 'product', namespace: 'custom', key: 'game', type: 'ref', value: 'gid://g/1' },
+      ],
+    });
+
+    expect(result.metafieldsSet).toHaveLength(1);
+  });
+
+  /**
+   * A conditional definition cannot be satisfied by a product with no category
+   * at all — but reclassifying one the operator already categorised is not this
+   * call's business. Both directions pinned, because a category sent when one
+   * was already set is a silent change to their own curation.
+   */
+  it('sets a category only when the product has none', async () => {
+    const field = {
+      owner: 'product' as const,
+      namespace: 'custom',
+      key: 'set',
+      type: 'ref',
+      value: 'gid://s/2',
+    };
+
+    const categorised = mockClient();
+    const withCategory = await createShopifyConnector({
+      client: categorised.client,
+    }).updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: [],
+      setMetafields: [field],
+      category: 'ae-2-2-3-2',
+    });
+
+    expect(withCategory.categorySet).toBe(false);
+    expect(
+      (
+        categorised.calls.find((c) => c.query.includes('HubUpdateListingAttributes'))?.variables
+          ?.input as { category?: string }
+      ).category,
+    ).toBeUndefined();
+
+    const bare = mockClient({
+      listingTags: {
+        node: { product: { id: PRODUCT, tags: [], category: null, metafields: { nodes: [] } } },
+      },
+    });
+    const withoutCategory = await createShopifyConnector({
+      client: bare.client,
+    }).updateListingAttributes!(ctx(), {
+      externalListingId: VARIANT,
+      addTags: [],
+      setMetafields: [field],
+      category: 'ae-2-2-3-2',
+    });
+
+    expect(withoutCategory.categorySet).toBe(true);
+    expect(
+      (
+        bare.calls.find((c) => c.query.includes('HubUpdateListingAttributes'))?.variables
+          ?.input as {
+          category?: string;
+        }
+      ).category,
+      // Normalised through the same helper `createListing` uses: a channel's
+      // stored default holds the bare handle a constraint gave it.
+    ).toBe('gid://shopify/TaxonomyCategory/ae-2-2-3-2');
+  });
+
+  /**
+   * Reported rather than skipped: a variant-owned field silently dropped would
+   * be reported as set and never written, which is the kind of lie that only
+   * surfaces when someone checks the storefront by hand.
+   */
+  it('refuses a variant-level custom field by name', async () => {
+    const { client } = mockClient();
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingAttributes!(ctx(), {
+        externalListingId: VARIANT,
+        addTags: [],
+        setMetafields: [
+          { owner: 'variant', namespace: 'custom', key: 'grade', type: 'x', value: 'v' },
+        ],
+      }),
+    ).rejects.toThrow(/custom\.grade.*variant-level/);
+  });
+
+  it('explains a constraint rejection instead of passing Shopify’s wording through', async () => {
+    const { client } = mockClient({
+      addTagsErrors: [{ message: "Owner subtype does not match the metafield definition's" }],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingAttributes!(ctx(), {
+        externalListingId: VARIANT,
+        addTags: [],
+        setMetafields: [
+          { owner: 'product', namespace: 'custom', key: 'set', type: 'ref', value: 'gid://s/2' },
+        ],
+      }),
+    ).rejects.toThrow(/custom\.set.*category/s);
+  });
+
+  /**
+   * The counterpart, so the hint cannot fire on an unrelated failure and send
+   * the next person looking at categories for no reason.
+   */
+  it('leaves a failure with no custom fields alone', async () => {
+    const { client } = mockClient({
+      addTagsErrors: [{ message: "Owner subtype does not match the metafield definition's" }],
+    });
+    const connector = createShopifyConnector({ client });
+
+    await expect(
+      connector.updateListingAttributes!(ctx(), { externalListingId: VARIANT, addTags: ['New'] }),
+    ).rejects.toThrow(/^(?!.*category).*Owner subtype/s);
   });
 });
 

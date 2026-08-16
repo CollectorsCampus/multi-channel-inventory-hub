@@ -446,7 +446,7 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     },
 
     /**
-     * Add tags to a variant's product, keeping everything already there.
+     * Add tags and fill in missing custom fields on a variant's product.
      *
      * `productUpdate` **replaces** the whole tag list, so this reads first and
      * writes the union. That is not an optimisation: sending only the new tags
@@ -454,9 +454,18 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
      * store every collection is a tag rule — the product would vanish from the
      * shop while still looking fine in the admin.
      *
-     * A listing that already carries all of them is left alone entirely: no
-     * mutation, `added: []`. That makes a re-run free and keeps the caller's
-     * report honest about what actually changed.
+     * Custom fields go the other way round, because a metafield holds one value
+     * rather than a set: one the product already carries is left exactly as it
+     * is. See {@link UpdateListingAttributesRequest.setMetafields}.
+     *
+     * A listing needing neither is left alone entirely: no mutation, `added:
+     * []`. That makes a re-run free and keeps the caller's report honest about
+     * what actually changed.
+     *
+     * **Product-owned fields only.** Everything the rules drive here describes
+     * the card rather than the copy of it, and a variant-owned field arriving
+     * is a caller bug rather than something to skip quietly — it would report a
+     * field as set that was never written.
      */
     async updateListingAttributes(
       ctx: Ctx,
@@ -464,9 +473,26 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
     ): Promise<UpdateListingAttributesResult> {
       requireListing(req.externalListingId);
 
+      const wanted = req.setMetafields ?? [];
+      const variantOwned = wanted.filter((field) => field.owner !== 'product');
+      if (variantOwned.length > 0) {
+        throw new Error(
+          `Shopify can only back-fill product-level custom fields; ` +
+            `${variantOwned.map((f) => `${f.namespace}.${f.key}`).join(', ')} ` +
+            `${variantOwned.length === 1 ? 'is' : 'are'} variant-level.`,
+        );
+      }
+
       const current = await client.request<{
-        node: { product?: { id?: string; tags?: string[] } } | null;
-      }>(ctx, LISTING_TAGS_QUERY, { id: req.externalListingId });
+        node: {
+          product?: {
+            id?: string;
+            tags?: string[];
+            category?: { id?: string } | null;
+            metafields?: { nodes?: Array<{ namespace?: string; key?: string; value?: string }> };
+          };
+        } | null;
+      }>(ctx, LISTING_ATTRIBUTES_QUERY, { id: req.externalListingId });
 
       const product = current.node?.product;
       if (!product?.id) {
@@ -482,19 +508,79 @@ export function createShopifyConnector(options: ShopifyConnectorOptions = {}): C
       const have = new Set(existing);
       const added = [...new Set(req.addTags)].filter((tag) => tag !== '' && !have.has(tag));
 
-      if (added.length === 0) return { added: [], tags: existing };
+      // An empty string counts as absent: Shopify deletes a metafield set to
+      // one, so a row that survives with `""` is a field with no value, and
+      // treating it as present would leave the listing permanently unfillable.
+      const held = new Set(
+        (product.metafields?.nodes ?? [])
+          .filter((node) => (node.value ?? '') !== '')
+          .map((node) => `${node.namespace}.${node.key}`),
+      );
+      const metafieldsSet = wanted.filter((field) => !held.has(`${field.namespace}.${field.key}`));
+
+      // Only ever to fill an absence, and only alongside a field that needs it.
+      // A conditional definition applies to certain categories, so a product
+      // with none satisfies no constraint — but reclassifying a product the
+      // operator already categorised is not this call's business.
+      const categorySet = metafieldsSet.length > 0 && !product.category?.id && !!req.category;
 
       const tags = [...existing, ...added];
+      if (added.length === 0 && metafieldsSet.length === 0) {
+        return { added: [], tags: existing, metafieldsSet: [], categorySet: false };
+      }
+
       const result = await client.request<{
         productUpdate: {
           product?: { tags?: string[] };
           userErrors: Array<{ field?: string[] | null; message: string }>;
         };
-      }>(ctx, ADD_TAGS_MUTATION, { input: { id: product.id, tags } });
+      }>(ctx, UPDATE_ATTRIBUTES_MUTATION, {
+        input: {
+          id: product.id,
+          ...(added.length > 0 ? { tags } : {}),
+          ...(metafieldsSet.length > 0
+            ? {
+                metafields: metafieldsSet.map(({ namespace, key, type, value }) => ({
+                  namespace,
+                  key,
+                  type,
+                  value,
+                })),
+              }
+            : {}),
+          ...(categorySet ? { category: toTaxonomyGid(req.category!) } : {}),
+        },
+      });
 
-      throwOnUserErrors(result.productUpdate?.userErrors, 'Adding tags');
+      try {
+        throwOnUserErrors(result.productUpdate?.userErrors, 'Updating listing attributes');
+      } catch (error) {
+        // Shopify's own words are "Owner subtype does not match the metafield
+        // definition's constraints", which names neither the field nor the
+        // cause. The same hint `createDraftProduct` carries, and reachable here
+        // for the opposite reason: this product has a category, and it is not
+        // one the definition allows.
+        const message = error instanceof Error ? error.message : String(error);
+        if (metafieldsSet.length > 0 && message.includes('Owner subtype')) {
+          throw new Error(
+            `${message} — ${metafieldsSet.map((f) => `${f.namespace}.${f.key}`).join(', ')} ` +
+              (product.category?.id
+                ? `may not apply to this product's category (${product.category.id}), which ` +
+                  `is left as the operator set it.`
+                : `may be restricted to a category, and this product has none. See ` +
+                  `requiresCategory on the field from listMetafields.`),
+            { cause: error },
+          );
+        }
+        throw error;
+      }
 
-      return { added, tags: result.productUpdate.product?.tags ?? tags };
+      return {
+        added,
+        tags: result.productUpdate.product?.tags ?? tags,
+        metafieldsSet,
+        categorySet,
+      };
     },
 
     /**
@@ -1792,21 +1878,43 @@ const SET_STATUS_MUTATION = /* GraphQL */ `
   }
 `;
 
-const LISTING_TAGS_QUERY = /* GraphQL */ `
-  query HubListingTags($id: ID!) {
+/**
+ * Everything `updateListingAttributes` compares against, in one read.
+ *
+ * Tags, category and custom fields together rather than three queries: the
+ * whole call is one read and at most one write, so the batch costs two round
+ * trips per listing at the connector's 2/s and not four.
+ *
+ * `metafields(first: 250)` is the whole set — a product carrying more than 250
+ * would report a field as missing that is not, and this store's richest carries
+ * six. There is no `HasMetafieldsIdentifier` argument to ask for named fields
+ * only; that shape does not exist in `2026-07` and was tried first.
+ */
+const LISTING_ATTRIBUTES_QUERY = /* GraphQL */ `
+  query HubListingAttributes($id: ID!) {
     node(id: $id) {
       ... on ProductVariant {
         product {
           id
           tags
+          category {
+            id
+          }
+          metafields(first: 250) {
+            nodes {
+              namespace
+              key
+              value
+            }
+          }
         }
       }
     }
   }
 `;
 
-const ADD_TAGS_MUTATION = /* GraphQL */ `
-  mutation HubAddTags($input: ProductUpdateInput!) {
+const UPDATE_ATTRIBUTES_MUTATION = /* GraphQL */ `
+  mutation HubUpdateListingAttributes($input: ProductUpdateInput!) {
     productUpdate(product: $input) {
       product {
         id

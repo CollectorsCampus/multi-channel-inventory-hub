@@ -300,8 +300,8 @@ export function describeOutcome(outcome: CreateListingOutcome): string {
   }
 }
 
-/** A linked listing and the tags this channel's rules give it. */
-export interface PendingTagBackfill {
+/** A linked listing and what this channel's rules give it. */
+export interface PendingListingAttributes {
   inventoryItemId: string;
   name: string;
   setName: string | null;
@@ -309,34 +309,45 @@ export interface PendingTagBackfill {
   condition: string;
   externalListingId: string;
   tags: string[];
+  metafields: Array<ListingMetafield & { label: string }>;
 }
 
-export interface BackfillTagsResult {
-  updated: Array<{ inventoryItemId: string; name: string; added: string[] }>;
+export interface BackfillAttributesResult {
+  updated: Array<{
+    inventoryItemId: string;
+    name: string;
+    added: string[];
+    metafieldsSet: ListingMetafield[];
+  }>;
   unchanged: Array<{ inventoryItemId: string; name: string }>;
   problems: Array<{ inventoryItemId: string; name?: string; message: string }>;
 }
 
 /**
- * What a tag back-fill could act on. Loaded only when the panel is opened —
- * it is a maintenance action, not something every page view needs.
+ * What a back-fill could act on. Loaded only when the panel is opened — it is
+ * a maintenance action, not something every page view needs.
  */
-export function useChannelPendingTags(channelInstanceId: string, enabled: boolean) {
+export function useChannelPendingAttributes(channelInstanceId: string, enabled: boolean) {
   return useQuery({
-    queryKey: ['channels', channelInstanceId, 'tags', 'pending'],
+    queryKey: ['channels', channelInstanceId, 'attributes', 'pending'],
     queryFn: () =>
-      apiFetch<PendingTagBackfill[]>(`/channels/${channelInstanceId}/listings/tags/pending`),
+      apiFetch<PendingListingAttributes[]>(
+        `/channels/${channelInstanceId}/listings/attributes/pending`,
+      ),
     enabled: enabled && channelInstanceId !== '',
     retry: false,
   });
 }
 
-export function useBackfillTags(channelInstanceId: string) {
+export function useBackfillAttributes(channelInstanceId: string) {
   return useMutation({
     mutationFn: (inventoryItemIds: string[]) =>
-      apiFetch<BackfillTagsResult>(`/channels/${channelInstanceId}/listings/tags/backfill`, {
-        method: 'POST',
-        body: JSON.stringify({ inventoryItemIds }),
-      }),
+      apiFetch<BackfillAttributesResult>(
+        `/channels/${channelInstanceId}/listings/attributes/backfill`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ inventoryItemIds }),
+        },
+      ),
   });
 }

@@ -172,14 +172,37 @@ export interface UpdateListingImageRequest {
  * whose update replaces the whole set (Shopify's `productUpdate` does) must
  * therefore read the current values and write the union.
  *
- * Only tags today. The shape admits vendor and custom fields later without a
- * second capability, which is why it is named for attributes rather than tags —
- * and note `listing.tags` is already taken by *reading* the store's vocabulary.
+ * Tags and custom fields today — which is why it is named for attributes rather
+ * than tags, and note `listing.tags` is already taken by *reading* the store's
+ * vocabulary. Vendor would fit the same shape without a second capability.
  */
 export interface UpdateListingAttributesRequest {
   externalListingId: string;
   /** Applied verbatim, exactly as at creation. Never derived by a connector. */
   addTags: readonly string[];
+  /**
+   * Custom fields to fill in, applied verbatim like {@link addTags}.
+   *
+   * **Fill-empty-only, and the asymmetry with tags is deliberate.** A tag set is
+   * a list, so adding to it cannot contradict what is there; a metafield holds
+   * one value, so writing it is always a replacement. A rule that fires on the
+   * game cannot know the operator hand-picked a different value for this one
+   * card, so a field the listing already carries is left exactly as it is and
+   * reported as such. This mirrors the catalog ingest's fill-empty-only refresh,
+   * and for the same reason: last-writer-wins across sources relabels data
+   * behind the operator's back.
+   */
+  setMetafields?: readonly ListingMetafield[];
+  /**
+   * A classification to apply **only if the listing has none**, for the same
+   * fill-empty-only reason.
+   *
+   * Present because a conditional field cannot be set on a product with no
+   * category at all (see {@link ListingCategory}), and an existing listing —
+   * unlike one this hub created — may well have none. Ignored by a connector
+   * whose platform has no such notion.
+   */
+  category?: string;
 }
 
 export interface UpdateListingAttributesResult {
@@ -191,6 +214,13 @@ export interface UpdateListingAttributesResult {
   added: readonly string[];
   /** The listing's full tag set afterwards, so a caller can show the result. */
   tags: readonly string[];
+  /**
+   * The custom fields this call actually wrote — the ones the listing was
+   * missing. A field it already carried is absent here, whatever its value.
+   */
+  metafieldsSet?: readonly ListingMetafield[];
+  /** Whether a {@link UpdateListingAttributesRequest.category} was applied. */
+  categorySet?: boolean;
 }
 
 /**

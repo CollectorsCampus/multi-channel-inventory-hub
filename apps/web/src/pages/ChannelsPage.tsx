@@ -22,15 +22,15 @@ import { SchemaForm, SecretFields } from '../components/SchemaForm';
 import { ApiError } from '../api/client';
 import {
   MAX_ITEMS,
-  useBackfillTags,
+  useBackfillAttributes,
   useChannelMetafields,
   useChannelPendingImages,
-  useChannelPendingTags,
+  useChannelPendingAttributes,
   useChannelPublications,
   useChannelTags,
   usePushListingImages,
 } from '../api/listings';
-import type { ListingMetafield, ListingMetafieldDefinition } from '../api/listings';
+import type { ListingMetafieldDefinition } from '../api/listings';
 import { formatPrice, useSetLedgerQuantity } from '../api/inventory';
 import { SKU_CONDITIONS } from '../constants';
 import {
@@ -40,7 +40,7 @@ import {
   useRepriceSweep,
 } from '../api/pricing';
 import { useLocalSets } from '../api/catalog';
-import { suggestTag } from '../tagSuggest';
+import { suggestChoice, suggestTag } from '../tagSuggest';
 import type { TagRule, VendorRule, MetafieldRule } from '../api/channels';
 
 /** How a rule reads in a table, rather than as its wire value. */
@@ -382,7 +382,7 @@ function ChannelCard({ channel }: { channel: Channel }) {
 
         {/* Directly under the rules it applies: the operator edits a rule and
             the way to reach what already exists is the next thing they see. */}
-        <ListingTagBackfill channel={channel} />
+        <ListingRuleBackfill channel={channel} />
 
         <ListingImages channel={channel} />
 
@@ -623,32 +623,93 @@ function ListingDefaults({ channel }: { channel: Channel }) {
     return `${name} = ${choice ?? rule.metafield.value}`;
   };
 
-  const addMetafieldRule = () => {
-    if (!selectedDef || mfValue.trim() === '' || mfChoice === '') return;
-    const metafield: ListingMetafield = {
-      owner: selectedDef.owner,
-      namespace: selectedDef.namespace,
-      key: selectedDef.key,
-      type: selectedDef.type,
-      value: mfChoice,
-    };
+  /**
+   * Functional update for the reason `addRule` documents: two chips clicked
+   * before React re-renders would otherwise both read the same stale list and
+   * the second would silently replace the first.
+   */
+  const putMetafieldRule = (rule: MetafieldRule) =>
     setMetafieldRules((current) => {
       // One value per (field, card): re-adding the same field for the same card
       // replaces rather than duplicating.
       const rest = current.filter(
         (r) =>
           !(
-            r.match === mfMatch &&
-            r.value === mfValue.trim() &&
-            r.metafield.namespace === metafield.namespace &&
-            r.metafield.key === metafield.key
+            r.match === rule.match &&
+            r.value === rule.value &&
+            r.metafield.namespace === rule.metafield.namespace &&
+            r.metafield.key === rule.metafield.key
           ),
       );
-      return [...rest, { match: mfMatch, value: mfValue.trim(), metafield }];
+      return [...rest, rule];
+    });
+
+  const addMetafieldRule = () => {
+    if (!selectedDef || mfValue.trim() === '' || mfChoice === '') return;
+    putMetafieldRule({
+      match: mfMatch,
+      value: mfValue.trim(),
+      metafield: {
+        owner: selectedDef.owner,
+        namespace: selectedDef.namespace,
+        key: selectedDef.key,
+        type: selectedDef.type,
+        value: mfChoice,
+      },
     });
     setMfValue('');
     setMfChoice('');
   };
+
+  /**
+   * Games and sets in the ledger where exactly one entry of one of the store's
+   * custom fields plainly means the same thing.
+   *
+   * The tag suggestions' argument, transplanted: nothing is invented — every
+   * proposal is an entry the store already defined, and it only appears when
+   * there is exactly one candidate. It is worth more here than for tags,
+   * because a metaobject value is an opaque id, so matching by hand means
+   * reading a dropdown of dozens of set names for each one.
+   *
+   * Every field is offered against every value, and that is not the shotgun it
+   * looks like: `custom.game`'s entries are game names and `custom.set`'s are
+   * set names, so label matching leaves only the pairings that could be right.
+   */
+  const metafieldSuggestions: Array<MetafieldRule & { label: string }> = referenceDefs
+    .flatMap((def) =>
+      [
+        ...games.map((g) => ({ match: 'game' as const, value: g })),
+        ...sets.map((s) => ({ match: 'set' as const, value: s })),
+      ].flatMap((candidate) => {
+        if (
+          metafieldRules.some(
+            (r) =>
+              r.match === candidate.match &&
+              r.value === candidate.value &&
+              r.metafield.namespace === def.namespace &&
+              r.metafield.key === def.key,
+          )
+        ) {
+          return [];
+        }
+        const choice = suggestChoice(candidate.value, def.choices ?? []);
+        if (!choice) return [];
+        return [
+          {
+            ...candidate,
+            metafield: {
+              owner: def.owner,
+              namespace: def.namespace,
+              key: def.key,
+              type: def.type,
+              value: choice.value,
+            },
+            label: `${def.name} = ${choice.label}`,
+          },
+        ];
+      }),
+    )
+    .slice(0, 12);
 
   const togglePublication = (id: string) =>
     setPublications((current) =>
@@ -908,6 +969,32 @@ function ListingDefaults({ channel }: { channel: Channel }) {
             </table>
           )}
 
+          {metafieldSuggestions.length > 0 && (
+            <>
+              <p className="field-hint">
+                Suggested from what you hold, matched against the store&rsquo;s own entries for each
+                field. Nothing is applied until you add it.
+              </p>
+              <span className="chips">
+                {metafieldSuggestions.map((s) => (
+                  <button
+                    key={`${s.match}:${s.value}:${s.metafield.namespace}.${s.metafield.key}`}
+                    type="button"
+                    className="chip"
+                    title={`Add rule: ${RULE_LABELS[s.match]} ${s.value} → ${s.label}`}
+                    // Rebuilt rather than spread: `label` is for this chip only
+                    // and must not reach what gets saved.
+                    onClick={() =>
+                      putMetafieldRule({ match: s.match, value: s.value, metafield: s.metafield })
+                    }
+                  >
+                    + {s.value} → {s.label}
+                  </button>
+                ))}
+              </span>
+            </>
+          )}
+
           {metaVocab.isError ? (
             <p className="field-hint">
               The store&rsquo;s custom fields could not be read, so there is nothing to pick here.
@@ -1123,18 +1210,21 @@ function ListingDefaults({ channel }: { channel: Channel }) {
 }
 
 /**
- * Apply the channel's tag rules to listings that already exist.
+ * Apply the channel's tag and custom-field rules to listings that already exist.
  *
- * Creation tags a product once, at birth, so a rule written afterwards reaches
- * nothing already on the storefront. On a tag-driven store that is not
+ * Creation describes a product once, at birth, so a rule written afterwards
+ * reaches nothing already on the storefront. On a tag-driven store that is not
  * cosmetic — an untagged product is in no collection, so it is invisible in
  * the shop while looking perfectly fine in the admin.
  *
- * Additive throughout: the connector adds and never removes, so a tag applied
- * by hand survives, and a listing that already carries everything is reported
- * as unchanged rather than as work done.
+ * Safe in both directions, by different means: tags are added and never
+ * removed, so one applied by hand survives; a custom field is only ever filled
+ * in where the listing has none, since it holds a single value and a rule
+ * cannot know the operator hand-picked something else for this one card. Either
+ * way a listing that already carries everything is reported as unchanged rather
+ * than as work done.
  */
-function ListingTagBackfill({ channel }: { channel: Channel }) {
+function ListingRuleBackfill({ channel }: { channel: Channel }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
@@ -1143,14 +1233,41 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
    * down the list instead of re-offering the same first batch.
    *
    * Needed because `pending` answers from the *rules*, not from what the store
-   * currently carries — it cannot know a listing was just tagged, and without
+   * currently carries — it cannot know a listing was just updated, and without
    * this a store with 195 matches would re-select the same 50 every time and
    * the remaining 145 would have to be ticked by hand.
    */
   const [done, setDone] = useState<ReadonlySet<string>>(new Set());
-  const pending = useChannelPendingTags(channel.id, open);
-  const backfill = useBackfillTags(channel.id);
+  const pending = useChannelPendingAttributes(channel.id, open);
+  const backfill = useBackfillAttributes(channel.id);
+  /**
+   * Only the store can say what a custom field's value means: `custom.game` is
+   * a metaobject id, and the name behind it lives in the shop's vocabulary
+   * rather than in anything the hub stores. Loaded with the panel, on the same
+   * `open` gate as the listings themselves.
+   */
+  const metaVocab = useChannelMetafields(
+    channel.id,
+    open && channel.capabilities.includes('listing.metafields'),
+  );
   const sectionId = `tag-backfill-${channel.id}`;
+
+  /**
+   * "Game = Pokémon" where the store's vocabulary can say so, and
+   * `custom.game` where it cannot.
+   *
+   * The fallback is the point: the vocabulary needs a live read that can fail
+   * — a missing scope answers null with no error — and a row that then said
+   * nothing at all would look like a listing with no work to do.
+   */
+  const describeField = (field: { namespace: string; key: string; value: string }): string => {
+    const def = (metaVocab.data ?? []).find(
+      (d) => d.namespace === field.namespace && d.key === field.key,
+    );
+    const choice = def?.choices?.find((c) => c.value === field.value);
+    if (!def) return `${field.namespace}.${field.key}`;
+    return choice ? `${def.name} = ${choice.label}` : def.name;
+  };
 
   // A run of fifty leaves the reader far down a long table, with the result
   // they asked for rendered above them and the next batch's controls out of
@@ -1190,8 +1307,8 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
     backfill.mutate(ids, {
       onSuccess: (result) => {
         setSelected(new Set());
-        // Everything the server accounted for — tagged or already tagged — is
-        // finished with. Failures stay on the list so they can be retried.
+        // Everything the server accounted for — changed or already complete —
+        // is finished with. Failures stay on the list so they can be retried.
         const settled = [
           ...result.updated.map((r) => r.inventoryItemId),
           ...result.unchanged.map((r) => r.inventoryItemId),
@@ -1202,12 +1319,13 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
   };
 
   return (
-    <ChannelSection title="Apply tag rules to existing listings" id={sectionId}>
+    <ChannelSection title="Apply listing rules to existing listings" id={sectionId}>
       <p className="muted">
-        Rules tag a product when it is created, so a rule written later never reaches what is
-        already on the storefront. This adds the tags each listing&rsquo;s rules produce.{' '}
-        <strong>Nothing is removed</strong> — a tag you applied by hand stays, and a listing that
-        already has them all is left untouched.
+        Rules describe a product when it is created, so a rule written later never reaches what is
+        already on the storefront. This adds the tags each listing&rsquo;s rules produce, and fills
+        in the custom fields it has none of. <strong>Nothing is removed or overwritten</strong> — a
+        tag you applied by hand stays, a custom field that already has a value keeps it, and a
+        listing that needs nothing is left untouched.
       </p>
 
       {/* The last run's result sits above the table, not below it: a run of
@@ -1217,13 +1335,20 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
       {outcome && (
         <div className="import-result">
           <p className={outcome.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
-            {outcome.updated.length} tagged
-            {outcome.unchanged.length > 0 && `, ${outcome.unchanged.length} already had them`}
+            {outcome.updated.length} updated
+            {outcome.unchanged.length > 0 && `, ${outcome.unchanged.length} already complete`}
             {outcome.problems.length > 0 && `, ${outcome.problems.length} failed`}.
           </p>
           {outcome.updated.slice(0, 10).map((row) => (
             <p key={row.inventoryItemId} className="field-hint">
-              {row.name}: added {row.added.join(', ')}
+              {row.name}:{' '}
+              {[
+                row.added.length > 0 && `tagged ${row.added.join(', ')}`,
+                row.metafieldsSet.length > 0 &&
+                  `set ${row.metafieldsSet.map(describeField).join('; ')}`,
+              ]
+                .filter(Boolean)
+                .join('; ')}
             </p>
           ))}
           {outcome.updated.length > 10 && (
@@ -1240,7 +1365,7 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
 
       {!open ? (
         <button type="button" className="ghost" onClick={() => setOpen(true)}>
-          Show listings and their rule tags
+          Show listings and what their rules give them
         </button>
       ) : pending.isError ? (
         <p className="field-hint">{(pending.error as Error).message}</p>
@@ -1250,7 +1375,7 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
         <p className="field-hint">
           {done.size > 0
             ? `All ${done.size} listing(s) have been through. Nothing left to apply.`
-            : 'No linked listing on this channel matches a tag rule. Nothing to apply.'}
+            : 'No linked listing on this channel matches a rule. Nothing to apply.'}
         </p>
       ) : (
         <>
@@ -1300,6 +1425,11 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
                           {tag}
                         </span>
                       ))}
+                      {row.metafields.map((field) => (
+                        <span key={field.label} className="chip chip-field">
+                          {describeField(field)}
+                        </span>
+                      ))}
                     </span>
                   </td>
                 </tr>
@@ -1311,7 +1441,7 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
             {confirming ? (
               <>
                 <span className="muted">
-                  Add these tags to {chosen.length} listing(s) on the live store?
+                  Apply these rules to {chosen.length} listing(s) on the live store?
                 </span>
                 <button type="button" onClick={apply} disabled={backfill.isPending}>
                   Yes, apply

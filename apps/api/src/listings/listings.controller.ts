@@ -4,9 +4,9 @@ import { CurrentUser, RequireRole } from '../auth/decorators';
 import type { AuthenticatedPrincipal } from '../auth/auth-provider.interface';
 import { ListingCreationService } from './listing-creation.service';
 import { ListingImagesService } from './listing-images.service';
-import { ListingTagsService } from './listing-tags.service';
+import { ListingAttributesService } from './listing-attributes.service';
 import {
-  BackfillTagsDto,
+  BackfillAttributesDto,
   CreateListingsDto,
   IntakeAndListDto,
   ListTagsQueryDto,
@@ -26,37 +26,39 @@ export class ListingsController {
   constructor(
     private readonly creation: ListingCreationService,
     private readonly images: ListingImagesService,
-    private readonly tagBackfill: ListingTagsService,
+    private readonly backfill: ListingAttributesService,
   ) {}
 
-  @Get('tags/pending')
+  @Get('attributes/pending')
   @RequireRole('editor')
   @ApiOperation({
-    summary: 'Linked listings and the tags this channel’s rules give them.',
+    summary: 'Linked listings and the tags and custom fields this channel’s rules give them.',
     description:
       'For back-filling rules written after a listing was created. Answered from the ledger, ' +
-      'not the platform: the tags are what the rules resolve to, and applying adds only the ' +
-      'ones a listing is actually missing.',
+      'not the platform: these are what the rules resolve to, and applying adds only the tags ' +
+      'a listing is actually missing and fills only the custom fields it has none of.',
   })
-  pendingTags(@Param('id') channelInstanceId: string) {
-    return this.tagBackfill.pending(channelInstanceId);
+  pendingAttributes(@Param('id') channelInstanceId: string) {
+    return this.backfill.pending(channelInstanceId);
   }
 
-  @Post('tags/backfill')
+  @Post('attributes/backfill')
   @RequireRole('editor')
   @ApiOperation({
-    summary: 'Add the rules’ tags to the selected existing listings.',
+    summary: 'Apply the rules’ tags and custom fields to the selected existing listings.',
     description:
-      'Additive: a tag already on the listing, or one applied by hand, is left alone, and a ' +
-      'listing needing nothing is reported unchanged without a write. Explicit ids only, ' +
-      'capped like every other batch of storefront writes.',
+      'Tags are additive: one already on the listing, or applied by hand, is left alone. A ' +
+      'custom field is only ever filled in where the listing has none, since it holds a ' +
+      'single value and overwriting one would discard a hand-picked choice. A listing needing ' +
+      'nothing is reported unchanged without a write. Explicit ids only, capped like every ' +
+      'other batch of storefront writes.',
   })
-  backfillTags(
+  backfillAttributes(
     @Param('id') channelInstanceId: string,
-    @Body() body: BackfillTagsDto,
+    @Body() body: BackfillAttributesDto,
     @CurrentUser() user: AuthenticatedPrincipal,
   ) {
-    return this.tagBackfill.apply(channelInstanceId, body.inventoryItemIds, user.userId);
+    return this.backfill.apply(channelInstanceId, body.inventoryItemIds, user.userId);
   }
 
   @Get('tags')

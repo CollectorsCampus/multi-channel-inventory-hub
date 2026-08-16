@@ -513,4 +513,92 @@ describeDb('InventoryService', () => {
       expect((await service.getItemDetail(item.id)).marketPrices).toEqual([]);
     });
   });
+
+  /**
+   * The browser's second filter. What is worth pinning is the scoping: a set
+   * name only means something inside one game, so the list is per game, and an
+   * unscoped call is a question nobody asked rather than a request for
+   * everything.
+   */
+  describe('listSets', () => {
+    async function seedInSet(game: string | null, setName: string | null) {
+      const item = await prisma.catalogItem.create({
+        data: {
+          name: `Card ${Math.random().toString(36).slice(2, 10)}`,
+          game,
+          setName,
+          skus: { create: [{ condition: 'NM', printing: 'NORMAL', language: 'EN' }] },
+        },
+        include: { skus: true },
+      });
+      return prisma.inventoryItem.create({
+        data: { skuId: item.skus[0]!.id, quantityOnHand: 1 },
+      });
+    }
+
+    it('counts the ledger rows in each set of one game, alphabetically', async () => {
+      await seedInSet('Pokemon', 'ME02: Phantasmal Flames');
+      await seedInSet('Pokemon', 'ME02: Phantasmal Flames');
+      await seedInSet('Pokemon', 'Base Set');
+
+      expect(await service.listSets({ game: 'Pokemon' })).toEqual([
+        { setName: 'Base Set', items: 1 },
+        { setName: 'ME02: Phantasmal Flames', items: 2 },
+      ]);
+    });
+
+    /** Another game's sets in this game's dropdown would filter to nothing. */
+    it('never leaks a set from a different game', async () => {
+      await seedInSet('Pokemon', 'Base Set');
+      await seedInSet('Magic', 'Bloomburrow');
+
+      expect(await service.listSets({ game: 'Pokemon' })).toEqual([
+        { setName: 'Base Set', items: 1 },
+      ]);
+    });
+
+    /**
+     * The null-game bucket is a real category — non-TCG goods, hand-entered
+     * rows — and it is asked for the same way the list filter asks.
+     */
+    it('answers the no-game bucket when asked for it', async () => {
+      await seedInSet(null, 'Miscellaneous Cards & Products');
+      await seedInSet('Pokemon', 'Base Set');
+
+      expect(await service.listSets({ noGame: true })).toEqual([
+        { setName: 'Miscellaneous Cards & Products', items: 1 },
+      ]);
+    });
+
+    /**
+     * Unlike a null game, a missing set is a gap in the record rather than a
+     * category, and filtering to it answers no question anyone has.
+     */
+    it('omits items with no set at all', async () => {
+      await seedInSet('Pokemon', null);
+      expect(await service.listSets({ game: 'Pokemon' })).toEqual([]);
+    });
+
+    /**
+     * Nothing, not everything. With neither scope the caller has not asked a
+     * question yet, and answering with every set of every game is the one
+     * result that would make the dropdown useless.
+     */
+    it('answers nothing when asked without a scope', async () => {
+      await seedInSet('Pokemon', 'Base Set');
+      expect(await service.listSets({})).toEqual([]);
+    });
+
+    /** Only what is held: a catalogue set nobody owns must not be offered. */
+    it('offers only sets the ledger actually holds', async () => {
+      await prisma.catalogItem.create({
+        data: { name: 'Uncollected', game: 'Pokemon', setName: 'Never Bought' },
+      });
+      await seedInSet('Pokemon', 'Base Set');
+
+      expect(await service.listSets({ game: 'Pokemon' })).toEqual([
+        { setName: 'Base Set', items: 1 },
+      ]);
+    });
+  });
 });

@@ -32,6 +32,12 @@ export interface InventorySearch {
   condition?: string;
   /** A game, or the sentinel below for items that have none. */
   game?: string;
+  /**
+   * A set within the chosen game. Meaningless without one, and cleared
+   * whenever the game changes — a set from the previous game would match
+   * nothing and read as a broken filter rather than an empty one.
+   */
+  set?: string;
   /** A channel the item is allocated to, or the sentinel below for "none". */
   channel?: string;
   /** Only what is physically held. Part of what the table shows, so it lives in the URL. */
@@ -88,6 +94,12 @@ const indexRoute = createRoute({
       search: typeof raw.search === 'string' && raw.search ? raw.search : undefined,
       condition: typeof raw.condition === 'string' && raw.condition ? raw.condition : undefined,
       game: typeof raw.game === 'string' && raw.game ? raw.game : undefined,
+      // Dropped without a game, so a hand-edited URL cannot leave a set filter
+      // applied with no visible control saying so.
+      set:
+        typeof raw.set === 'string' && raw.set && typeof raw.game === 'string' && raw.game
+          ? raw.set
+          : undefined,
       channel: typeof raw.channel === 'string' && raw.channel ? raw.channel : undefined,
       // Only `true` survives. Anything else — absent, "false", a stray string —
       // means the filter is off, so a malformed URL shows everything rather

@@ -1150,6 +1150,18 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
   const [done, setDone] = useState<ReadonlySet<string>>(new Set());
   const pending = useChannelPendingTags(channel.id, open);
   const backfill = useBackfillTags(channel.id);
+  const sectionId = `tag-backfill-${channel.id}`;
+
+  // A run of fifty leaves the reader far down a long table, with the result
+  // they asked for rendered above them and the next batch's controls out of
+  // sight. Scroll back to the section head once the result has painted —
+  // in an effect rather than in onSuccess, which fires before the render
+  // that adds the result and so would scroll to the wrong height.
+  const outcome = backfill.data;
+  useEffect(() => {
+    if (!outcome) return;
+    document.getElementById(sectionId)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [outcome, sectionId]);
 
   if (!channel.capabilities.includes('listing.attributes')) return null;
 
@@ -1190,13 +1202,41 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
   };
 
   return (
-    <ChannelSection title="Apply tag rules to existing listings">
+    <ChannelSection title="Apply tag rules to existing listings" id={sectionId}>
       <p className="muted">
         Rules tag a product when it is created, so a rule written later never reaches what is
         already on the storefront. This adds the tags each listing&rsquo;s rules produce.{' '}
         <strong>Nothing is removed</strong> — a tag you applied by hand stays, and a listing that
         already has them all is left untouched.
       </p>
+
+      {/* The last run's result sits above the table, not below it: a run of
+          fifty is followed by scrolling back here, and a result rendered under
+          fifty rows would be behind the reader either way. Here it lands
+          beside the controls for the next batch. */}
+      {outcome && (
+        <div className="import-result">
+          <p className={outcome.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
+            {outcome.updated.length} tagged
+            {outcome.unchanged.length > 0 && `, ${outcome.unchanged.length} already had them`}
+            {outcome.problems.length > 0 && `, ${outcome.problems.length} failed`}.
+          </p>
+          {outcome.updated.slice(0, 10).map((row) => (
+            <p key={row.inventoryItemId} className="field-hint">
+              {row.name}: added {row.added.join(', ')}
+            </p>
+          ))}
+          {outcome.updated.length > 10 && (
+            <p className="field-hint">…and {outcome.updated.length - 10} more.</p>
+          )}
+          {outcome.problems.map((p) => (
+            <p key={p.inventoryItemId} className="error">
+              {p.name ?? p.inventoryItemId}: {p.message}
+            </p>
+          ))}
+        </div>
+      )}
+      {backfill.isError && <FormError error={backfill.error as Error} />}
 
       {!open ? (
         <button type="button" className="ghost" onClick={() => setOpen(true)}>
@@ -1292,28 +1332,6 @@ function ListingTagBackfill({ channel }: { channel: Channel }) {
           </div>
         </>
       )}
-
-      {backfill.data && (
-        <div className="import-result">
-          <p className={backfill.data.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
-            {backfill.data.updated.length} tagged
-            {backfill.data.unchanged.length > 0 &&
-              `, ${backfill.data.unchanged.length} already had them`}
-            {backfill.data.problems.length > 0 && `, ${backfill.data.problems.length} failed`}.
-          </p>
-          {backfill.data.updated.slice(0, 10).map((row) => (
-            <p key={row.inventoryItemId} className="field-hint">
-              {row.name}: added {row.added.join(', ')}
-            </p>
-          ))}
-          {backfill.data.problems.map((p) => (
-            <p key={p.inventoryItemId} className="error">
-              {p.name ?? p.inventoryItemId}: {p.message}
-            </p>
-          ))}
-        </div>
-      )}
-      {backfill.isError && <FormError error={backfill.error as Error} />}
     </ChannelSection>
   );
 }

@@ -264,7 +264,7 @@ describeDb('ListingAttributesService', () => {
     // classification. Whether it is applied is the connector's judgement.
     expect(calls[0]!.category).toBe('ae-2-2-3-2');
     expect(result.updated).toEqual([
-      { inventoryItemId: id, name: 'Charizard ex', added: [], metafieldsSet: ['custom.game'] },
+      { inventoryItemId: id, name: 'Charizard ex', added: [], metafieldsSet: [GAME_FIELD] },
     ]);
   });
 

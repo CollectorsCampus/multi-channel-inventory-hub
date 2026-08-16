@@ -1240,7 +1240,34 @@ function ListingRuleBackfill({ channel }: { channel: Channel }) {
   const [done, setDone] = useState<ReadonlySet<string>>(new Set());
   const pending = useChannelPendingAttributes(channel.id, open);
   const backfill = useBackfillAttributes(channel.id);
+  /**
+   * Only the store can say what a custom field's value means: `custom.game` is
+   * a metaobject id, and the name behind it lives in the shop's vocabulary
+   * rather than in anything the hub stores. Loaded with the panel, on the same
+   * `open` gate as the listings themselves.
+   */
+  const metaVocab = useChannelMetafields(
+    channel.id,
+    open && channel.capabilities.includes('listing.metafields'),
+  );
   const sectionId = `tag-backfill-${channel.id}`;
+
+  /**
+   * "Game = Pokémon" where the store's vocabulary can say so, and
+   * `custom.game` where it cannot.
+   *
+   * The fallback is the point: the vocabulary needs a live read that can fail
+   * — a missing scope answers null with no error — and a row that then said
+   * nothing at all would look like a listing with no work to do.
+   */
+  const describeField = (field: { namespace: string; key: string; value: string }): string => {
+    const def = (metaVocab.data ?? []).find(
+      (d) => d.namespace === field.namespace && d.key === field.key,
+    );
+    const choice = def?.choices?.find((c) => c.value === field.value);
+    if (!def) return `${field.namespace}.${field.key}`;
+    return choice ? `${def.name} = ${choice.label}` : def.name;
+  };
 
   // A run of fifty leaves the reader far down a long table, with the result
   // they asked for rendered above them and the next batch's controls out of
@@ -1317,7 +1344,8 @@ function ListingRuleBackfill({ channel }: { channel: Channel }) {
               {row.name}:{' '}
               {[
                 row.added.length > 0 && `tagged ${row.added.join(', ')}`,
-                row.metafieldsSet.length > 0 && `set ${row.metafieldsSet.join(', ')}`,
+                row.metafieldsSet.length > 0 &&
+                  `set ${row.metafieldsSet.map(describeField).join('; ')}`,
               ]
                 .filter(Boolean)
                 .join('; ')}
@@ -1397,12 +1425,9 @@ function ListingRuleBackfill({ channel }: { channel: Channel }) {
                           {tag}
                         </span>
                       ))}
-                      {/* Named, not valued: the value is a metaobject id that
-                          means nothing to a reader, and the field name is what
-                          says whether this listing is missing anything. */}
                       {row.metafields.map((field) => (
                         <span key={field.label} className="chip chip-field">
-                          {field.label}
+                          {describeField(field)}
                         </span>
                       ))}
                     </span>

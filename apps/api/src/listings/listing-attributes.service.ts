@@ -71,7 +71,12 @@ export interface BackfillAttributesResult {
     inventoryItemId: string;
     name: string;
     added: string[];
-    metafieldsSet: string[];
+    /**
+     * The whole field, not its key: only the caller holds the store's
+     * vocabulary, so naming `custom.game`'s value as "Pokémon" rather than as a
+     * metaobject id can only happen there.
+     */
+    metafieldsSet: ListingMetafield[];
   }>;
   /** Listings that already carried everything: no write, no change. */
   unchanged: Array<{ inventoryItemId: string; name: string }>;
@@ -240,9 +245,7 @@ export class ListingAttributesService {
             }),
         );
 
-        const metafieldsSet = (outcome.metafieldsSet ?? []).map(
-          (field) => `${field.namespace}.${field.key}`,
-        );
+        const metafieldsSet = [...(outcome.metafieldsSet ?? [])];
 
         if (outcome.added.length > 0 || metafieldsSet.length > 0) {
           result.updated.push({

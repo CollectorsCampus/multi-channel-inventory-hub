@@ -317,7 +317,7 @@ export interface BackfillAttributesResult {
     inventoryItemId: string;
     name: string;
     added: string[];
-    metafieldsSet: string[];
+    metafieldsSet: ListingMetafield[];
   }>;
   unchanged: Array<{ inventoryItemId: string; name: string }>;
   problems: Array<{ inventoryItemId: string; name?: string; message: string }>;

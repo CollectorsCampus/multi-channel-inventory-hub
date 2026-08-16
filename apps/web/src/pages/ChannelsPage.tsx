@@ -42,6 +42,7 @@ import {
 } from '../api/pricing';
 import { useLocalSets } from '../api/catalog';
 import { suggestChoice, suggestTag } from '../tagSuggest';
+import { externalLinks } from '../externalLinks';
 import type { TagRule, VendorRule, MetafieldRule } from '../api/channels';
 
 /** How a rule reads in a table, rather than as its wire value. */
@@ -1957,8 +1958,23 @@ function Repricing({ channel }: { channel: Channel }) {
                     {proposal.currentPrice != null ? formatPrice(proposal.currentPrice) : '—'} →{' '}
                     <strong>{formatPrice(proposal.proposedPrice)}</strong>
                   </td>
+                  {/* The links sit against the market figure rather than the
+                      name, because that is the number they exist to check:
+                      reviewing a price the hub would not apply on its own means
+                      going and looking at the market it came from. */}
                   <td className="muted" title={proposal.basis}>
                     market {formatPrice(proposal.marketPrice)}
+                    {externalLinks(proposal.externalIds).map((link) => (
+                      <a
+                        key={link.url}
+                        className="market-link"
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {link.label} ↗
+                      </a>
+                    ))}
                   </td>
                   <td>
                     <button

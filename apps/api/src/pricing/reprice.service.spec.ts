@@ -214,6 +214,22 @@ describeDb('RepriceService', () => {
   });
 
   /**
+   * Reviewing a price means going and looking at the market it came from, so
+   * the row has to carry the ids that address that page. Ids, not URLs: which
+   * sources have a linkable public page is the web app's judgement, and it has
+   * already changed once when Cardmarket went behind bot protection.
+   */
+  it('carries the catalogue ids on a proposal, so the review can link out', async () => {
+    await seed({ price: 1000 });
+    service = buildService(fakeTcgcsv({ NORMAL: 2000 }));
+    await service.sweep();
+
+    const [row] = await service.listProposals();
+
+    expect(row!.externalIds).toEqual({ tcgcsv: TCGCSV_ID, tcgplayer: TCGCSV_ID });
+  });
+
+  /**
    * The whole reason pricesByPrinting exists: a foil is priced off the foil's
    * market. With no foil figure published there is no answer — never the
    * normal's number by fallback.

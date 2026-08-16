@@ -92,6 +92,30 @@ export function itemKind(condition: string): ItemKind {
   return 'single';
 }
 
+/**
+ * What a channel's sold-out policy covers.
+ *
+ * `singles` is the default because sealed product is restocked far more often
+ * than a given card is: unpublishing a booster box that will be back next week
+ * churns the storefront for nothing, and re-publishing is a manual step by
+ * design. A shop that would rather hide everything it cannot sell says `all`.
+ */
+export type SelloutScope = 'singles' | 'all';
+
+export const SELLOUT_SCOPES: readonly SelloutScope[] = ['singles', 'all'];
+
+/**
+ * Whether the sold-out policy applies to an item of this condition.
+ *
+ * **An unrecognised scope reads as `singles`**, which is the conservative
+ * direction rather than merely a default: the cost of a typo, a stale row or a
+ * value from a future version should not be a storefront emptied of its sealed
+ * product. Widening what gets unpublished has to be something someone chose.
+ */
+export function inSelloutScope(scope: string, condition: string): boolean {
+  return scope === 'all' || itemKind(condition) === 'single';
+}
+
 export interface TagRule {
   match: TagRuleMatch;
   /** The catalogue value to look for. For `kind`, one of {@link ITEM_KINDS}. */

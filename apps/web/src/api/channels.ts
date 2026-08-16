@@ -101,6 +101,8 @@ export interface Channel {
   autoListNewStock: boolean;
   /** Opt-in: draft a single's product when its pushed quantity reaches zero. */
   draftAtSellout: boolean;
+  /** What that applies to: "singles" (the default) or "all". */
+  selloutScope: string;
   /** How this channel turns market prices into asking prices. */
   repricingPolicy: RepricingPolicy;
   /** What a listing created here carries. Applied verbatim; never derived. */
@@ -163,6 +165,7 @@ export function useUpdateChannel() {
       reconcileAutoCorrect?: boolean;
       autoListNewStock?: boolean;
       draftAtSellout?: boolean;
+      selloutScope?: string;
       repricingPolicy?: RepricingPolicy;
       /** Replaced wholesale, not merged — sending `{ tags: [] }` clears them. */
       listingDefaults?: ChannelListingDefaults;
@@ -225,6 +228,33 @@ export function useReconcileChannel() {
     mutationFn: (channelId: string) =>
       apiFetch<ReconcileOutcome>(`/channels/${channelId}/reconcile`, { method: 'POST' }),
     // The run stamps lastReconciledAt and may raise or clear an alert.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: channelKeys.list }),
+  });
+}
+
+/** What one sold-out run did, per listing and in total. */
+export interface SelloutReport {
+  checked: number;
+  drafted: number;
+  skipped: number;
+  rows: Array<{
+    inventoryItemId: string;
+    name: string;
+    setName: string | null;
+    condition: string;
+    externalListingId: string;
+    drafted: boolean;
+    reason?: string;
+  }>;
+  problems: Array<{ inventoryItemId?: string; message: string }>;
+}
+
+export function useDraftSoldOut() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (channelId: string) =>
+      apiFetch<SelloutReport>(`/channels/${channelId}/sellout`, { method: 'POST' }),
+    // A run may clear the flag it raised last time.
     onSuccess: () => queryClient.invalidateQueries({ queryKey: channelKeys.list }),
   });
 }

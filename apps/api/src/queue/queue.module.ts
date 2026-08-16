@@ -6,6 +6,7 @@ import { OutboundQueue } from './outbound-queue.service';
 import { InboundQueue } from './inbound-queue.service';
 import { ReconcileQueue } from './reconcile-queue.service';
 import { RepriceQueue } from './reprice-queue.service';
+import { SelloutQueue } from './sellout-queue.service';
 
 const redisProvider: Provider = {
   provide: REDIS_CONNECTION,
@@ -24,7 +25,21 @@ const redisProvider: Provider = {
  */
 @Global()
 @Module({
-  providers: [redisProvider, OutboundQueue, InboundQueue, ReconcileQueue, RepriceQueue],
-  exports: [REDIS_CONNECTION, OutboundQueue, InboundQueue, ReconcileQueue, RepriceQueue],
+  providers: [
+    redisProvider,
+    OutboundQueue,
+    InboundQueue,
+    ReconcileQueue,
+    RepriceQueue,
+    SelloutQueue,
+  ],
+  exports: [
+    REDIS_CONNECTION,
+    OutboundQueue,
+    InboundQueue,
+    ReconcileQueue,
+    RepriceQueue,
+    SelloutQueue,
+  ],
 })
 export class QueueModule {}

@@ -6,10 +6,12 @@ import { ConnectorRegistry } from '../connectors/connector-registry.service';
 import { CredentialStore } from '../connectors/credential-store.service';
 import { pickSchemaFields, validateChannelConfig } from './config-schema';
 import {
+  SELLOUT_SCOPES,
   encodeListingDefaults,
   hasDeclaredDefaults,
   parseListingDefaults,
   type ChannelListingDefaults,
+  type SelloutScope,
 } from './listing-defaults';
 import {
   encodeRepricingPolicy,
@@ -47,6 +49,8 @@ export interface ChannelSummary {
   autoListNewStock: boolean;
   /** Opt-in: draft a single's product when its pushed quantity reaches zero. */
   draftAtSellout: boolean;
+  /** What that applies to: "singles" (default) or "all". */
+  selloutScope: string;
   /** How this channel turns market prices into asking prices. */
   repricingPolicy: RepricingPolicy;
   /** What a listing created here carries, applied verbatim. Never derived. */
@@ -72,6 +76,7 @@ export interface UpdateChannelInput {
   reconcileAutoCorrect?: boolean;
   autoListNewStock?: boolean;
   draftAtSellout?: boolean;
+  selloutScope?: string;
   /** Replaced wholesale, like listingDefaults; sanitised through the tolerant parser. */
   repricingPolicy?: Record<string, unknown>;
   /**
@@ -204,6 +209,13 @@ export class ChannelsService {
           ? { autoListNewStock: input.autoListNewStock }
           : {}),
         ...(input.draftAtSellout !== undefined ? { draftAtSellout: input.draftAtSellout } : {}),
+        // Narrowed to the known vocabulary before it is stored. `inSelloutScope`
+        // reads anything else as "singles" anyway, but a rejected value that
+        // round-trips would show the operator a setting they do not have.
+        ...(input.selloutScope !== undefined &&
+        SELLOUT_SCOPES.includes(input.selloutScope as SelloutScope)
+          ? { selloutScope: input.selloutScope }
+          : {}),
         ...(input.repricingPolicy !== undefined
           ? {
               repricingPolicy: encodeRepricingPolicy(
@@ -299,6 +311,7 @@ export class ChannelsService {
     reconcileAutoCorrect: boolean;
     autoListNewStock: boolean;
     draftAtSellout: boolean;
+    selloutScope: string;
     repricingPolicy: string;
     listingDefaults: string;
     createdAt: Date;
@@ -355,6 +368,7 @@ export class ChannelsService {
       // it and leaving the operator to wonder where it went.
       autoListNewStock: instance.autoListNewStock,
       draftAtSellout: instance.draftAtSellout,
+      selloutScope: instance.selloutScope,
       repricingPolicy: parseRepricingPolicy(instance.repricingPolicy),
       listingDefaults: parseListingDefaults(instance.listingDefaults),
       webhookPath: receivesWebhooks ? `/api/webhooks/${instance.id}` : null,

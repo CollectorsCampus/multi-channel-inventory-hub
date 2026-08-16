@@ -9,6 +9,7 @@ import {
   useDeleteChannel,
   useExportChannel,
   useImportChannelFile,
+  useDraftSoldOut,
   useReconcileChannel,
   useUpdateChannel,
   type Channel,
@@ -1179,14 +1180,40 @@ function ListingDefaults({ channel }: { channel: Channel }) {
                 update.mutate({ id: channel.id, draftAtSellout: event.target.checked })
               }
             />
-            Draft sold-out singles
+            Draft sold-out listings
           </label>
+
+          {/* Shown only once the policy is on: a scope for something switched
+              off is a question about nothing. */}
+          {channel.draftAtSellout && (
+            <div className="inline-form">
+              <label htmlFor={`sellout-scope-${channel.id}`}>Applies to</label>
+              <select
+                id={`sellout-scope-${channel.id}`}
+                value={channel.selloutScope}
+                disabled={update.isPending}
+                onChange={(event) =>
+                  update.mutate({ id: channel.id, selloutScope: event.target.value })
+                }
+              >
+                <option value="singles">Singles only</option>
+                <option value="all">Everything — singles, sealed and the rest</option>
+              </select>
+            </div>
+          )}
+
           <p className="field-hint">
-            When a single&rsquo;s quantity is pushed to zero, its product is unpublished — only if
+            When a listing&rsquo;s quantity is pushed to zero, its product is unpublished — only if
             the store shows the <em>whole</em> product out of stock, so a sibling condition with
             copies keeps it live. Restocking never re-activates automatically; you publish it
-            yourself, as with any draft.
+            yourself, as with any draft. A nightly sweep catches anything that reached zero without
+            a push.
           </p>
+          <p className="field-hint">
+            Singles only is the default because sealed product is restocked far more often than a
+            given card is, so hiding a booster box that will be back next week is churn for nothing.
+          </p>
+          <DraftSoldOutNow channel={channel} />
         </>
       )}
 
@@ -1463,6 +1490,90 @@ function ListingRuleBackfill({ channel }: { channel: Channel }) {
         </>
       )}
     </ChannelSection>
+  );
+}
+
+/**
+ * Run the sold-out sweep for this channel now.
+ *
+ * The catch-up for the automatic path, which only fires where a push happened:
+ * it reaches nothing that sold out before the toggle was turned on, and nothing
+ * whose stock reached zero by a route that queued no push. The first run after
+ * enabling the toggle is what this is really for.
+ *
+ * Confirmed before it runs, like every other control here that changes a live
+ * storefront — and there is no undo: nothing in the hub ever re-publishes.
+ */
+function DraftSoldOutNow({ channel }: { channel: Channel }) {
+  const [confirming, setConfirming] = useState(false);
+  const run = useDraftSoldOut();
+  const report = run.data;
+
+  if (!channel.draftAtSellout) return null;
+
+  return (
+    <div className="import-result">
+      <div className="inline-form">
+        {confirming ? (
+          <>
+            <span className="muted">
+              Unpublish every sold-out listing in scope on the live store? You publish them again
+              yourself.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirming(false);
+                run.mutate(channel.id);
+              }}
+              disabled={run.isPending}
+            >
+              Yes, draft them
+            </button>
+            <button type="button" className="ghost" onClick={() => setConfirming(false)}>
+              No
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="ghost"
+            disabled={run.isPending}
+            onClick={() => setConfirming(true)}
+          >
+            {run.isPending ? 'Checking…' : 'Draft sold-out listings now'}
+          </button>
+        )}
+      </div>
+
+      {run.isError && <FormError error={run.error as Error} />}
+
+      {report && (
+        <>
+          <p className={report.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
+            {report.checked} sold-out listing(s) checked, {report.drafted} drafted
+            {report.skipped > 0 && `, ${report.skipped} left alone`}
+            {report.problems.length > 0 && `, ${report.problems.length} failed`}.
+          </p>
+          {/* The ones left alone are the interesting half: each carries the
+              platform's own reason, which is usually "a sibling variant still
+              has copies" — the guard doing its job rather than a failure. */}
+          {report.rows
+            .filter((row) => !row.drafted)
+            .slice(0, 10)
+            .map((row) => (
+              <p key={row.inventoryItemId} className="field-hint">
+                {row.name} ({row.condition}): left alone — {row.reason}
+              </p>
+            ))}
+          {report.problems.map((problem, index) => (
+            <p key={index} className="error">
+              {problem.message}
+            </p>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 

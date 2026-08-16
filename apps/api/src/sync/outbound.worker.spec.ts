@@ -11,6 +11,7 @@ import {
 import { InventoryService } from '../inventory/inventory.service';
 import { SyncEventService } from './sync-event.service';
 import { AlertsService } from './alerts.service';
+import { SelloutService } from './sellout.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -499,6 +500,14 @@ describeQueue('outbound queue round trip', () => {
       prisma as unknown as PrismaService,
       new SyncEventService(prisma as unknown as PrismaService),
       new AlertsService(prisma as unknown as PrismaService),
+      // The real one: the sellout gates are the thing these tests exercise, so
+      // faking it here would prove the worker calls a stub rather than that a
+      // sold-out single actually gets drafted.
+      new SelloutService(
+        prisma as unknown as PrismaService,
+        channels,
+        new AlertsService(prisma as unknown as PrismaService),
+      ),
     );
 
     // Reach past onModuleInit so the test drives one job deterministically

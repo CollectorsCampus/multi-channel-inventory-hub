@@ -15,9 +15,9 @@ import { ConnectorRegistry } from '../connectors/connector-registry.service';
 import { ChannelContextFactory } from '../connectors/channel-context.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { itemKind } from '../channels/listing-defaults';
 import { SyncEventService } from './sync-event.service';
 import { AlertsService } from './alerts.service';
+import { SelloutService } from './sellout.service';
 
 /** Distinguishes this worker's `sync_failure` flag from any other source's. */
 const PUSH_FAILURE_SOURCE = 'outbound:push-failure';
@@ -57,6 +57,7 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly syncEvents: SyncEventService,
     private readonly alerts: AlertsService,
+    private readonly sellout: SelloutService,
   ) {}
 
   onModuleInit(): void {
@@ -242,24 +243,19 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The sellout policy (opt-in per channel): a single whose advertised
-   * quantity just went to zero has its product drafted, so customers stop
-   * finding an unbuyable page.
+   * The event half of the sellout policy: a single whose advertised quantity
+   * just went to zero has its product drafted, so customers stop finding an
+   * unbuyable page.
    *
-   * Three gates before the channel is touched, cheapest first: the channel
-   * must have opted in, the connector must be able to do it, and the item must
-   * be a **single** — a sealed listing was created and imaged by the operator,
-   * and its visibility is theirs. The connector then enforces the fourth gate
-   * against the platform's own numbers (`onlyIfSoldOut`), so a product with an
-   * in-stock sibling variant — or stock at a location the hub does not manage
-   * — is left alone.
+   * Every gate — the channel's opt-in, the capability, singles only, and the
+   * platform's own `onlyIfSoldOut` check — lives in {@link SelloutService},
+   * because the nightly sweep applies the same policy to listings that reached
+   * zero without a push and two copies of that judgement would eventually
+   * disagree about the same product.
    *
-   * **One direction only.** A restock never re-activates the product: nothing
-   * should become buyable on a storefront because a background job ran. The
-   * operator activates by hand, exactly as they do for a newly created draft.
-   *
-   * Failures are logged and swallowed: the quantity push already succeeded and
-   * is recorded, and failing the job now would retry a push that landed.
+   * Failures are logged and swallowed here, which is why the shared method
+   * throws rather than reporting: the quantity push already succeeded and is
+   * recorded, and failing the job now would retry a push that landed.
    */
   private async maybeDraftAtSellout(
     connector: Connector,
@@ -269,31 +265,17 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
     current: { externalListingId: string | null },
   ): Promise<void> {
     if (!current.externalListingId) return;
-    if (!hasCapability(connector.capabilities, 'listing.status')) return;
 
     try {
-      const channel = await this.prisma.channelInstance.findUnique({
-        where: { id: channelInstanceId },
-        select: { draftAtSellout: true },
-      });
-      if (!channel?.draftAtSellout) return;
-
-      const item = await this.prisma.inventoryItem.findUnique({
-        where: { id: allocation.inventoryItemId },
-        select: { sku: { select: { condition: true } } },
-      });
-      if (!item || itemKind(item.sku.condition) !== 'single') return;
-
-      const result = await connector.updateListingStatus!(ctx, {
+      const outcome = await this.sellout.draftIfSoldOut(connector, ctx, channelInstanceId, {
         externalListingId: current.externalListingId,
-        status: 'draft',
-        onlyIfSoldOut: true,
+        inventoryItemId: allocation.inventoryItemId,
       });
 
       this.logger.log(
-        result.changed
+        outcome.drafted
           ? `Drafted sold-out listing ${current.externalListingId} on ${channelInstanceId}.`
-          : `Sellout draft skipped for ${current.externalListingId}: ${result.reason ?? 'no change'}.`,
+          : `Sellout draft skipped for ${current.externalListingId}: ${outcome.reason}.`,
       );
     } catch (error) {
       this.logger.warn(

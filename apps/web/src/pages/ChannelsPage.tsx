@@ -1349,12 +1349,29 @@ function ListingImages({ channel }: { channel: Channel }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  /**
+   * Listings already re-pushed this session. Same reason as the tag back-fill:
+   * `pending` lists every linked single with a catalogue image and cannot know
+   * one was just updated, so without this a store with hundreds of them
+   * re-offers the same first batch forever.
+   */
+  const [done, setDone] = useState<ReadonlySet<string>>(new Set());
   const pending = useChannelPendingImages(channel.id, open);
   const push = usePushListingImages(channel.id);
+  const sectionId = `listing-images-${channel.id}`;
+
+  // Back to the section head once the result has painted — after fifty rows
+  // the reader is far below both the outcome and the next batch's controls.
+  const outcome = push.data;
+  useEffect(() => {
+    if (!outcome) return;
+    document.getElementById(sectionId)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [outcome, sectionId]);
 
   if (!channel.capabilities.includes('listing.image')) return null;
 
-  const rows = pending.data ?? [];
+  const all = pending.data ?? [];
+  const rows = all.filter((r) => !done.has(r.inventoryItemId));
   const chosen = rows.filter((r) => selected.has(r.inventoryItemId));
 
   const toggle = (id: string) =>
@@ -1372,17 +1389,45 @@ function ListingImages({ channel }: { channel: Channel }) {
     setConfirming(false);
     push.mutate(
       chosen.map((r) => r.inventoryItemId),
-      { onSuccess: () => setSelected(new Set()) },
+      {
+        onSuccess: (result) => {
+          setSelected(new Set());
+          // Only the ones that actually succeeded. A failure stays on the
+          // list, because its image is still the old one and a retry is the
+          // point.
+          setDone(
+            (current) => new Set([...current, ...result.updated.map((r) => r.inventoryItemId)]),
+          );
+        },
+      },
     );
   };
 
   return (
-    <ChannelSection title="Listing images">
+    <ChannelSection title="Listing images" id={sectionId}>
       <p className="muted">
         Replace a listing&rsquo;s images with the catalogue&rsquo;s current one — for singles
         created before the image-resolution upgrade, whose storefront photo is still the thumbnail.
         Sealed products are not offered: their photos are yours, not the catalogue&rsquo;s.
       </p>
+
+      {/* Above the table for the same reason as the tag back-fill: the run
+          ends by scrolling back here, and a result under fifty rows would be
+          behind the reader. */}
+      {outcome && (
+        <div className="import-result">
+          <p className={outcome.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
+            {outcome.updated.length} updated
+            {outcome.problems.length > 0 && `, ${outcome.problems.length} failed`}.
+          </p>
+          {outcome.problems.map((p) => (
+            <p key={p.inventoryItemId} className="error">
+              {p.name ?? p.inventoryItemId}: {p.message}
+            </p>
+          ))}
+        </div>
+      )}
+      {push.isError && <FormError error={push.error as Error} />}
 
       {!open ? (
         <button type="button" className="ghost" onClick={() => setOpen(true)}>
@@ -1393,18 +1438,34 @@ function ListingImages({ channel }: { channel: Channel }) {
       ) : pending.isLoading ? (
         <p className="muted">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="field-hint">No linked singles with a catalogue image on this channel.</p>
+        <p className="field-hint">
+          {done.size > 0
+            ? `All ${done.size} listing(s) have been re-pushed. Nothing left here.`
+            : 'No linked singles with a catalogue image on this channel.'}
+        </p>
       ) : (
         <>
           <div className="inline-form">
             <button type="button" className="ghost" onClick={selectAll}>
-              Select {rows.length > MAX_ITEMS ? `first ${MAX_ITEMS}` : 'all'} ({rows.length})
+              {rows.length > MAX_ITEMS
+                ? `Select next ${MAX_ITEMS} of ${rows.length}`
+                : `Select all ${rows.length}`}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setSelected(new Set())}
+              disabled={selected.size === 0}
+            >
+              Clear
             </button>
             {rows.length > MAX_ITEMS && (
               <span className="muted">
-                One run updates at most {MAX_ITEMS}; run again for the rest.
+                One run updates at most {MAX_ITEMS}. Apply, then select the next batch — done
+                listings drop off this list.
               </span>
             )}
+            {done.size > 0 && <span className="muted">{done.size} done so far</span>}
           </div>
 
           <table className="compact">
@@ -1452,19 +1513,6 @@ function ListingImages({ channel }: { channel: Channel }) {
           )}
         </>
       )}
-
-      {push.data && (
-        <p className="field-hint">
-          {push.data.updated.length} updated
-          {push.data.problems.length > 0 && <>, {push.data.problems.length} problem(s):</>}
-        </p>
-      )}
-      {push.data?.problems.map((p) => (
-        <p key={p.inventoryItemId} className="error">
-          {p.name ?? p.inventoryItemId}: {p.message}
-        </p>
-      ))}
-      {push.isError && <FormError error={push.error as Error} />}
     </ChannelSection>
   );
 }

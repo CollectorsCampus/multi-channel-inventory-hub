@@ -28,8 +28,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1218 tests** (api 754, shopify 149, tcgplayer 102, sdk 61, tcgcsv 49,
-cardtrader 37, scryfall 28, web 31, db 7), lint/typecheck/format/build clean —
+`main` is green: **1258 tests** (api 777, shopify 162, tcgplayer 102, sdk 61, tcgcsv 49,
+cardtrader 37, scryfall 28, web 35, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
 trusting a remembered total**: several older commits say "990", which was simply
@@ -1625,12 +1625,101 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#123** is on `main` (v0.9.2). **Production is on 0.9.1 or
-later** — the operator upgraded to use the manual listing link, then used it: the
-unmapped-listing incident below is closed. What is not yet live is 0.9.2 itself (the
-collapsible channel sections and the version on Settings), and the **email token still
-needs entering in production** — it exists only in the dev instance, and secrets do not
-travel with the image.
+None. Everything through **#130** is on `main`. **Production is on 0.9.2**; everything
+after it — #125–#130, below — is unreleased, and **#130 carries the first schema migration
+since v0.8.0** (`sellout_scope`), so the next tag is a minor rather than a patch. The
+**email token still needs entering in production**: it exists only in the dev instance,
+and secrets do not travel with the image.
+
+**The first production run of the whole unmapped-sale remedy worked** (2026-08-13 to -15):
+the operator linked the sold, unlinked listing through 0.9.1's manual link and then set On
+hand, because **linking credits no stock by design**. Both halves were needed; the second
+is the one easy to forget.
+
+### After v0.9.2 — #125–#130 (2026-08-15/16), on `main`, in no released image
+
+Back-filling what the rules would have applied, and catching up on what the event path
+missed. Both exist for the same reason: **a rule or a policy written after a listing was
+created reaches nothing that already exists**, and on a tag-driven storefront the result is
+invisible rather than loud.
+
+#### Listing-rule back-fill: tags, then custom fields (#125–#129)
+
+`listing.attributes` → `updateListingAttributes`, `ListingAttributesService`,
+`POST /channels/:id/listings/attributes/{pending,backfill}`, and a channel-card panel.
+Started as tags (#125) with two rounds of real-data fixes — select-all that decrements
+through the whole list (#126), and returning to the section head after a run (#127), the
+same treatment then given to listing images (#128) — and grew to custom fields (#129).
+
+- **The safety rule differs by kind, and the asymmetry is the design.** Tags are a set, so
+  the connector writes the union and one applied by hand survives. A metafield holds
+  **one value**, so writing it is always a replacement: a field the listing already carries
+  is left exactly as it is, whatever it says. A rule firing on the game cannot know the
+  operator hand-picked something else for one card — the same argument that made the
+  catalog ingest's refresh fill-empty-only.
+- **One Shopify read carries tags, category and metafields together**, then at most one
+  `productUpdate`: two round trips per listing at 2/s, not four. There is **no
+  `HasMetafieldsIdentifier` argument in `2026-07`** — that was the first attempt.
+  `read_products` + `write_products`, no scope change.
+- **A stored empty value counts as absent.** Shopify deletes a metafield set to `""`, so a
+  row surviving with one is a field with no value; reading it as present would leave the
+  listing permanently unfillable.
+- **The category is applied only where the product has none**, and only beside a field that
+  needs one. A conditional definition cannot be satisfied by a product with no
+  classification, but reclassifying one the operator already categorised is not this call's
+  business. Both directions pinned.
+- **Product-owned fields only**; a variant-owned one is refused **by name** rather than
+  skipped, because a silent skip reports a field as set that was never written.
+- **`suggestChoice` is `suggestTag` for metaobject entries** — matched on the **label**,
+  since the value is a GID meaning nothing outside one shop, and refusing on ambiguity.
+  It **self-filters across fields** (`custom.game`'s entries are game names, `custom.set`'s
+  are set names), which is what makes offering every field against every value safe rather
+  than a shotgun. Live: **twelve `custom.set` proposals, every one a punctuation change**
+  (`ME01: Mega Evolution` → `ME01 Mega Evolution`).
+- **Only the caller can name a value.** The result carries the whole metafield rather than
+  its key, and the panel resolves both halves against `listMetafields` as the rules editor
+  does — `Game = Pokémon TCG`, not `custom.game`. The fallback to `namespace.key` is
+  load-bearing: that read can fail (a missing scope answers null with no error) and a chip
+  that then said nothing would read as a listing with no work to do.
+- Live against the production copy: **232 listings offered, 160 resolving at least one
+  custom field.** The **write path has never touched the real storefront** — the operator
+  runs it, the same call as the reconcile ledger correction.
+
+#### The sold-out sweep, and scope as a setting (#130)
+
+`draftAtSellout` has been event-driven since v0.7.0, so it reaches nothing that sold out
+**before** the channel opted in and nothing whose stock reached zero without a push. The
+operator's store had nine such singles, and the toggle was off, which is why none had ever
+been drafted.
+
+- **`SelloutService.draftIfSoldOut` is the whole policy and both paths go through it**; the
+  worker's copy is gone. The existing worker tests pass unchanged through the shared
+  method — that is the proof the refactor changed no behaviour, and what let the scope
+  setting gate both paths for free.
+- **`SELLOUT_CRON`** (04:00) installs a BullMQ job scheduler like reconcile and reprice.
+  Last of the three deliberately: reconciliation may correct a quantity the hub had wrong,
+  and a card the ledger only now believes is at zero should be drafted that night.
+- **Both zeros are required, and the redundancy is the safety**: the channel advertising
+  nothing _and_ the item holding nothing. With stock in the ledger a push could be in
+  flight, and drafting ahead of one leaves a card back in stock and invisible, which
+  nothing here ever undoes. The event path acts on the exact derived figure because it has
+  it in hand; the sweep is the catch-up and is allowed to be blunter.
+  `desiredListedQuantity` is **derived, not a column**, so it cannot be queried on.
+- **`selloutScope` is per channel** (`singles` default, `all`), replacing a hardcoded rule.
+  Sealed product is restocked far more often than a given card, so hiding a booster box
+  that will be back next week is churn when re-publishing is manual. **An unrecognised
+  value reads as `singles`** — the conservative direction, not merely a default: widening
+  what gets unpublished has to be chosen. Measured on the live copy: the default drafts
+  **9 singles**, `all` would additionally unpublish **117 sealed products**.
+- Verified without touching the store: the endpoint refused with 400 on the real channel
+  (toggle off); the candidate predicate was run against the restored production database;
+  the panel was rendered with the toggle flipped **in the copy only**; and the scheduler
+  was exercised against real Redis — a changed pattern **moves** the one entry rather than
+  adding a second.
+
+**`hub_prodlike` needed the new migration applied by hand** (`prisma migrate deploy`
+against it), because that launcher runs none — the schema-drift trap the dev-instance note
+warns about, now actually hit.
 
 **The first production run of the whole unmapped-sale remedy, and it worked** (2026-08-13
 to -15): sales had arrived for `gid://shopify/ProductVariant/45781411627061` with no

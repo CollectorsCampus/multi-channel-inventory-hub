@@ -51,6 +51,8 @@ export interface ChannelSummary {
   draftAtSellout: boolean;
   /** What that applies to: "singles" (default) or "all". */
   selloutScope: string;
+  /** Opt-in: publish again when stock returns, if the hub was what hid it. */
+  reactivateOnRestock: boolean;
   /** How this channel turns market prices into asking prices. */
   repricingPolicy: RepricingPolicy;
   /** What a listing created here carries, applied verbatim. Never derived. */
@@ -77,6 +79,7 @@ export interface UpdateChannelInput {
   autoListNewStock?: boolean;
   draftAtSellout?: boolean;
   selloutScope?: string;
+  reactivateOnRestock?: boolean;
   /** Replaced wholesale, like listingDefaults; sanitised through the tolerant parser. */
   repricingPolicy?: Record<string, unknown>;
   /**
@@ -216,6 +219,9 @@ export class ChannelsService {
         SELLOUT_SCOPES.includes(input.selloutScope as SelloutScope)
           ? { selloutScope: input.selloutScope }
           : {}),
+        ...(input.reactivateOnRestock !== undefined
+          ? { reactivateOnRestock: input.reactivateOnRestock }
+          : {}),
         ...(input.repricingPolicy !== undefined
           ? {
               repricingPolicy: encodeRepricingPolicy(
@@ -312,6 +318,7 @@ export class ChannelsService {
     autoListNewStock: boolean;
     draftAtSellout: boolean;
     selloutScope: string;
+    reactivateOnRestock: boolean;
     repricingPolicy: string;
     listingDefaults: string;
     createdAt: Date;
@@ -369,6 +376,7 @@ export class ChannelsService {
       autoListNewStock: instance.autoListNewStock,
       draftAtSellout: instance.draftAtSellout,
       selloutScope: instance.selloutScope,
+      reactivateOnRestock: instance.reactivateOnRestock,
       repricingPolicy: parseRepricingPolicy(instance.repricingPolicy),
       listingDefaults: parseListingDefaults(instance.listingDefaults),
       webhookPath: receivesWebhooks ? `/api/webhooks/${instance.id}` : null,

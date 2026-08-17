@@ -103,6 +103,8 @@ export interface Channel {
   draftAtSellout: boolean;
   /** What that applies to: "singles" (the default) or "all". */
   selloutScope: string;
+  /** Opt-in: publish again when stock returns, if the hub was what hid it. */
+  reactivateOnRestock: boolean;
   /** How this channel turns market prices into asking prices. */
   repricingPolicy: RepricingPolicy;
   /** What a listing created here carries. Applied verbatim; never derived. */
@@ -166,6 +168,7 @@ export function useUpdateChannel() {
       autoListNewStock?: boolean;
       draftAtSellout?: boolean;
       selloutScope?: string;
+      reactivateOnRestock?: boolean;
       repricingPolicy?: RepricingPolicy;
       /** Replaced wholesale, not merged — sending `{ tags: [] }` clears them. */
       listingDefaults?: ChannelListingDefaults;

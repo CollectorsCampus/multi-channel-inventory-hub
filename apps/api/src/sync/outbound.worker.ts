@@ -173,8 +173,12 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
       // a quantity the channel now actually shows. Its own failure must not
       // fail this job — the push succeeded, and retrying it would re-push a
       // quantity that already landed.
-      if (operation === 'quantity' && current.desiredListedQuantity === 0) {
-        await this.maybeDraftAtSellout(connector, ctx, channelInstanceId, allocation, current);
+      if (operation === 'quantity') {
+        if (current.desiredListedQuantity === 0) {
+          await this.maybeDraftAtSellout(connector, ctx, channelInstanceId, allocation, current);
+        } else {
+          await this.maybeReactivate(connector, ctx, channelInstanceId, allocation, current);
+        }
       }
     } catch (error) {
       const message = (error as Error).message;
@@ -280,6 +284,49 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.warn(
         `Could not draft sold-out listing ${current.externalListingId}: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * The other half: a push that takes an allocation back above zero publishes
+   * the listing again — but only where the channel asked for that and only a
+   * listing the hub unpublished itself. Both gates live in
+   * {@link SelloutService.reactivateIfRestocked}.
+   *
+   * Swallowed like the drafting side, and for the same reason: the quantity
+   * push has already landed and is recorded, so failing the job here would
+   * re-push a number that is already right.
+   *
+   * **Only a success is logged**, unlike the drafting side which logs its
+   * skips too. A push to zero is rare; a push to some other number is the
+   * ordinary case, so logging "not enabled on this channel" here would put a
+   * line in the log for essentially every quantity change the hub ever makes.
+   */
+  private async maybeReactivate(
+    connector: Connector,
+    ctx: Ctx,
+    channelInstanceId: string,
+    allocation: { inventoryItemId: string },
+    current: { externalListingId: string | null },
+  ): Promise<void> {
+    if (!current.externalListingId) return;
+
+    try {
+      const outcome = await this.sellout.reactivateIfRestocked(connector, ctx, channelInstanceId, {
+        externalListingId: current.externalListingId,
+        inventoryItemId: allocation.inventoryItemId,
+      });
+
+      if (outcome.activated) {
+        this.logger.log(
+          `Published restocked listing ${current.externalListingId} on ${channelInstanceId}.`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not publish restocked listing ${current.externalListingId}: ` +
+          `${(error as Error).message}`,
       );
     }
   }

@@ -249,6 +249,16 @@ model ChannelInstance {
   /// become buyable on a storefront because a background job ran.
   draftAtSellout Boolean @default(false) @map("draft_at_sellout")
 
+  /// Opt-in: publish again when stock comes back — but only a listing this hub
+  /// unpublished itself, which `ChannelAllocation.selloutDraftedAt` records.
+  ///
+  /// Off by default, and separately from draftAtSellout, because the two are
+  /// different risks. Leaving a sold-out page up costs nothing; publishing
+  /// something the operator deliberately held back is a decision they never
+  /// made. The platform cannot say who drafted a product, so the hub's own
+  /// stamp is the only honest answer to "was this ours to re-publish".
+  reactivateOnRestock Boolean @default(false) @map("reactivate_on_restock")
+
   /// SelloutScope: "singles" | "all". What draftAtSellout applies to.
   ///
   /// Defaults to singles because sealed product is restocked far more often
@@ -321,6 +331,15 @@ model ChannelAllocation {
 
   lastPushedAt DateTime? @map("last_pushed_at")
   lastError    String?   @map("last_error")
+
+  /// When the hub unpublished this listing because it sold out, or null.
+  ///
+  /// The permission slip for re-publishing it: a platform cannot say who
+  /// drafted a product, so without this the restock path could not tell a
+  /// listing the hub hid from one the operator hid on purpose — and
+  /// re-publishing the second is a decision they never made. Cleared the moment
+  /// it is used, so the permission is spent rather than standing.
+  selloutDraftedAt DateTime? @map("sellout_drafted_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

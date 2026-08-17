@@ -3,6 +3,39 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.10.1] — 2026-08-17
+
+Where the next step is, on the two screens that make you look for it.
+
+**No schema migration** — a clean drop-in on 0.10.0.
+
+### Changed
+
+- **Apply sits above the table, with the selection controls.** It was below, which is fine
+  for five rows and unusable for fifty: back-filling 462 listings meant scrolling the whole
+  table to reach the button and scrolling back, for every batch. The confirmation now
+  expands in place in that same row, so saying yes does not move anything either. Both the
+  listing-rule back-fill and the image re-push get it.
+- **The push-failure alert links to the item it is about.** "This allocation has no Shopify
+  variant id yet" could not be acted on without knowing which card. The flag records the
+  item behind its latest failure, and refreshes it as the alert's own text refreshes — so
+  the link always names the failure the text is describing.
+- **The drift alert links to the channel's reconciliation panel**, where drift is compared
+  and corrected. Only the nightly sweep's drift: a sale against an unmapped listing shares
+  the same alert kind but is fixed by linking the listing, not by reconciling, and it
+  already carries its own link.
+
+### Fixed
+
+- The API no longer ships its compiled test files in the container image — 39 of them in
+  0.10.0. Harmless but dead weight, and the rule was already written down for every other
+  package.
+
+### Dependencies
+
+- eslint, `@nestjs/*`, `@node-rs/argon2`, bullmq, fastify and `unplugin-swc` to their
+  latest minor or patch. No open security advisories.
+
 ## [0.10.0] — 2026-08-16
 
 Catching up on what the rules and the sellout policy could not reach, and a browser you can

@@ -42,6 +42,9 @@ describeAlerts('AlertsService', () => {
 
   beforeEach(async () => {
     await prisma.alert.deleteMany();
+    await prisma.inventoryItem.deleteMany();
+    await prisma.sku.deleteMany();
+    await prisma.catalogItem.deleteMany();
     await prisma.channelInstance.deleteMany();
 
     const make = async (name: string) =>
@@ -54,6 +57,22 @@ describeAlerts('AlertsService', () => {
     channelId = await make('Channel A');
     otherChannelId = await make('Channel B');
   });
+
+  /** A ledger row for an alert to point at. */
+  async function seedItem(): Promise<string> {
+    const catalogItem = await prisma.catalogItem.create({
+      data: {
+        name: `Card ${Math.random().toString(36).slice(2, 10)}`,
+        searchName: 'card',
+        skus: { create: [{ condition: 'NM', printing: 'NORMAL', language: 'EN' }] },
+      },
+      include: { skus: true },
+    });
+    const item = await prisma.inventoryItem.create({
+      data: { skuId: catalogItem.skus[0]!.id, quantityOnHand: 1 },
+    });
+    return item.id;
+  }
 
   // -------------------------------------------------------------------------
 
@@ -170,6 +189,37 @@ describeAlerts('AlertsService', () => {
       const row = await prisma.alert.findFirstOrThrow();
       expect(row.title).toBe('failed 2 times');
       expect(row.detail).toBe('detail 2');
+    });
+
+    /**
+     * A flag stands for many occurrences but describes the **latest**, and the
+     * item it names is what the inbox offers a link to. Kept from the first
+     * raise, that link would point at one card beside text about another —
+     * worse than no link, because it reads as a fact rather than as staleness.
+     */
+    it('re-points at the item of the latest occurrence, and lets go of it', async () => {
+      const flag = (inventoryItemId?: string) => ({
+        kind: 'sync_failure',
+        source: 's',
+        severity: 'warning' as const,
+        channelInstanceId: channelId,
+        title: 'failed',
+        ...(inventoryItemId ? { inventoryItemId } : {}),
+      });
+
+      const first = await seedItem();
+      const second = await seedItem();
+
+      await alerts.raiseFlag(flag(first));
+      expect((await prisma.alert.findFirstOrThrow()).inventoryItemId).toBe(first);
+
+      await alerts.raiseFlag(flag(second));
+      expect((await prisma.alert.findFirstOrThrow()).inventoryItemId).toBe(second);
+
+      // A later failure with no item clears it rather than leaving the last
+      // one standing, for the same reason.
+      await alerts.raiseFlag(flag());
+      expect((await prisma.alert.findFirstOrThrow()).inventoryItemId).toBeNull();
     });
 
     /**

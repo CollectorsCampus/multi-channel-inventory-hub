@@ -170,6 +170,13 @@ export class AlertsService {
           context,
           severity: input.severity,
           severityRank: rankOf(input.severity),
+          // Refreshed with the rest, and `?? null` rather than left alone: a
+          // flag stands for many occurrences but describes the **latest**, so
+          // the row it points at has to be the one `detail` is talking about.
+          // Kept it would name the first failure beside text about the most
+          // recent — which is worse than no link at all, because it reads as a
+          // fact rather than as staleness.
+          inventoryItemId: input.inventoryItemId ?? null,
         },
       });
       // Shipped on every refresh, unlike email: syslog is a log stream, and

@@ -158,13 +158,67 @@ function AlertRow({
  * above it before scrolling.
  */
 function AlertActionLink({ alert }: { alert: Alert }) {
-  if (alert.kind !== 'reprice_review' || !alert.channelInstanceId) return null;
+  const links = [];
+
+  if (alert.kind === 'reprice_review' && alert.channelInstanceId) {
+    links.push(
+      <Link key="reprice" to="/channels" hash={`repricing-${alert.channelInstanceId}`}>
+        Review price changes →
+      </Link>,
+    );
+  }
+
+  /*
+   * Drift is compared, corrected and auto-corrected in one place, and the
+   * alert's own text ("differs on 26 listings") summarises what that panel
+   * lists in full.
+   *
+   * **Keyed on the source, not the kind.** Two different facts share
+   * `reconcile_drift`: the nightly sweep's, which reconciliation fixes, and
+   * the inbound worker's sale against an unmapped listing, which it does not —
+   * that one is fixed by linking the listing, and already carries its own
+   * link. Sending it here would be pointing at a panel that cannot help.
+   */
+  const source = (alert.context ?? {}) as { source?: unknown };
+  if (
+    alert.kind === 'reconcile_drift' &&
+    source.source === 'reconcile-sweep' &&
+    alert.channelInstanceId
+  ) {
+    links.push(
+      <Link key="reconcile" to="/channels" hash={`reconciliation-${alert.channelInstanceId}`}>
+        Reconcile this channel →
+      </Link>,
+    );
+  }
+
+  /*
+   * The item behind the alert, where one is recorded.
+   *
+   * Not keyed on kind, unlike the two above: any alert naming a ledger row is
+   * one where "which card is this about?" is the first question, and the push
+   * failure that prompted this — "this allocation has no Shopify variant id
+   * yet" — is unanswerable without going and looking. A flag names the item of
+   * its **latest** occurrence, which is the same one its detail describes.
+   */
+  if (alert.inventoryItemId) {
+    links.push(
+      <Link key="item" to="/items/$id" params={{ id: alert.inventoryItemId }}>
+        Open the item →
+      </Link>,
+    );
+  }
+
+  if (links.length === 0) return null;
 
   return (
     <p className="field-hint">
-      <Link to="/channels" hash={`repricing-${alert.channelInstanceId}`}>
-        Review price changes →
-      </Link>
+      {links.map((link, index) => (
+        <span key={link.key}>
+          {index > 0 && ' · '}
+          {link}
+        </span>
+      ))}
     </p>
   );
 }

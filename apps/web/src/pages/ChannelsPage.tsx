@@ -2067,6 +2067,7 @@ function Reconciliation({ channel }: { channel: Channel }) {
   return (
     <ChannelSection
       title="Reconciliation"
+      id={`reconciliation-${channel.id}`}
       state={
         channel.reconcileAutoCorrect ? (
           <span className="summary-state summary-state-quiet">auto-correct on</span>

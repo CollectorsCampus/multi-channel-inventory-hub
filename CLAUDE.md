@@ -1625,15 +1625,19 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#133** is on `main` and released as **v0.10.0**. **Production is
-on 0.9.2** until the operator updates the stack — and this one **contains migrations**
+None. Everything through **#137** is on `main` and released as **v0.10.1**, which adds no
+migration on top of 0.10.0 — a clean drop-in. **0.10.0 was the one carrying migrations**
 (`sellout_scope`, then `reactivate_on_restock` + `sellout_drafted_at`), the first since
-0.8.0, applied automatically by the entrypoint. The **email token still needs entering in
-production**: it exists only in the dev instance, and secrets do not travel with the image.
+0.8.0, applied automatically by the entrypoint.
 
-**Two things are shipped but never yet run against the real storefront**, and both are the
-operator's to trigger: the listing-rule back-fill's _write_ path, and the whole sold-out
-policy — their Shopify channel still has `draftAtSellout` off, which is also why
+**Production is on 0.10.0**: the operator updated the stack and ran the listing-rule
+back-fill over their 462 listings, which is what prompted #137's Apply-button move — the
+first feature in a while whose design was corrected by someone actually using it at scale.
+The **email token still needs entering in production**: it exists only in the dev instance,
+and secrets do not travel with the image.
+
+**The sold-out policy has still never run against the real storefront**, and it is the
+operator's to trigger: their Shopify channel has `draftAtSellout` off, which is also why
 `reactivateOnRestock` cannot have been exercised (it needs a listing the hub drafted and
 then restocked).
 
@@ -1668,12 +1672,14 @@ starts clean and its own OpenAPI document reports `info.version: 0.10.0` with 71
 including all four new routes.
 
 **One thing the artifact check turned up, pre-existing and not a regression: `apps/api`
-ships its compiled spec files in the image** — 39 of them in 0.10.0, 37 in 0.9.2. It
-contradicts the rule the vitest-4 work wrote down ("keep specs out of every package's
+shipped its compiled spec files in the image** — 39 of them in 0.10.0, 37 in 0.9.2. It
+contradicted the rule the vitest-4 work wrote down ("keep specs out of every package's
 built `dist/`"), and `packages/db` was given `"exclude": ["src/**/*.spec.ts"]` then while
-`apps/api` was not. It is **untidy rather than harmful**: this package's vitest `include`
+`apps/api` was not. It was **untidy rather than harmful**: this package's vitest `include`
 is `['test/**/*.spec.ts', 'src/**/*.spec.ts']`, scoped to source, so the discovery
-breakage that hit `@hub/db` cannot occur here. Worth a small follow-up.
+breakage that hit `@hub/db` could not occur here. **Fixed in v0.10.1** with the same
+one-line exclude; only `src` needs naming, since `include` is src-only and `test/` was
+never compiled.
 
 ### After v0.9.2 — #125–#133, shipped in **v0.10.0** (2026-08-15/16)
 

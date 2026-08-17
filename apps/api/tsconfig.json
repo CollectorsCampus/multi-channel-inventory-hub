@@ -11,5 +11,18 @@
     // optional-property exactness fights that in a few decorator positions.
     "strictPropertyInitialization": false
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // Keep specs out of the built output, like `packages/db` and every other
+  // package here. `packages/db` was given this during the vitest 4 upgrade
+  // because an emitted `dist/*.spec.js` broke test discovery there; this one
+  // was missed, and shipped 39 compiled spec files in the v0.10.0 image.
+  //
+  // Nothing is broken by it — this package's vitest `include` is scoped to
+  // `test/` and `src/`, so the dist copies are never discovered — but they are
+  // dead weight in a production image, and the rule is worth being true
+  // everywhere rather than true wherever it happened to be enforced.
+  //
+  // Only `src` needs naming: `include` above is src-only, so `test/` was never
+  // compiled in the first place.
+  "exclude": ["src/**/*.spec.ts"]
 }

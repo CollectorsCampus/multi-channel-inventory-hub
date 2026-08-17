@@ -466,6 +466,41 @@ Two of the seven "others" turned out to be category errors rather than access pr
 which is worth remembering when the next name is added to this list: **ask what it is before
 asking whether it has an API.**
 
+## Catalogue gaps to re-check — _not_ candidates
+
+A game the operator stocks that no registered `CatalogSource` carries. Deliberately not
+under Candidates: these are not channels, and the doc's own closing lesson is to ask what a
+thing is first. The remedy is usually **waiting**, not building — `catalog-tcgcsv` mirrors
+TCGPlayer's catalogue, so anything TCGPlayer adds arrives here for free.
+
+Nothing is blocked while a gap is open. The ledger holds a game no catalogue knows:
+`POST /inventory` creates an item from a name alone, `CatalogItem.game` is nullable, and a
+SKU with no `CatalogExternalRef` still gets a valid `hub:<skuId>:…` code, so it can be
+listed on Shopify and tagged by the normal rules. What is missing until a source appears is
+search-by-name at intake, images, and **market prices** — so no repricing for its singles.
+
+### Palworld TCG — _checked 2026-08-17; too new, re-check tcgcsv_
+
+Bushiroad's Palworld OFFICIAL CARD GAME launched **2026-07-30** (first set _Dawn of
+Palpagos_; English, Japanese and Simplified Chinese). Checked live against both ingesting
+sources on 2026-08-17:
+
+| Source     | Result                                                               |
+| ---------- | -------------------------------------------------------------------- |
+| tcgcsv     | 90 categories, none Palworld. Newest is `90 CookieRun: Braverse TCG` |
+| CardTrader | 14 games, none Palworld. Newest are Riftbound, Gundam, Sorcery       |
+| scryfall   | Magic only — not applicable                                          |
+
+**The blocker is that TCGPlayer has no Palworld category yet**, so tcgcsv has nothing to
+republish. That is a timing problem, not an access one, and it resolves itself: the day
+TCGPlayer opens the category, tcgcsv carries it and the operator ingests it with **zero
+code** — exactly how Pokémon Japan (category 85) removed the case for building TCGdex.
+
+**So: re-check `GET https://tcgcsv.com/tcgplayer/categories` every few weeks** rather than
+building anything. A bespoke source against a fan site or a JP retailer would be real work
+that tcgcsv makes redundant on arrival, and it would be the third source in an id space
+none of the others share. Remember the User-Agent — that CDN answers 401 to a blank one.
+
 ## Suggested order
 
 1. **eBay** — largest reach, most likely to have a genuinely usable API, and the strongest

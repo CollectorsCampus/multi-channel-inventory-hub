@@ -1650,6 +1650,15 @@ concern is not confidentiality but an unauthenticated route sharing an origin wi
 admin app; a second hostname routing only to the kiosk path buys that isolation without a
 second container needing the same database.
 
+**No catalogue carries the Palworld TCG yet** (checked 2026-08-17). It launched 2026-07-30,
+and TCGPlayer has no category for it — so tcgcsv, which mirrors them, has nothing to
+republish, and CardTrader's 14 games do not include it either. **The answer is to wait, not
+to build**: the day TCGPlayer opens the category it arrives for free, exactly as Pokémon
+Japan did. Nothing is blocked meanwhile — the ledger holds a game no catalogue knows, and
+such an item still lists on Shopify under its `hub:` code. See "Catalogue gaps to re-check"
+in [docs/CONNECTOR_ROADMAP.md](docs/CONNECTOR_ROADMAP.md) for the re-check and why a
+bespoke source would be wasted work.
+
 **The first production run of the whole unmapped-sale remedy worked** (2026-08-13 to -15):
 the operator linked the sold, unlinked listing through 0.9.1's manual link and then set On
 hand, because **linking credits no stock by design**. Both halves were needed; the second

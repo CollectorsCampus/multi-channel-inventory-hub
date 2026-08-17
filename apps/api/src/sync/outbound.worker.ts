@@ -192,7 +192,13 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
       // §6: terminal failures mark the allocation and raise an alert. Marking
       // on every attempt would flag a listing that a retry is about to fix.
       if (terminal) {
-        await this.markFailed(allocationId, channelInstanceId, operation, message);
+        await this.markFailed(
+          allocationId,
+          channelInstanceId,
+          operation,
+          message,
+          allocation.inventoryItemId,
+        );
       }
 
       throw error;
@@ -336,6 +342,7 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
     channelInstanceId: string,
     operation: string,
     message: string,
+    inventoryItemId: string,
   ): Promise<void> {
     await this.prisma.channelAllocation.update({
       where: { id: allocationId },
@@ -355,6 +362,11 @@ export class OutboundWorker implements OnModuleInit, OnModuleDestroy {
       source: PUSH_FAILURE_SOURCE,
       severity: 'warning',
       channelInstanceId,
+      // The item behind the most recent failure, so the inbox can offer a way
+      // to go and look at it. One flag can stand for many failures, so this
+      // names the latest — the same thing `detail` already describes, and
+      // `raiseFlag` refreshes the two together for exactly that reason.
+      inventoryItemId,
       title: `Could not push ${operation} to the channel`,
       // The count is what distinguishes "one bad push" from "this channel has
       // been failing all night", which the previous refresh-in-place lost.

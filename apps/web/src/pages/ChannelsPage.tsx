@@ -1432,6 +1432,13 @@ function ListingRuleBackfill({ channel }: { channel: Channel }) {
         </p>
       ) : (
         <>
+          {/* Select and apply in one row, above the table.
+              Applying used to sit under the rows: fine for five, unusable for
+              fifty. The operator ran this over 462 listings, and every batch
+              meant scrolling the whole table to reach the button and scrolling
+              back. Nothing below the fold is needed to decide — the selection
+              is made by the button beside it — so the loop now fits in one
+              screen, which is also where the result lands after a run. */}
           <div className="inline-form">
             <button type="button" className="ghost" onClick={selectAll}>
               {rows.length > MAX_ITEMS
@@ -1446,6 +1453,30 @@ function ListingRuleBackfill({ channel }: { channel: Channel }) {
             >
               Clear
             </button>
+            {confirming ? (
+              <>
+                <span className="muted">
+                  Apply these rules to {chosen.length} listing(s) on the live store?
+                </span>
+                <button type="button" onClick={apply} disabled={backfill.isPending}>
+                  Yes, apply
+                </button>
+                <button type="button" className="ghost" onClick={() => setConfirming(false)}>
+                  No
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={chosen.length === 0 || backfill.isPending}
+                onClick={() => setConfirming(true)}
+              >
+                {backfill.isPending ? 'Applying…' : `Apply to ${chosen.length} listing(s)`}
+              </button>
+            )}
+          </div>
+
+          <div className="inline-form">
             {rows.length > MAX_ITEMS && (
               <span className="muted">
                 One run updates at most {MAX_ITEMS}. Apply, then select the next batch — done
@@ -1489,30 +1520,6 @@ function ListingRuleBackfill({ channel }: { channel: Channel }) {
               ))}
             </tbody>
           </table>
-
-          <div className="inline-form">
-            {confirming ? (
-              <>
-                <span className="muted">
-                  Apply these rules to {chosen.length} listing(s) on the live store?
-                </span>
-                <button type="button" onClick={apply} disabled={backfill.isPending}>
-                  Yes, apply
-                </button>
-                <button type="button" className="ghost" onClick={() => setConfirming(false)}>
-                  No
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                disabled={chosen.length === 0 || backfill.isPending}
-                onClick={() => setConfirming(true)}
-              >
-                {backfill.isPending ? 'Applying…' : `Apply to ${chosen.length} listing(s)`}
-              </button>
-            )}
-          </div>
         </>
       )}
     </ChannelSection>
@@ -1712,6 +1719,13 @@ function ListingImages({ channel }: { channel: Channel }) {
         </p>
       ) : (
         <>
+          {/* Select and apply in one row, above the table.
+              Applying used to sit under the rows: fine for five, unusable for
+              fifty. The operator ran this over 462 listings, and every batch
+              meant scrolling the whole table to reach the button and scrolling
+              back. Nothing below the fold is needed to decide — the selection
+              is made by the button beside it — so the loop now fits in one
+              screen, which is also where the result lands after a run. */}
           <div className="inline-form">
             <button type="button" className="ghost" onClick={selectAll}>
               {rows.length > MAX_ITEMS
@@ -1726,6 +1740,31 @@ function ListingImages({ channel }: { channel: Channel }) {
             >
               Clear
             </button>
+            {confirming ? (
+              <>
+                <span className="muted">
+                  This replaces each product&rsquo;s photos on the storefront with the catalogue
+                  image. The old photos are deleted.
+                </span>
+                <button type="button" disabled={push.isPending} onClick={apply}>
+                  Replace {chosen.length} image{chosen.length === 1 ? '' : 's'}
+                </button>
+                <button type="button" className="ghost" onClick={() => setConfirming(false)}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={chosen.length === 0 || push.isPending}
+                onClick={() => setConfirming(true)}
+              >
+                Replace {chosen.length} image{chosen.length === 1 ? '' : 's'}…
+              </button>
+            )}
+          </div>
+
+          <div className="inline-form">
             {rows.length > MAX_ITEMS && (
               <span className="muted">
                 One run updates at most {MAX_ITEMS}. Apply, then select the next batch — done
@@ -1755,29 +1794,6 @@ function ListingImages({ channel }: { channel: Channel }) {
               ))}
             </tbody>
           </table>
-
-          {!confirming ? (
-            <button
-              type="button"
-              disabled={chosen.length === 0 || push.isPending}
-              onClick={() => setConfirming(true)}
-            >
-              Replace {chosen.length} image{chosen.length === 1 ? '' : 's'}…
-            </button>
-          ) : (
-            <div className="inline-form">
-              <span>
-                This replaces each product&rsquo;s photos on the storefront with the catalogue
-                image. The old photos are deleted.
-              </span>
-              <button type="button" disabled={push.isPending} onClick={apply}>
-                Replace {chosen.length} image{chosen.length === 1 ? '' : 's'}
-              </button>
-              <button type="button" className="ghost" onClick={() => setConfirming(false)}>
-                Cancel
-              </button>
-            </div>
-          )}
         </>
       )}
     </ChannelSection>
@@ -2051,6 +2067,7 @@ function Reconciliation({ channel }: { channel: Channel }) {
   return (
     <ChannelSection
       title="Reconciliation"
+      id={`reconciliation-${channel.id}`}
       state={
         channel.reconcileAutoCorrect ? (
           <span className="summary-state summary-state-quiet">auto-correct on</span>

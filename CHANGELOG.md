@@ -3,6 +3,56 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.10.0] — 2026-08-16
+
+Catching up on what the rules and the sellout policy could not reach, and a browser you can
+narrow to one set.
+
+**Contains a schema migration** — the first since 0.8.0. Two, in fact: `sellout_scope` on
+channels, and `reactivate_on_restock` plus `sellout_drafted_at` for the restock path. Both
+are additive with safe defaults and are applied automatically on start, so the upgrade is a
+drop-in; **every existing channel keeps exactly the behaviour it had.**
+
+### Added
+
+- **Apply a channel's listing rules to listings that already exist.** A rule written after
+  a product was created never reached it, and on a tag-driven store an untagged product is
+  in no collection at all — present in the admin, invisible in the shop. The channel card
+  can now back-fill both tags and custom fields over selected listings, in batches, with a
+  preview of what each one would gain.
+  - Tags are **added**, never removed: one applied by hand survives, and a re-run is free.
+  - A custom field is **only ever filled in where the listing has none**. It holds a single
+    value, so writing it is always a replacement, and a rule firing on the game cannot know
+    you hand-picked something else for one card.
+  - A product category is applied only where the product has none, which is what lets a
+    conditional custom field be set at all.
+- **Suggested custom-field rules**, the way tag rules have been suggested since 0.6.0.
+  Matched against the store's own entries by their labels, and refusing whenever more than
+  one could be meant.
+- **A nightly sweep for sold-out listings**, `SELLOUT_CRON` (04:00), plus a "Draft sold-out
+  listings now" button. The existing policy only fired when a quantity push happened, so it
+  reached nothing that sold out before the channel opted in, and nothing whose stock reached
+  zero by another route.
+- **What the sold-out policy applies to is now a per-channel setting** — singles only (the
+  default, unchanged) or everything. Sealed product is restocked far more often than a given
+  card, so hiding a booster box that will be back next week is churn for nothing.
+- **Publish a listing again when its stock returns**, opt-in and off by default. Only ever a
+  listing the hub unpublished itself: no platform can say who drafted a product, so the hub
+  records its own, and anything drafted by hand stays drafted.
+- **A set filter on the inventory browser**, beside the game filter and enabled once a game
+  is chosen. Counts come from what is actually held, so no option can return nothing.
+- **The repricing review links to the market it is quoting.** A proposal says the market is
+  $24.99; the next question is always "is it?", and answering it meant finding the card by
+  hand.
+
+### Changed
+
+- The reprice-review alert kind is now accepted by the alert filter, so filtering the
+  Activity inbox to it no longer fails.
+- Changing the game on the inventory browser clears the set filter with it. A set belongs to
+  one game, and one carried across would match nothing — which reads as a broken page rather
+  than as a filter working.
+
 ## [0.9.2] — 2026-08-15
 
 A channel card you can take in at a glance, and an instance that says what it is running.

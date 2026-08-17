@@ -28,7 +28,7 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1258 tests** (api 777, shopify 162, tcgplayer 102, sdk 61, tcgcsv 49,
+`main` is green: **1268 tests** (api 787, shopify 162, tcgplayer 102, sdk 61, tcgcsv 49,
 cardtrader 37, scryfall 28, web 35, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
@@ -1625,18 +1625,32 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#130** is on `main`. **Production is on 0.9.2**; everything
-after it — #125–#130, below — is unreleased, and **#130 carries the first schema migration
-since v0.8.0** (`sellout_scope`), so the next tag is a minor rather than a patch. The
-**email token still needs entering in production**: it exists only in the dev instance,
-and secrets do not travel with the image.
+None. Everything through **#133** is on `main` and released as **v0.10.0**. **Production is
+on 0.9.2** until the operator updates the stack — and this one **contains migrations**
+(`sellout_scope`, then `reactivate_on_restock` + `sellout_drafted_at`), the first since
+0.8.0, applied automatically by the entrypoint. The **email token still needs entering in
+production**: it exists only in the dev instance, and secrets do not travel with the image.
+
+**Two things are shipped but never yet run against the real storefront**, and both are the
+operator's to trigger: the listing-rule back-fill's _write_ path, and the whole sold-out
+policy — their Shopify channel still has `draftAtSellout` off, which is also why
+`reactivateOnRestock` cannot have been exercised (it needs a listing the hub drafted and
+then restocked).
+
+**Backlog, in the operator's words:** improve matching on the `/match` page; and a public
+in-store kiosk page — search in-stock singles and show prices, for a tablet on the counter.
+The kiosk's deployment question is **settled: a separate tunnel and hostname**, not a
+separate container. The data is already public (those prices are on the storefront), so the
+concern is not confidentiality but an unauthenticated route sharing an origin with the
+admin app; a second hostname routing only to the kiosk path buys that isolation without a
+second container needing the same database.
 
 **The first production run of the whole unmapped-sale remedy worked** (2026-08-13 to -15):
 the operator linked the sold, unlinked listing through 0.9.1's manual link and then set On
 hand, because **linking credits no stock by design**. Both halves were needed; the second
 is the one easy to forget.
 
-### After v0.9.2 — #125–#130 (2026-08-15/16), on `main`, in no released image
+### After v0.9.2 — #125–#133, shipped in **v0.10.0** (2026-08-15/16)
 
 Back-filling what the rules would have applied, and catching up on what the event path
 missed. Both exist for the same reason: **a rule or a policy written after a listing was
@@ -1719,7 +1733,44 @@ been drafted.
 
 **`hub_prodlike` needed the new migration applied by hand** (`prisma migrate deploy`
 against it), because that launcher runs none — the schema-drift trap the dev-instance note
-warns about, now actually hit.
+warns about, now actually hit. It hit again on #133, so treat it as routine.
+
+#### Publishing again on restock, and the permission slip it needs (#133)
+
+The counterpart to the sellout policy, opt-in and off by default. "One direction only" was
+the rule from v0.7.0 and is still the default — but it was the hub deciding for the
+operator, and a shop whose stock turns over weekly wants the other answer.
+
+**No platform can say who drafted a product.** Shopify has no such field, checked before
+designing around one, so `ChannelAllocation.selloutDraftedAt` is the hub's own record:
+stamped only when a draft actually happened, cleared the moment it is spent. Without it the
+restock path could not tell a listing the hub hid from one the operator hid on purpose.
+
+- **Cleared before the channel is asked, not after.** A failed activation leaving the stamp
+  would retry on every later push, and a listing drafted by hand meanwhile would keep being
+  pushed at. Permission for one attempt, not a standing instruction. Mutation-checked, as
+  is the stamp gate.
+- **Its own toggle**, because the risks are not symmetric: a sold-out page left up costs
+  nothing, publishing something held back deliberately is not recoverable afterwards.
+- **Null for every existing row** — nothing drafted before the column existed can be
+  attributed to the hub, so none of it is ever re-published.
+- The nightly sweep stays drafting-only: adding stock always goes through
+  `InventoryService` and so always queues a push, which is the event this reacts to.
+
+#### Two smaller ones (#131, #132)
+
+- **The repricing review links to the market it quotes** (#131). `ProposalRow` carries the
+  catalogue's external **ids, never URLs** — which sources have a linkable public page is a
+  fact about the web that has already changed once (Cardmarket went bot-walled), and
+  `externalLinks` in the web app owns that judgement. Reusing it also collapses tcgcsv and
+  tcgplayer to one link. Verified live: `tcgplayer.com/product/662182` returns 200.
+- **A set filter on the inventory browser** (#132), enabled once a game is chosen.
+  **Scoped to a game**, and an unscoped call answers an empty list rather than everything —
+  the caller has not asked a question yet. **The set clears when the game changes**, and the
+  route drops a `set` param arriving without a `game`: a set from another game matches
+  nothing, and a filter that silently empties the table reads as a broken page. Counted in
+  **one** query over the ledger (hundreds of rows) rather than one per option, unlike
+  `listGames`. Live: 34 Pokémon sets with real counts.
 
 **The first production run of the whole unmapped-sale remedy, and it worked** (2026-08-13
 to -15): sales had arrived for `gid://shopify/ProductVariant/45781411627061` with no

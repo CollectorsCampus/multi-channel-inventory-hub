@@ -1633,8 +1633,9 @@ migration on top of 0.10.0 — a clean drop-in. **0.10.0 was the one carrying mi
 **Production is on 0.10.0**: the operator updated the stack and ran the listing-rule
 back-fill over their 462 listings, which is what prompted #137's Apply-button move — the
 first feature in a while whose design was corrected by someone actually using it at scale.
-The **email token still needs entering in production**: it exists only in the dev instance,
-and secrets do not travel with the image.
+**Email alerting is live in production and tested by the operator (2026-08-17)**, which
+closes the last standing deployment caveat — the token had to be entered by hand there
+because secrets do not travel with the image.
 
 **The sold-out policy has still never run against the real storefront**, and it is the
 operator's to trigger: their Shopify channel has `draftAtSellout` off, which is also why
@@ -1653,6 +1654,38 @@ second container needing the same database.
 the operator linked the sold, unlinked listing through 0.9.1's manual link and then set On
 hand, because **linking credits no stock by design**. Both halves were needed; the second
 is the one easy to forget.
+
+### v0.10.1 (2026-08-17)
+
+Tagged after the "Prepare v0.10.1" merge (#138), carrying #136–#138. Tags `0.10.1`, `0.10`
+and `latest` all at digest `sha256:0de03547…`, replacing 0.10.0's `sha256:d8125603…`.
+**No migration** — a clean drop-in on 0.10.0.
+
+Three things, all of which came from the software being used rather than designed:
+
+- **Apply moved above the table** on both batch panels (#137). Running the back-fill over
+  462 production listings meant scrolling a fifty-row table twice per batch, nine times
+  over. The confirmation expands in place in the same row.
+- **The push-failure alert links to its item, and the drift alert to reconciliation**
+  (#137). The first needed `raiseFlag` to refresh `inventoryItemId` alongside title and
+  detail — a flag describes its _latest_ occurrence, so an item kept from the first raise
+  would name one card beside text about another. The second is keyed on the flag's
+  **source, not its kind**: `reconcile_drift` covers both the sweep's drift, which
+  reconciliation fixes, and the inbound worker's unmapped sale, which it does not.
+- **`apps/api` stopped shipping its compiled specs** — 39 → **0**, confirmed in the pulled
+  artifact. `packages/db` got that exclude during the vitest 4 work and this one was
+  missed.
+
+Plus the minor-and-patch dependency group (#136): eslint, `@nestjs/*`, `@node-rs/argon2`,
+bullmq 6.1.0, fastify 5.12.0, `unplugin-swc`. **The `fastify@5` override reads `^5.11.3`,
+which already covers 5.12.0**, so there was no override/lockfile disagreement — and the
+build job's `--frozen-lockfile` install passing is what proved it rather than an
+assumption. 0 open security advisories.
+
+Verified the established way: anonymously, three tags at the one digest with real
+amd64+arm64 children; inside the artifact, version 0.10.1, zero spec files,
+`fastify@5.12.0` and `bullmq@6.1.0` in the runtime tree, `--prod` held; booted clean and
+its own OpenAPI document reports `info.version: 0.10.1` with 71 paths.
 
 ### v0.10.0 (2026-08-16)
 

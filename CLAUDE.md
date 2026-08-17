@@ -1650,6 +1650,31 @@ the operator linked the sold, unlinked listing through 0.9.1's manual link and t
 hand, because **linking credits no stock by design**. Both halves were needed; the second
 is the one easy to forget.
 
+### v0.10.0 (2026-08-16)
+
+Tagged after the "Prepare v0.10.0" merge (#134), carrying #125–#133. Tags `0.10.0`, `0.10`
+and `latest` all at digest `sha256:d8125603…`, replacing 0.9.2's `sha256:7a1b13b4…`.
+**Contains the first schema migrations since 0.8.0** — `sellout_scope`, then
+`reactivate_on_restock` + `sellout_drafted_at` — both additive with safe defaults, so every
+existing channel keeps the behaviour it had.
+
+Verified the established way. Anonymously: all three tags resolve to the one digest, and
+the index carries real `linux/amd64` and `linux/arm64` children plus the two attestation
+manifests. Inside the pulled artifact: version `0.10.0`, both migration directories
+present, `sellout.service.js` carrying `reactivateIfRestocked`, `attributes/backfill` in
+the built listings controller, `listSets` in the built inventory service, and `--prod`
+held (zero `vite`/`vitest`/`esbuild`). Booted against the throwaway services on 5544/6380:
+starts clean and its own OpenAPI document reports `info.version: 0.10.0` with 71 paths,
+including all four new routes.
+
+**One thing the artifact check turned up, pre-existing and not a regression: `apps/api`
+ships its compiled spec files in the image** — 39 of them in 0.10.0, 37 in 0.9.2. It
+contradicts the rule the vitest-4 work wrote down ("keep specs out of every package's
+built `dist/`"), and `packages/db` was given `"exclude": ["src/**/*.spec.ts"]` then while
+`apps/api` was not. It is **untidy rather than harmful**: this package's vitest `include`
+is `['test/**/*.spec.ts', 'src/**/*.spec.ts']`, scoped to source, so the discovery
+breakage that hit `@hub/db` cannot occur here. Worth a small follow-up.
+
 ### After v0.9.2 — #125–#133, shipped in **v0.10.0** (2026-08-15/16)
 
 Back-filling what the rules would have applied, and catching up on what the event path

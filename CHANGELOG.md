@@ -3,6 +3,44 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.10.2] — 2026-08-19
+
+A catalogue for a game nothing else carries, and a sweep that stops crying wolf.
+
+**No schema migration** — a clean drop-in on 0.10.1.
+
+### Added
+
+- **Palworld cards can be searched, imaged and named at intake.** No marketplace
+  catalogue carries the game — it launched on 2026-07-30 and TCGPlayer has opened no
+  category, so tcgcsv has nothing to mirror and CardTrader does not list it — so this
+  reads Bushiroad's own card database instead. Names, sets, collector numbers and card
+  images.
+
+  **No prices**: a publisher's database has no market, so Palworld singles cannot be
+  repriced until a marketplace carries the game. And because Bushiroad publish no
+  TCGPlayer id, a card taken in this way will not merge with a future tcgcsv one on its
+  own — so prefer searching at intake over ingesting whole sets, and only the cards you
+  actually stock will need reconciling later.
+
+### Fixed
+
+- **The repricing sweep no longer reports a source that missed as a problem.** The
+  sources are a fallback chain, so tcgcsv not covering a set is ordinary — and five red
+  lines about sets it could not name were all cards Scryfall priced a moment later. Only
+  items that no source could price are reported now, with the reason and a count.
+
+  The underlying cause is untouched and worth knowing: a Magic card taken in through
+  Scryfall keeps Scryfall's set spelling, and tcgcsv spells the same set differently
+  (`FINAL FANTASY`, `Universes Beyond: Doctor Who`). Those cards are still priced, by
+  Scryfall.
+
+### Documentation
+
+- The connector roadmap gains a **Catalogue gaps to re-check** section, and
+  `docs/CATALOG_DUPLICATES.md` specs why the same card sometimes appears twice — two
+  sources only merge where they share an id — and what to build about it.
+
 ## [0.10.1] — 2026-08-17
 
 Where the next step is, on the two screens that make you look for it.

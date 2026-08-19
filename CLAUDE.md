@@ -28,8 +28,8 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1268 tests** (api 787, shopify 162, tcgplayer 102, sdk 61, tcgcsv 49,
-cardtrader 37, scryfall 28, web 35, db 7), lint/typecheck/format/build clean —
+`main` is green: **1286 tests** (api 790, shopify 162, tcgplayer 102, sdk 61, tcgcsv 49,
+cardtrader 37, web 35, scryfall 28, palworld 15, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
 trusting a remembered total**: several older commits say "990", which was simply
@@ -1625,8 +1625,8 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#137** is on `main` and released as **v0.10.1**, which adds no
-migration on top of 0.10.0 — a clean drop-in. **0.10.0 was the one carrying migrations**
+None. Everything through **#142** is on `main` and released as **v0.10.2**, which adds no
+migration on top of 0.10.1 — a clean drop-in, as 0.10.1 was on 0.10.0. **0.10.0 was the one carrying migrations**
 (`sellout_scope`, then `reactivate_on_restock` + `sellout_drafted_at`), the first since
 0.8.0, applied automatically by the entrypoint.
 
@@ -1676,6 +1676,40 @@ bespoke source would be wasted work.
 the operator linked the sold, unlinked listing through 0.9.1's manual link and then set On
 hand, because **linking credits no stock by design**. Both halves were needed; the second
 is the one easy to forget.
+
+### v0.10.2 (2026-08-19)
+
+Tagged after the "Prepare v0.10.2" merge, carrying #140–#142. **No migration.**
+
+- **`packages/catalog-palworld`** — Bushiroad's own card database, because no marketplace
+  catalogue carries the game: it launched 2026-07-30, TCGPlayer has opened no category, so
+  tcgcsv has nothing to mirror and CardTrader's games do not include it (all three checked
+  live, 2026-08-17). An **undocumented WordPress plugin route** found in the card list's
+  own JavaScript — first-party and unauthenticated, same risk class as tcgcsv's CDN.
+  - **No prices** (a publisher database has no market) and **no cross-references**, so a
+    later tcgcsv ingest will create a _second_ item per card rather than converging —
+    unlike CardTrader, which converges precisely because it publishes `tcg_player_id`.
+    Hence: **search at intake, do not bulk-ingest**, so only stocked cards need
+    reconciling later. That was the operator's own call.
+  - **Simpler than tcgcsv and CardTrader, honestly so.** The whole English catalogue is
+    256 cards, so it reads all of it once: an unscoped search is a fair question, and
+    `fetchById` works from cold — the failure that once broke a live SKU write mid-run
+    cannot occur here. A page cap throws rather than silently reading a fraction.
+  - Live from the built package: 4 sets, 256 cards, search by name and collector number, a
+    resolving image, a `fetchById` round trip, 162 in EBP01, no price anywhere.
+- **The repricing sweep stopped reporting a source that missed** (#141). Five red lines
+  naming sets tcgcsv could not find were all cards **Scryfall priced a moment later** —
+  the passes are a fallback chain. Misses are held and resolved at the end against what
+  was actually priced.
+  - The cause is real and untouched: a Magic card taken in through Scryfall keeps
+    Scryfall's set spelling, and tcgcsv spells the same set `FINAL FANTASY`,
+    `Universes Beyond: Doctor Who`, or splits `Secret Lair Drop` across many groups. The
+    set lookup was documented as safe because "stored names came from that same listing";
+    true while tcgcsv was the only thing creating Magic items — 8,347 of them against 2
+    involving Scryfall.
+- **`docs/CATALOG_DUPLICATES.md`** specs the "some show up twice" report: two sources
+  converge only where they share an id namespace, so detect-and-report first, merge only
+  on the operator's say-so, and consider storing the collector number as prevention.
 
 ### v0.10.1 (2026-08-17)
 

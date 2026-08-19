@@ -11,6 +11,7 @@ import {
 import { createScryfallSource } from '@hub/catalog-scryfall';
 import { createTcgcsvSource } from '@hub/catalog-tcgcsv';
 import { createCardTraderSource } from '@hub/catalog-cardtrader';
+import { createPalworldSource } from '@hub/catalog-palworld';
 import { MinIntervalLimiter, intervalFor } from './rate-limiter';
 
 /**
@@ -204,4 +205,8 @@ const BUNDLED_CATALOG_SOURCES: CatalogSource[] = [
   createScryfallSource(),
   createTcgcsvSource(),
   createCardTraderSource(),
+  // No marketplace catalogue carries Palworld yet (TCGPlayer has opened no
+  // category, so tcgcsv has nothing to mirror). Registered so the game can be
+  // searched and imaged at intake meanwhile.
+  createPalworldSource(),
 ];

@@ -53,6 +53,9 @@ importers:
       '@hub/catalog-cardtrader':
         specifier: workspace:^
         version: link:../../packages/catalog-cardtrader
+      '@hub/catalog-palworld':
+        specifier: workspace:^
+        version: link:../../packages/catalog-palworld
       '@hub/catalog-scryfall':
         specifier: workspace:^
         version: link:../../packages/catalog-scryfall
@@ -190,6 +193,22 @@ importers:
       '@hub/catalog-tcgcsv':
         specifier: workspace:*
         version: link:../catalog-tcgcsv
+      '@hub/connector-sdk':
+        specifier: workspace:*
+        version: link:../connector-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.12))
+
+  packages/catalog-palworld:
+    dependencies:
       '@hub/connector-sdk':
         specifier: workspace:*
         version: link:../connector-sdk

@@ -275,6 +275,32 @@ export class RepriceService {
   ): Promise<ItemPrices> {
     const prices: ItemPrices = new Map();
 
+    /**
+     * Items tcgcsv could not look up, and why — held back rather than reported.
+     *
+     * A source failing to cover an item is **not** a problem with the sweep: the
+     * passes are a fallback chain, and the next one usually prices it. Reported
+     * as it happened, an ordinary hand-off between sources reads as failure —
+     * five red lines saying `tcgcsv has no set named "Final Fantasy"` while
+     * every one of those cards was priced by Scryfall a moment later.
+     *
+     * That is not a tcgcsv fault either. A Magic card taken in through Scryfall
+     * stores **Scryfall's** set spelling, and tcgcsv spells the same set
+     * `FINAL FANTASY`, or `Universes Beyond: Doctor Who`, or splits Scryfall's
+     * one `Secret Lair Drop` across many groups. The set lookup was written
+     * when tcgcsv was the only thing creating Magic items, so stored names were
+     * always its own; intaking Magic from Scryfall broke that assumption.
+     *
+     * So these are resolved at the end, against what was actually priced, and
+     * only genuinely unpriced items are reported.
+     */
+    const strandedByReason = new Map<string, { reason: string; itemIds: string[] }>();
+    const strand = (key: string, reason: string, itemId: string) => {
+      const entry = strandedByReason.get(key) ?? { reason, itemIds: [] };
+      entry.itemIds.push(itemId);
+      strandedByReason.set(key, entry);
+    };
+
     // ---- tcgcsv: whole set files for the sets the ledger holds -------------
     const tcgcsvItems = [...catalogItems.entries()].filter(
       ([, ci]) => ci.refs.has('tcgcsv') || ci.refs.has('tcgplayer'),
@@ -287,12 +313,17 @@ export class RepriceService {
 
       // Which set files to read, and for which games.
       const neededSets = new Map<string, { game: string; setName: string }>();
+      // Which items wait on which set, so a set that cannot be found is judged
+      // by what those items were finally priced at rather than on the spot.
+      const itemsBySet = new Map<string, string[]>();
       for (const [id, ci] of tcgcsvItems) {
         if (!ci.game || !ci.setName) {
-          report.problems.push(`Item ${id} has no game/set recorded; cannot price via tcgcsv.`);
+          strand('no-set-recorded', 'no game or set is recorded against them', id);
           continue;
         }
-        neededSets.set(`${ci.game} ${ci.setName}`, { game: ci.game, setName: ci.setName });
+        const key = `${ci.game} ${ci.setName}`;
+        neededSets.set(key, { game: ci.game, setName: ci.setName });
+        itemsBySet.set(key, [...(itemsBySet.get(key) ?? []), id]);
       }
 
       const setIds = new Map<string, string>();
@@ -313,7 +344,9 @@ export class RepriceService {
       for (const [key, { game, setName }] of neededSets) {
         const setId = setIds.get(key);
         if (!setId) {
-          report.problems.push(`tcgcsv has no set named "${setName}" for "${game}".`);
+          for (const itemId of itemsBySet.get(key) ?? []) {
+            strand(key, `tcgcsv has no set named "${setName}" for "${game}"`, itemId);
+          }
           continue;
         }
         try {
@@ -373,6 +406,19 @@ export class RepriceService {
           report.problems.push(`scryfall ${ci.refs.get('scryfall')}: ${(error as Error).message}`);
         }
       }
+    }
+
+    // ---- what nothing could price ------------------------------------------
+    //
+    // Now, and only now: a source that could not cover an item is reported
+    // solely where no later source covered it either. Everything else was a
+    // hand-off working as designed.
+    for (const { reason, itemIds } of strandedByReason.values()) {
+      const stranded = itemIds.filter((id) => !prices.has(id));
+      if (stranded.length === 0) continue;
+      report.problems.push(
+        `${stranded.length} item(s) could not be priced by any source: ${reason}.`,
+      );
     }
 
     return prices;

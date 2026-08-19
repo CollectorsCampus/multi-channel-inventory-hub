@@ -1642,13 +1642,26 @@ operator's to trigger: their Shopify channel has `draftAtSellout` off, which is 
 `reactivateOnRestock` cannot have been exercised (it needs a listing the hub drafted and
 then restocked).
 
-**Backlog, in the operator's words:** improve matching on the `/match` page; and a public
-in-store kiosk page — search in-stock singles and show prices, for a tablet on the counter.
-The kiosk's deployment question is **settled: a separate tunnel and hostname**, not a
-separate container. The data is already public (those prices are on the storefront), so the
-concern is not confidentiality but an unauthenticated route sharing an origin with the
-admin app; a second hostname routing only to the kiosk path buys that isolation without a
-second container needing the same database.
+**Backlog, in the operator's words.** The in-store kiosk is **shelved**: the storefront
+already does this, so they will improve its own page design and filtering instead — which
+also removes the unauthenticated-route question entirely. What is left:
+
+- **Improve matching on the `/match` page.** Still the largest item.
+- **Inventory screen**: select several conditions at once; sort by price within the
+  channels column; and select several items and add them all to a channel in one go,
+  priced at the current market figure. That last one needs a market price at the moment
+  of allocation, which is `MarketPrice` — latest-only, so an item the sweep has never
+  priced has nothing to use, and the flow has to say so rather than allocate at null.
+- **Repricing: split `autoApplyMaxPct` into separate up and down thresholds.** The risks
+  are not symmetric — a price rising on its own costs a sale, a price falling on its own
+  costs margin — so one number cannot express the operator's real tolerance. Note the
+  parser is the one CodeQL caught a prototype-pollution bug in, so any new key goes
+  through the closed vocabulary, not the request object.
+- **Catalogue duplicates**, specced in [docs/CATALOG_DUPLICATES.md](docs/CATALOG_DUPLICATES.md):
+  detect and report first, merge only on the operator's say-so, and consider storing the
+  collector number to prevent most of them.
+- **Re-check tcgcsv for Palworld.** Now less urgent — `catalog-palworld` reads Bushiroad's
+  own database — but tcgcsv arriving is still what brings prices and convergence.
 
 **No catalogue carries the Palworld TCG yet** (checked 2026-08-17). It launched 2026-07-30,
 and TCGPlayer has no category for it — so tcgcsv, which mirrors them, has nothing to

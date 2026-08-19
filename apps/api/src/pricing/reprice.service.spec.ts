@@ -81,12 +81,78 @@ function buildService(source: CatalogSource) {
   );
 }
 
+/**
+ * tcgcsv that knows a set by a *different* name, beside a scryfall that prices
+ * the card. The real shape behind "tcgcsv has no set named Final Fantasy": a
+ * Magic card taken in through Scryfall stores Scryfall's spelling, and tcgcsv
+ * spells the same set `FINAL FANTASY`.
+ */
+function fakeBothSources(options: { scryfallPrice?: number }): CatalogSource[] {
+  const tcgcsv = {
+    key: 'tcgcsv',
+    displayName: 'tcgcsv',
+    async search() {
+      return [];
+    },
+    async listSets() {
+      // Deliberately not 'Test Set' — the divergence under test.
+      return [{ setId: '3:100', name: 'TEST SET', game: 'Pokemon' }];
+    },
+    async fetchSet() {
+      return [];
+    },
+  } as unknown as CatalogSource;
+
+  const scryfall = {
+    key: 'scryfall',
+    displayName: 'Scryfall',
+    async search() {
+      return [];
+    },
+    async fetchById() {
+      if (options.scryfallPrice === undefined) return null;
+      return {
+        sourceId: 'scry-1',
+        name: 'Pikachu ex',
+        externalIds: { scryfall: 'scry-1' },
+        pricesByPrinting: { NORMAL: options.scryfallPrice },
+      };
+    },
+  } as unknown as CatalogSource;
+
+  return [tcgcsv, scryfall];
+}
+
+function buildWithSources(sources: CatalogSource[]) {
+  const byKey = new Map(sources.map((s) => [s.key, s]));
+  const registry = {
+    has: (key: string) => byKey.has(key),
+    get: (key: string) => byKey.get(key),
+  } as unknown as CatalogSourceRegistry;
+  const credentials = {
+    loadSecrets: async () => ({}),
+  } as unknown as CatalogCredentialsService;
+  enqueue = vi.fn(async () => {});
+  raiseFlag = vi.fn(async () => ({ id: 'a', occurrences: 1 }));
+  clearFlag = vi.fn(async () => true);
+
+  return new RepriceService(
+    prisma as unknown as PrismaService,
+    registry,
+    credentials,
+    { enqueue } as unknown as OutboundQueue,
+    { raiseFlag, clearFlag } as unknown as AlertsService,
+  );
+}
+
 async function seed(options: {
   condition?: string;
   printing?: string;
   price?: number | null;
   policy?: RepricingPolicy;
   quantityOnHand?: number;
+  /** Adds a scryfall ref, so the scryfall pass can pick the item up. */
+  scryfallId?: string;
 }) {
   const item = await prisma.catalogItem.create({
     data: {
@@ -98,6 +164,7 @@ async function seed(options: {
         create: [
           { source: 'tcgcsv', externalId: TCGCSV_ID },
           { source: 'tcgplayer', externalId: TCGCSV_ID },
+          ...(options.scryfallId ? [{ source: 'scryfall', externalId: options.scryfallId }] : []),
         ],
       },
     },
@@ -154,6 +221,47 @@ describeDb('RepriceService', () => {
     await prisma.catalogExternalRef.deleteMany();
     await prisma.catalogItem.deleteMany();
     await prisma.channelInstance.deleteMany();
+  });
+
+  /**
+   * The five red lines the operator saw, and why they were noise.
+   *
+   * A source that cannot cover an item is not a failure of the sweep — the
+   * passes are a fallback chain. Reported as it happens, an ordinary hand-off
+   * between sources reads as five problems about cards that were priced a
+   * moment later.
+   */
+  describe('a set one source cannot name', () => {
+    it('says nothing when a later source prices the item anyway', async () => {
+      const { catalogItemId } = await seed({ scryfallId: 'scry-1' });
+      service = buildWithSources(fakeBothSources({ scryfallPrice: 1234 }));
+
+      const report = await service.sweep();
+
+      expect(report.problems).toEqual([]);
+      const row = await prisma.marketPrice.findUniqueOrThrow({
+        where: {
+          catalogItemId_source_printing: {
+            catalogItemId,
+            source: 'scryfall',
+            printing: 'NORMAL',
+          },
+        },
+      });
+      expect(row.price).toBe(1234);
+    });
+
+    /** The other direction: genuinely unpriced is still reported, and counted. */
+    it('reports the item when nothing else covers it either', async () => {
+      await seed({ scryfallId: 'scry-1' });
+      service = buildWithSources(fakeBothSources({}));
+
+      const report = await service.sweep();
+
+      expect(report.problems).toHaveLength(1);
+      expect(report.problems[0]).toMatch(/1 item\(s\) could not be priced by any source/);
+      expect(report.problems[0]).toMatch(/no set named "Test Set" for "Pokemon"/);
+    });
   });
 
   it('records the market figure with the previous kept for was/now', async () => {

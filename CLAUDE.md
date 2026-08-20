@@ -1679,7 +1679,18 @@ is the one easy to forget.
 
 ### v0.10.2 (2026-08-19)
 
-Tagged after the "Prepare v0.10.2" merge, carrying #140–#142. **No migration.**
+Tagged after the "Prepare v0.10.2" merge (#143), carrying #140–#142. Tags `0.10.2`, `0.10`
+and `latest` all at digest `sha256:90d50e14…`, replacing 0.10.1's `sha256:0de03547…`.
+**No migration** — a clean drop-in on 0.10.1.
+
+Verified the established way. Anonymously: three tags at the one digest, with real
+`linux/amd64` and `linux/arm64` children. Inside the pulled artifact: version 0.10.2,
+`packages/catalog-palworld/dist` present, the source registered in the built registry, the
+reprice fix in the built `reprice.service.js`, zero compiled specs (the 0.10.1 fix holding),
+and `--prod` held. Booted clean and logged
+**`Registered catalog source(s): scryfall, tcgcsv, cardtrader, palworld`** — which is the
+registration proven in the artifact rather than asserted — reporting `info.version: 0.10.2`
+with 71 paths.
 
 - **`packages/catalog-palworld`** — Bushiroad's own card database, because no marketplace
   catalogue carries the game: it launched 2026-07-30, TCGPlayer has opened no category, so

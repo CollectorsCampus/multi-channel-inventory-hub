@@ -81,6 +81,12 @@ export default tseslint.config(
 
   {
     files: ['**/*.config.*', '**/scripts/**', '**/*.test.ts', '**/*.spec.ts'],
+    // Build and repo scripts run under Node with no bundler and no `types`
+    // entry to lean on, so the globals have to be declared here rather than
+    // inferred. Without this a plain `console.error` in a script is an error.
+    languageOptions: {
+      globals: { console: 'readonly', process: 'readonly' },
+    },
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
     },

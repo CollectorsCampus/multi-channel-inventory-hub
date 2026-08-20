@@ -2007,6 +2007,21 @@ Decisions worth not re-deriving:
   pnpm compares against the override-rewritten specifier. The ioredis 6 (RESP3 under the
   queue layer) and react-table 9 (`useReactTable` deleted) majors are on the ignore list,
   assessed and deliberately deferred; security updates still override.
+- **`pnpm.overrides` is on borrowed time, and `pnpm check:overrides` is the alarm**
+  (2026-08-20). pnpm 9.15.4 now warns that the `pnpm` field in `package.json` "is no
+  longer read". **It still reads it** — an install under that warning rewrote the lockfile
+  for #142 with all four overrides intact, and the resolved tree satisfies every pin. So
+  there is nothing broken today.
+  - **Moving them to `pnpm-workspace.yaml` does not work under pnpm 9**, tested rather
+    than assumed: relocating `fastify@5` alone and re-resolving dropped it from the
+    lockfile's `overrides` block entirely. So they stay in `package.json` until the pnpm
+    10 upgrade moves them deliberately — and that upgrade must verify the pins afterwards,
+    not just that the install succeeded.
+  - The failure mode is the dangerous kind: an install regenerates the lockfile without
+    them, every advisory quietly returns, and **CI stays green** because nothing else
+    asserts which versions resolved. `scripts/check-overrides.mjs` runs in the build job
+    before anything is compiled and fails on a missing _or_ drifted override. It has no
+    dependencies, so it cannot be broken by the resolution problem it detects.
 - **The fast-iteration dev instance built this release**: Vite HMR on 5173 + watch-mode
   API on 3005 against a throwaway `hub_dev` DB, workers off, fake channel credentials —
   see the untracked memory notes. UI changes were verified live in seconds; the syslog

@@ -219,7 +219,7 @@ export function InventoryListPage() {
 
   const query = useInventoryList({
     search: search.search,
-    condition: search.condition,
+    ...(search.condition?.length ? { condition: search.condition } : {}),
     // Same shape as the channel filter below: a named game is an equality
     // filter, "none" is the opposite question.
     ...(search.game === NO_GAME ? { noGame: true } : search.game ? { game: search.game } : {}),
@@ -348,22 +348,38 @@ export function InventoryListPage() {
           onChange={(e) => setSearchDraft(e.target.value)}
           aria-label="Search inventory by name"
         />
-        <select
-          value={search.condition ?? ''}
-          aria-label="Filter by condition"
-          onChange={(e) =>
-            void navigate({
-              search: (prev) => ({ ...prev, condition: e.target.value || undefined, page: 1 }),
-            })
-          }
-        >
-          <option value="">Any condition</option>
-          {SKU_CONDITIONS.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+        {/* Toggle chips rather than a `<select multiple>`, which needs a
+            modifier key nobody discovers and shows its selection badly at this
+            size. Seven short tokens fit the filter row, and each is one click.
+            No "Any" chip: none selected already means every condition, and a
+            chip that has to be deselected to widen the filter reads backwards. */}
+        <span className="chips filter-chips" role="group" aria-label="Filter by condition">
+          {SKU_CONDITIONS.map((c) => {
+            const on = (search.condition ?? []).includes(c);
+            return (
+              <button
+                key={c}
+                type="button"
+                className={`chip chip-toggle${on ? ' chip-on' : ''}`}
+                aria-pressed={on}
+                onClick={() =>
+                  void navigate({
+                    // Typed explicitly: this is the first handler here that
+                    // *reads* a previous value rather than only spreading, and
+                    // the router types `prev` as possibly empty.
+                    search: (prev: InventorySearch) => {
+                      const current = prev.condition ?? [];
+                      const next = on ? current.filter((v: string) => v !== c) : [...current, c];
+                      return { ...prev, condition: next.length > 0 ? next : undefined, page: 1 };
+                    },
+                  })
+                }
+              >
+                {c}
+              </button>
+            );
+          })}
+        </span>
 
         {/* Games the ledger actually holds, so no option can return nothing.
             The null bucket is offered only when something is in it — a store
@@ -558,7 +574,7 @@ export function InventoryListPage() {
             {!query.isLoading && table.getRowModel().rows.length === 0 && (
               <tr>
                 <td colSpan={columns.length} className="empty">
-                  {search.search || search.condition || search.channel
+                  {search.search || search.condition?.length || search.channel
                     ? 'No items match those filters.'
                     : 'No inventory yet. Add your first item above.'}
                 </td>

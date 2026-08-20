@@ -47,10 +47,27 @@ export class ListInventoryQueryDto {
   @MaxLength(200)
   setName?: string;
 
-  @ApiPropertyOptional({ enum: SKU_CONDITIONS })
+  @ApiPropertyOptional({
+    enum: SKU_CONDITIONS,
+    isArray: true,
+    description:
+      'One condition, or several comma-separated (`NM,LP`). A single value is still a single ' +
+      'value, so existing callers and bookmarked URLs are unaffected. Every entry must be a ' +
+      'known condition — these become a database filter, and an unrecognised one could only ' +
+      'ever return nothing while looking like a working filter.',
+  })
   @IsOptional()
-  @IsIn(SKU_CONDITIONS as unknown as string[])
-  condition?: string;
+  @Transform(({ value }) =>
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map((v) => v.trim())
+          .filter((v) => v !== '')
+      : value,
+  )
+  @IsArray()
+  @IsIn(SKU_CONDITIONS as unknown as string[], { each: true })
+  condition?: string[];
 
   @ApiPropertyOptional({ description: 'Only items allocated to this channel.' })
   @IsOptional()

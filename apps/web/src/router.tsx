@@ -10,6 +10,7 @@ import { ListOnChannelPage } from './pages/ListOnChannelPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { QueryConsolePage } from './pages/QueryConsolePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { SKU_CONDITIONS } from './constants';
 
 /**
  * Code-based routes rather than the file-based convention.
@@ -29,7 +30,8 @@ const rootRoute = createRootRoute({
 
 export interface InventorySearch {
   search?: string;
-  condition?: string;
+  /** Several conditions at once. A single one is a list of one. */
+  condition?: string[];
   /** A game, or the sentinel below for items that have none. */
   game?: string;
   /**
@@ -75,6 +77,28 @@ export const NO_CHANNEL = 'none';
  */
 export const NO_GAME = 'none';
 
+/**
+ * The conditions named in a URL, dropping anything unrecognised.
+ *
+ * Unknown values are not merely useless — a filter that silently returns
+ * nothing reads as a broken page rather than as a filter. Dropping them means
+ * a mangled URL shows more than intended rather than less, which is the same
+ * direction every other param here fails in.
+ */
+function parseConditions(raw: unknown): string[] | undefined {
+  const parts =
+    typeof raw === 'string'
+      ? raw.split(',')
+      : Array.isArray(raw)
+        ? raw.flatMap((v) => (typeof v === 'string' ? v.split(',') : []))
+        : [];
+
+  const known = parts
+    .map((v) => v.trim())
+    .filter((v) => (SKU_CONDITIONS as readonly string[]).includes(v));
+  return known.length > 0 ? [...new Set(known)] : undefined;
+}
+
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
@@ -92,7 +116,10 @@ const indexRoute = createRoute({
 
     return {
       search: typeof raw.search === 'string' && raw.search ? raw.search : undefined,
-      condition: typeof raw.condition === 'string' && raw.condition ? raw.condition : undefined,
+      // Comma-separated in the URL so a filtered view stays shareable as one
+      // param, and narrowed to the known vocabulary — these reach a database
+      // filter, and search params are user input.
+      condition: parseConditions(raw.condition),
       game: typeof raw.game === 'string' && raw.game ? raw.game : undefined,
       // Dropped without a game, so a hand-edited URL cannot leave a set filter
       // applied with no visible control saying so.

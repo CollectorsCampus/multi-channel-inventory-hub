@@ -150,8 +150,10 @@ export class UpdateChannelDto {
     description:
       'How this channel turns market prices into asking prices: enabled, conditionPercents ' +
       '(percent of market per condition — nothing is repriced for an undeclared condition), ' +
-      'rounding ("none" | "99"), floorCents, autoApplyMaxPct (bigger moves queue for review; ' +
-      'absent means everything reviews), minDeltaCents. Replaced wholesale. Malformed parts ' +
+      'rounding ("none" | "99"), floorCents, autoApplyMaxUpPct and autoApplyMaxDownPct (bigger ' +
+      'moves queue for review; absent means that direction reviews everything, and the older ' +
+      'single autoApplyMaxPct is still read as the fallback for either), minDeltaCents. ' +
+      'Replaced wholesale. Malformed parts ' +
       'are dropped on read, so what round-trips is what applies.',
   })
   @IsOptional()

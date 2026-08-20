@@ -21,10 +21,19 @@ import { SKU_CONDITIONS, decodeJson } from '@hub/db';
  * ## Auto against review
  *
  * The operator's own framing: reprice automatically, but a huge change gets
- * confirmed by a human. `autoApplyMaxPct` is that line. It is **absent by
- * default**, and an absent line means *everything* goes to review — the safe
- * reading of "not configured", since the alternative silently moves prices on
- * a live storefront.
+ * confirmed by a human. That line is **two** numbers, not one, because the
+ * risks are not symmetric: a price rising on its own loses a sale, a price
+ * falling on its own gives away margin, and one tolerance cannot express both.
+ * `autoApplyMaxUpPct` and `autoApplyMaxDownPct` are those lines.
+ *
+ * Both are **absent by default**, and an absent line means *everything* in that
+ * direction goes to review — the safe reading of "not configured", since the
+ * alternative silently moves prices on a live storefront.
+ *
+ * `autoApplyMaxPct` is the single threshold this began as, kept as the fallback
+ * for either direction that has no line of its own. Policies stored before the
+ * split keep behaving exactly as they did, and re-saving one through the UI
+ * writes the pair.
  */
 
 export interface RepricingPolicy {
@@ -43,10 +52,24 @@ export interface RepricingPolicy {
   /** Never price below this, in cents. */
   floorCents?: number;
   /**
-   * Largest percentage move (relative to the current price) applied without a
-   * human. Absent means every change is queued for review.
+   * Largest percentage move applied without a human, for either direction.
+   *
+   * The original single threshold, now a **fallback**: it applies to whichever
+   * direction has no line of its own, so a policy written before the split is
+   * unchanged. New policies should set the pair below instead.
    */
   autoApplyMaxPct?: number;
+  /**
+   * Largest **increase** (relative to the current price) applied without a
+   * human. Falls back to {@link autoApplyMaxPct}; absent from both means every
+   * rise is queued for review.
+   */
+  autoApplyMaxUpPct?: number;
+  /**
+   * Largest **decrease** applied without a human. Falls back to
+   * {@link autoApplyMaxPct}; absent from both means every drop is queued.
+   */
+  autoApplyMaxDownPct?: number;
   /** Ignore moves smaller than this many cents, so prices do not churn. */
   minDeltaCents?: number;
   /**
@@ -119,6 +142,12 @@ export function parseRepricingPolicy(raw: string | null | undefined): RepricingP
   const autoPct = asFiniteNumber(decoded.autoApplyMaxPct);
   if (autoPct !== undefined && autoPct >= 0) policy.autoApplyMaxPct = autoPct;
 
+  const upPct = asFiniteNumber(decoded.autoApplyMaxUpPct);
+  if (upPct !== undefined && upPct >= 0) policy.autoApplyMaxUpPct = upPct;
+
+  const downPct = asFiniteNumber(decoded.autoApplyMaxDownPct);
+  if (downPct !== undefined && downPct >= 0) policy.autoApplyMaxDownPct = downPct;
+
   const minDelta = asFiniteNumber(decoded.minDeltaCents);
   if (minDelta !== undefined && minDelta >= 0) policy.minDeltaCents = Math.round(minDelta);
 
@@ -133,6 +162,10 @@ export function encodeRepricingPolicy(policy: RepricingPolicy): string {
   if (policy.rounding !== undefined) stored.rounding = policy.rounding;
   if (policy.floorCents !== undefined) stored.floorCents = policy.floorCents;
   if (policy.autoApplyMaxPct !== undefined) stored.autoApplyMaxPct = policy.autoApplyMaxPct;
+  if (policy.autoApplyMaxUpPct !== undefined) stored.autoApplyMaxUpPct = policy.autoApplyMaxUpPct;
+  if (policy.autoApplyMaxDownPct !== undefined) {
+    stored.autoApplyMaxDownPct = policy.autoApplyMaxDownPct;
+  }
   if (policy.minDeltaCents !== undefined) stored.minDeltaCents = policy.minDeltaCents;
   if (policy.inStockOnly !== undefined) stored.inStockOnly = policy.inStockOnly;
   return JSON.stringify(stored);
@@ -197,8 +230,8 @@ export type RepriceAction = 'skip' | 'auto' | 'review';
  *   base to measure "how big is this change" against, and first-pricing a live
  *   listing is exactly the kind of move a human should see.
  * - Otherwise the move's size relative to the current price decides, against
- *   `autoApplyMaxPct` — absent means review, the safe reading of
- *   "not configured".
+ *   the limit **for its own direction** — absent means review, the safe reading
+ *   of "not configured".
  */
 export function classifyChange(
   policy: RepricingPolicy,
@@ -216,11 +249,36 @@ export function classifyChange(
   }
 
   const deltaPct = (delta / currentCents) * 100;
+  // Which way it moves decides which tolerance applies. `delta` above is an
+  // absolute size and stays that way — the sign is a separate question from
+  // how big the move is, and conflating them is how a "10%" limit quietly
+  // becomes asymmetric by accident.
+  const limits = autoApplyLimits(policy);
+  const limit = targetCents > currentCents ? limits.up : limits.down;
 
-  if (policy.autoApplyMaxPct !== undefined && deltaPct <= policy.autoApplyMaxPct) {
+  if (limit !== undefined && deltaPct <= limit) {
     return { action: 'auto', deltaPct };
   }
   return { action: 'review', deltaPct };
+}
+
+/**
+ * The effective auto-apply tolerance in each direction.
+ *
+ * One place resolves the fallback, so the sweep, the UI and anything reading a
+ * policy cannot disagree about what a stored `autoApplyMaxPct` means. A
+ * direction with no line of its own inherits the single legacy threshold, and a
+ * direction with neither is `undefined` — which every caller must read as
+ * "review everything", never as "no limit".
+ */
+export function autoApplyLimits(policy: RepricingPolicy): {
+  up: number | undefined;
+  down: number | undefined;
+} {
+  return {
+    up: policy.autoApplyMaxUpPct ?? policy.autoApplyMaxPct,
+    down: policy.autoApplyMaxDownPct ?? policy.autoApplyMaxPct,
+  };
 }
 
 /** How the number was arrived at, in the operator's terms — stored on the proposal. */

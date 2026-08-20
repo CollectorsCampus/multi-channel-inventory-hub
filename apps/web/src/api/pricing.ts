@@ -13,7 +13,16 @@ export interface RepricingPolicy {
   conditionPercents?: Record<string, number>;
   rounding?: 'none' | '99';
   floorCents?: number;
+  /**
+   * The single threshold this began as. Still read, as the fallback for a
+   * direction with no line of its own, so a policy stored before the split is
+   * unchanged — but the form writes the pair below instead.
+   */
   autoApplyMaxPct?: number;
+  /** Largest rise applied without a human. Absent (and no fallback) reviews all. */
+  autoApplyMaxUpPct?: number;
+  /** Largest drop applied without a human. Absent (and no fallback) reviews all. */
+  autoApplyMaxDownPct?: number;
   minDeltaCents?: number;
   /** Only reprice items with stock on hand; market figures are still recorded. */
   inStockOnly?: boolean;

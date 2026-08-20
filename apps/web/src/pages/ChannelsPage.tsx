@@ -1827,8 +1827,20 @@ function Repricing({ channel }: { channel: Channel }) {
   const [floor, setFloor] = useState(
     stored.floorCents != null ? String(stored.floorCents / 100) : '',
   );
-  const [autoPct, setAutoPct] = useState(
-    stored.autoApplyMaxPct != null ? String(stored.autoApplyMaxPct) : '',
+  // Pre-filled from the *effective* limit in each direction, so a policy stored
+  // before the split shows the number it is actually enforcing rather than two
+  // blanks that would read as "reviews everything". Saving then writes the pair
+  // and drops the legacy field, so a policy migrates the first time it is
+  // touched — without a migration, since this is a JSON column.
+  const [autoUpPct, setAutoUpPct] = useState(
+    (stored.autoApplyMaxUpPct ?? stored.autoApplyMaxPct) != null
+      ? String(stored.autoApplyMaxUpPct ?? stored.autoApplyMaxPct)
+      : '',
+  );
+  const [autoDownPct, setAutoDownPct] = useState(
+    (stored.autoApplyMaxDownPct ?? stored.autoApplyMaxPct) != null
+      ? String(stored.autoApplyMaxDownPct ?? stored.autoApplyMaxPct)
+      : '',
   );
   const [inStockOnly, setInStockOnly] = useState(stored.inStockOnly ?? false);
 
@@ -1852,7 +1864,8 @@ function Repricing({ channel }: { channel: Channel }) {
         conditionPercents,
         rounding,
         ...(floor.trim() !== '' ? { floorCents: Math.round(Number(floor) * 100) } : {}),
-        ...(autoPct.trim() !== '' ? { autoApplyMaxPct: Number(autoPct) } : {}),
+        ...(autoUpPct.trim() !== '' ? { autoApplyMaxUpPct: Number(autoUpPct) } : {}),
+        ...(autoDownPct.trim() !== '' ? { autoApplyMaxDownPct: Number(autoDownPct) } : {}),
         inStockOnly,
       },
     });
@@ -1927,14 +1940,27 @@ function Repricing({ channel }: { channel: Channel }) {
           onChange={(e) => setFloor(e.target.value)}
         />
 
-        <label htmlFor={`autopct-${channel.id}`}>Auto-apply up to %</label>
+        {/* Two lines, not one: a price rising on its own loses a sale, one
+            falling on its own gives away margin, and a single tolerance cannot
+            express both. Blank means that direction always reviews. */}
+        <label htmlFor={`autoup-${channel.id}`}>Auto-apply rises up to %</label>
         <input
-          id={`autopct-${channel.id}`}
+          id={`autoup-${channel.id}`}
           type="number"
           min={0}
           placeholder="review all"
-          value={autoPct}
-          onChange={(e) => setAutoPct(e.target.value)}
+          value={autoUpPct}
+          onChange={(e) => setAutoUpPct(e.target.value)}
+        />
+
+        <label htmlFor={`autodown-${channel.id}`}>Auto-apply drops up to %</label>
+        <input
+          id={`autodown-${channel.id}`}
+          type="number"
+          min={0}
+          placeholder="review all"
+          value={autoDownPct}
+          onChange={(e) => setAutoDownPct(e.target.value)}
         />
 
         <label

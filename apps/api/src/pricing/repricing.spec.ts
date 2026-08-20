@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  autoApplyLimits,
   classifyChange,
   describeBasis,
   encodeRepricingPolicy,
@@ -132,6 +133,63 @@ describe('roundTo99', () => {
     // A 40-cent card has no x.99 beneath it; "minus 41 cents" is not rounding.
     expect(roundTo99(40)).toBe(99);
     expect(roundTo99(99)).toBe(99);
+  });
+});
+
+/**
+ * The risks are not symmetric — a price rising on its own loses a sale, one
+ * falling on its own gives away margin — so one tolerance cannot express the
+ * operator's real appetite. These pin that the direction chooses the limit,
+ * and that a policy written before the split is untouched.
+ */
+describe('classifyChange with separate up and down limits', () => {
+  const asymmetric: RepricingPolicy = { autoApplyMaxUpPct: 20, autoApplyMaxDownPct: 5 };
+
+  it('applies each direction against its own line', () => {
+    // +15%: inside the up line of 20, outside the down line of 5.
+    expect(classifyChange(asymmetric, 1000, 1150).action).toBe('auto');
+    // −15%: the same size, and now it is the down line that decides.
+    expect(classifyChange(asymmetric, 1000, 850).action).toBe('review');
+
+    // And the mirror, to prove it is not simply "down always reviews".
+    expect(classifyChange(asymmetric, 1000, 960).action).toBe('auto');
+    expect(classifyChange(asymmetric, 1000, 1250).action).toBe('review');
+  });
+
+  /**
+   * A direction with no line of its own and no legacy threshold reviews
+   * everything. Absent must never read as "no limit" — the whole point of the
+   * default is that an unconfigured policy cannot move a live price.
+   */
+  it('reviews a direction that has no line at all', () => {
+    const upOnly: RepricingPolicy = { autoApplyMaxUpPct: 50 };
+    expect(classifyChange(upOnly, 1000, 1100).action).toBe('auto');
+    expect(classifyChange(upOnly, 1000, 990).action).toBe('review');
+  });
+
+  /**
+   * Every policy stored before the split carries only `autoApplyMaxPct`,
+   * including the operator's live one. It must keep behaving identically.
+   */
+  it('falls back to the single legacy threshold in both directions', () => {
+    const legacy: RepricingPolicy = { autoApplyMaxPct: 10 };
+    expect(classifyChange(legacy, 1000, 1080).action).toBe('auto');
+    expect(classifyChange(legacy, 1000, 920).action).toBe('auto');
+    expect(classifyChange(legacy, 1000, 1200).action).toBe('review');
+    expect(classifyChange(legacy, 1000, 800).action).toBe('review');
+  });
+
+  /** A direction's own line wins over the legacy one where both exist. */
+  it('prefers the direction’s own line to the legacy fallback', () => {
+    const mixed: RepricingPolicy = { autoApplyMaxPct: 10, autoApplyMaxDownPct: 2 };
+    expect(classifyChange(mixed, 1000, 1080).action).toBe('auto');
+    expect(classifyChange(mixed, 1000, 920).action).toBe('review');
+    expect(autoApplyLimits(mixed)).toEqual({ up: 10, down: 2 });
+  });
+
+  it('round-trips both new fields through storage', () => {
+    const policy: RepricingPolicy = { autoApplyMaxUpPct: 20, autoApplyMaxDownPct: 5 };
+    expect(parseRepricingPolicy(encodeRepricingPolicy(policy))).toEqual(policy);
   });
 });
 

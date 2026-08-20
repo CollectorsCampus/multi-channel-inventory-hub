@@ -568,6 +568,101 @@ describeDb('InventoryService', () => {
     });
   });
 
+  /**
+   * Price lives on the allocation, not the item, so ordering rows by it means
+   * choosing one of an item's prices. The lowest is what the item can be had
+   * for — and because Prisma cannot order by a relation aggregate, this takes
+   * its own path through the service, which is what these pin.
+   */
+  describe('sorting by lowest price', () => {
+    async function seedPriced(name: string, prices: Array<number | null>) {
+      const catalogItem = await prisma.catalogItem.create({
+        data: {
+          name,
+          searchName: name.toLowerCase(),
+          skus: { create: [{ condition: 'NM', printing: 'NORMAL', language: 'EN' }] },
+        },
+        include: { skus: true },
+      });
+      const item = await prisma.inventoryItem.create({
+        data: { skuId: catalogItem.skus[0]!.id, quantityOnHand: 1 },
+      });
+      for (const price of prices) {
+        const channel = await seedChannel(`Ch ${name} ${price}`);
+        await prisma.channelAllocation.create({
+          data: {
+            inventoryItemId: item.id,
+            channelInstanceId: channel.id,
+            mode: 'pooled',
+            price,
+          },
+        });
+      }
+      return item.id;
+    }
+
+    it('orders by the cheapest allocation an item has', async () => {
+      await seedPriced('Expensive', [5000]);
+      // Two channels: the lower one is what this item can be had for, so it
+      // must sort below the 5000 item rather than above it on its 9000.
+      await seedPriced('Mixed', [9000, 1000]);
+      await seedPriced('Cheap', [200]);
+
+      const asc = await service.listInventory({ sortBy: 'price', sortDir: 'asc' });
+      expect(asc.items.map((i) => i.name)).toEqual(['Cheap', 'Mixed', 'Expensive']);
+
+      const desc = await service.listInventory({ sortBy: 'price', sortDir: 'desc' });
+      expect(desc.items.map((i) => i.name)).toEqual(['Expensive', 'Mixed', 'Cheap']);
+    });
+
+    /**
+     * An unpriced item has no price, not a price of zero. Paging through them
+     * to reach the cheapest — or the dearest — would be useless either way, so
+     * they go last in both directions.
+     */
+    it('puts items with no price last, whichever way it is sorted', async () => {
+      await seedPriced('Priced', [100]);
+      await seedPriced('Unpriced', [null]);
+      await seedPriced('Unlisted', []);
+
+      const asc = await service.listInventory({ sortBy: 'price', sortDir: 'asc' });
+      expect(asc.items[0]!.name).toBe('Priced');
+      expect(
+        asc.items
+          .slice(1)
+          .map((i) => i.name)
+          .sort(),
+      ).toEqual(['Unlisted', 'Unpriced']);
+
+      const desc = await service.listInventory({ sortBy: 'price', sortDir: 'desc' });
+      expect(desc.items[0]!.name).toBe('Priced');
+    });
+
+    /** Paging must order the whole result set, not each page in isolation. */
+    it('pages through one ordering rather than sorting each page', async () => {
+      for (const [name, price] of [
+        ['A', 500],
+        ['B', 100],
+        ['C', 900],
+        ['D', 300],
+      ] as const) {
+        await seedPriced(name, [price]);
+      }
+
+      const first = await service.listInventory({ sortBy: 'price', sortDir: 'asc', pageSize: 2 });
+      const second = await service.listInventory({
+        sortBy: 'price',
+        sortDir: 'asc',
+        pageSize: 2,
+        page: 2,
+      });
+
+      expect(first.total).toBe(4);
+      expect(first.items.map((i) => i.name)).toEqual(['B', 'D']);
+      expect(second.items.map((i) => i.name)).toEqual(['A', 'C']);
+    });
+  });
+
   describe('listSets', () => {
     async function seedInSet(game: string | null, setName: string | null) {
       const item = await prisma.catalogItem.create({

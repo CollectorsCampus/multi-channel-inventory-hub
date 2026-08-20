@@ -21,7 +21,15 @@ import { ALLOCATION_MODES, SKU_CONDITIONS, STOCK_MOVEMENT_REASONS } from '@hub/d
  * rejected outright.
  */
 
-export const INVENTORY_SORT_FIELDS = ['name', 'quantityOnHand', 'updatedAt', 'condition'] as const;
+export const INVENTORY_SORT_FIELDS = [
+  'name',
+  'quantityOnHand',
+  'updatedAt',
+  'condition',
+  // The lowest asking price across an item's allocations, not a column on the
+  // row — see InventoryService.pageByLowestPrice.
+  'price',
+] as const;
 
 export class ListInventoryQueryDto {
   @ApiPropertyOptional({ description: 'Free-text match against the catalog item name.' })

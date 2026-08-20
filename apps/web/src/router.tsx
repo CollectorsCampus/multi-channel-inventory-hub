@@ -46,11 +46,11 @@ export interface InventorySearch {
   inStock?: boolean;
   page?: number;
   pageSize?: number;
-  sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';
+  sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition' | 'price';
   sortDir?: 'asc' | 'desc';
 }
 
-const SORT_FIELDS = ['name', 'quantityOnHand', 'updatedAt', 'condition'] as const;
+const SORT_FIELDS = ['name', 'quantityOnHand', 'updatedAt', 'condition', 'price'] as const;
 
 /**
  * Page sizes the browser offers, and the only ones it will accept in a URL.

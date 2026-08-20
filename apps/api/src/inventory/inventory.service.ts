@@ -124,6 +124,11 @@ export interface AllocationWrite {
 
 type ItemWithAllocations = Prisma.InventoryItemGetPayload<{ include: { allocations: true } }>;
 
+/** A browse row: the ledger plus the catalog identity the list displays. */
+type ItemWithAllocationsAndCatalog = Prisma.InventoryItemGetPayload<{
+  include: { allocations: true; sku: { include: { catalogItem: true } } };
+}>;
+
 export interface InventoryQuery {
   search?: string;
   game?: string;
@@ -146,7 +151,7 @@ export interface InventoryQuery {
   hasUnallocated?: boolean;
   page?: number;
   pageSize?: number;
-  sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition';
+  sortBy?: 'name' | 'quantityOnHand' | 'updatedAt' | 'condition' | 'price';
   sortDir?: 'asc' | 'desc';
 }
 
@@ -244,9 +249,16 @@ export interface CreateInventoryInput {
   actorUserId?: string;
 }
 
-/** Sort keys are whitelisted by the DTO, so this only has to map them. */
+/**
+ * Sort keys are whitelisted by the DTO, so this only has to map them.
+ *
+ * `price` is deliberately absent: it is not a column on this row but the lowest
+ * asking price across an item's allocations, which Prisma cannot express as a
+ * relation aggregate in `orderBy`. {@link InventoryService.listInventory} takes
+ * its own path for it, and this function is never called with it.
+ */
 function buildOrderBy(
-  sortBy: NonNullable<InventoryQuery['sortBy']>,
+  sortBy: Exclude<NonNullable<InventoryQuery['sortBy']>, 'price'>,
   sortDir: 'asc' | 'desc',
 ): Prisma.InventoryItemOrderByWithRelationInput {
   switch (sortBy) {
@@ -425,18 +437,22 @@ export class InventoryService {
       ...(query.inStock ? { quantityOnHand: { gt: 0 } } : {}),
     };
 
-    const orderBy = buildOrderBy(query.sortBy ?? 'name', query.sortDir ?? 'asc');
+    const sortBy = query.sortBy ?? 'name';
+    const sortDir = query.sortDir ?? 'asc';
 
-    const [total, rows] = await Promise.all([
-      this.prisma.inventoryItem.count({ where }),
-      this.prisma.inventoryItem.findMany({
-        where,
-        orderBy,
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        include: { allocations: true, sku: { include: { catalogItem: true } } },
-      }),
-    ]);
+    const [total, rows] =
+      sortBy === 'price'
+        ? await this.pageByLowestPrice(where, sortDir, page, pageSize)
+        : await Promise.all([
+            this.prisma.inventoryItem.count({ where }),
+            this.prisma.inventoryItem.findMany({
+              where,
+              orderBy: buildOrderBy(sortBy, sortDir),
+              skip: (page - 1) * pageSize,
+              take: pageSize,
+              include: { allocations: true, sku: { include: { catalogItem: true } } },
+            }),
+          ]);
 
     let items = rows.map((row) => ({
       ...toSnapshot(row),
@@ -462,6 +478,66 @@ export class InventoryService {
     }
 
     return { items, total, page, pageSize, pageCount: Math.ceil(total / pageSize) };
+  }
+
+  /**
+   * One page of items ordered by their lowest asking price.
+   *
+   * **Price lives on the allocation, not the item.** An item on two channels
+   * has two prices, so ordering rows by "price" means choosing one, and the
+   * lowest is the honest choice: it is what the item can be had for. The column
+   * header says so, because a single number standing for several is exactly the
+   * kind of thing a reader would otherwise assume is *the* price.
+   *
+   * Prisma cannot order by a relation aggregate, and raw SQL is banned in core
+   * (rule 1), so this reads the ids and their prices for the whole filtered set,
+   * orders them here, and fetches only the page. The extra query selects two
+   * columns over a ledger of hundreds — the same shape `listSets` already has,
+   * and proportionate for a browse endpoint at this scale. **If the ledger ever
+   * reaches tens of thousands of rows this is the thing to replace**, with a
+   * stored lowest-price column maintained by this service, since it is the only
+   * writer of allocation prices.
+   *
+   * Items with no priced allocation sort **last in both directions**. They have
+   * no price rather than a price of zero, and paging through unpriced rows to
+   * reach the cheapest ones would be useless in either order.
+   */
+  private async pageByLowestPrice(
+    where: Prisma.InventoryItemWhereInput,
+    sortDir: 'asc' | 'desc',
+    page: number,
+    pageSize: number,
+  ): Promise<[number, ItemWithAllocationsAndCatalog[]]> {
+    const all = await this.prisma.inventoryItem.findMany({
+      where,
+      select: { id: true, allocations: { select: { price: true } } },
+    });
+
+    const lowest = (prices: Array<{ price: number | null }>): number | null => {
+      const priced = prices.map((p) => p.price).filter((p): p is number => p !== null);
+      return priced.length > 0 ? Math.min(...priced) : null;
+    };
+
+    const ranked = all
+      .map((row) => ({ id: row.id, price: lowest(row.allocations) }))
+      .sort((a, b) => {
+        if (a.price === null && b.price === null) return 0;
+        if (a.price === null) return 1;
+        if (b.price === null) return -1;
+        return sortDir === 'asc' ? a.price - b.price : b.price - a.price;
+      });
+
+    const pageIds = ranked.slice((page - 1) * pageSize, page * pageSize).map((r) => r.id);
+
+    const rows = await this.prisma.inventoryItem.findMany({
+      where: { id: { in: pageIds } },
+      include: { allocations: true, sku: { include: { catalogItem: true } } },
+    });
+
+    // `in` does not preserve order, so the ordering decided above is reapplied
+    // rather than trusted to the database.
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return [all.length, pageIds.flatMap((id) => byId.get(id) ?? [])];
   }
 
   /**

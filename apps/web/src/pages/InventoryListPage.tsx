@@ -172,7 +172,10 @@ function buildColumns(showImages: boolean): ColumnDef<InventoryRow>[] {
     },
     {
       id: 'channels',
-      header: 'Channels',
+      // Named for what it sorts by as well as what it shows: an item on two
+      // channels has two prices, and a header reading just "Channels" would
+      // leave a reader assuming the order came from some single price.
+      header: 'Channels (by lowest price)',
       cell: ({ row }) => {
         const allocations = row.original.allocations;
         if (allocations.length === 0) return <span className="muted">Not listed</span>;
@@ -317,7 +320,7 @@ export function InventoryListPage() {
   const page = search.page ?? 1;
   const pageCount = query.data?.pageCount ?? 0;
 
-  function toggleSort(field: 'name' | 'quantityOnHand' | 'condition') {
+  function toggleSort(field: 'name' | 'quantityOnHand' | 'condition' | 'price') {
     void navigate({
       search: (prev: InventorySearch): InventorySearch => ({
         ...prev,
@@ -530,15 +533,23 @@ export function InventoryListPage() {
               <tr key={group.id}>
                 {group.headers.map((header) => {
                   const id = header.column.id;
-                  const sortable = id === 'name' || id === 'quantityOnHand' || id === 'condition';
-                  const active = (search.sortBy ?? 'name') === id;
+                  // The Channels column shows each allocation's price, so it
+                  // is the one that sorts by price — under a different key,
+                  // because the column is not named for what it orders on.
+                  const sortKey = id === 'channels' ? 'price' : id;
+                  const sortable =
+                    sortKey === 'name' ||
+                    sortKey === 'quantityOnHand' ||
+                    sortKey === 'condition' ||
+                    sortKey === 'price';
+                  const active = (search.sortBy ?? 'name') === sortKey;
                   return (
                     <th key={header.id}>
                       {sortable ? (
                         <button
                           type="button"
                           className="sort"
-                          onClick={() => toggleSort(id as 'name')}
+                          onClick={() => toggleSort(sortKey as 'name')}
                           aria-sort={
                             active
                               ? (search.sortDir ?? 'asc') === 'asc'

@@ -1630,17 +1630,22 @@ migration on top of 0.10.1 — a clean drop-in, as 0.10.1 was on 0.10.0. **0.10.
 (`sellout_scope`, then `reactivate_on_restock` + `sellout_drafted_at`), the first since
 0.8.0, applied automatically by the entrypoint.
 
-**Production is on 0.10.0**: the operator updated the stack and ran the listing-rule
-back-fill over their 462 listings, which is what prompted #137's Apply-button move — the
-first feature in a while whose design was corrected by someone actually using it at scale.
-**Email alerting is live in production and tested by the operator (2026-08-17)**, which
-closes the last standing deployment caveat — the token had to be entered by hand there
-because secrets do not travel with the image.
+**Production is on 0.10.2** (updated 2026-08-20). The operator ran the listing-rule
+back-fill over their 462 listings on 0.10.0, which is what prompted #137's Apply-button
+move — the first feature in a while whose design was corrected by someone actually using
+it at scale. **Email alerting is live in production and tested (2026-08-17)**; the token
+had to be entered by hand there, because secrets do not travel with the image.
 
-**The sold-out policy has still never run against the real storefront**, and it is the
-operator's to trigger: their Shopify channel has `draftAtSellout` off, which is also why
-`reactivateOnRestock` cannot have been exercised (it needs a listing the hub drafted and
-then restocked).
+**`draftAtSellout` is enabled on the live Shopify channel and works** (confirmed by the
+operator, 2026-08-20). That closes the last "never run against the real storefront"
+caveat, which this file carried from v0.7.0 through v0.10.2 — the policy shipped in
+v0.7.0, gained a nightly sweep and a scope setting in v0.10.0, and had until now only ever
+been proven against a copy.
+
+**`reactivateOnRestock` is still unexercised**, and is now merely waiting rather than
+blocked: it is off by default and separate on purpose, and it needs a listing the hub
+itself drafted (the `selloutDraftedAt` stamp) that then comes back into stock. With
+drafting live, that situation will arise on its own.
 
 **Backlog, in the operator's words.** The in-store kiosk is **shelved**: the storefront
 already does this, so they will improve its own page design and filtering instead — which

@@ -1087,6 +1087,35 @@ button.sort {
   color: var(--fixed);
 }
 
+/* A chip that is a filter toggle rather than a label. Muted until chosen, so a
+   row of them reads at a glance as "none of these are on" — which is what an
+   unfiltered table means. */
+.chip-toggle {
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.chip-toggle:hover {
+  color: var(--text);
+}
+
+.chip-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Keeps the condition toggles on one line in the filter row rather than
+   wrapping between the selects around them. */
+.filter-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
 /* An outbound link sitting after a figure it lets you go and check — the
    repricing review's market price. Left margin rather than a gap, because the
    number and the link are one phrase. */

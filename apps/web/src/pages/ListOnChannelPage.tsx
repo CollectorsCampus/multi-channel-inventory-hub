@@ -64,7 +64,9 @@ export function ListOnChannelPage() {
   const inventory = useInventoryList({
     ...(search ? { search } : {}),
     ...(game ? { game } : {}),
-    ...(condition ? { condition } : {}),
+    // One condition here — this screen picks a single one — but the filter
+    // takes a list, so it is a list of one.
+    ...(condition ? { condition: [condition] } : {}),
     page,
     pageSize: 25,
   });

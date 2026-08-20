@@ -127,7 +127,8 @@ type ItemWithAllocations = Prisma.InventoryItemGetPayload<{ include: { allocatio
 export interface InventoryQuery {
   search?: string;
   game?: string;
-  condition?: string;
+  /** Any of these conditions. Empty or absent means every condition. */
+  condition?: string[];
   channelInstanceId?: string;
   /** Items whose catalog item has no game — non-TCG goods, hand-entered rows. */
   noGame?: boolean;
@@ -394,7 +395,7 @@ export class InventoryService {
 
     const where: Prisma.InventoryItemWhereInput = {
       sku: {
-        ...(query.condition ? { condition: query.condition } : {}),
+        ...(query.condition?.length ? { condition: { in: query.condition } } : {}),
         catalogItem: {
           ...(query.search ? { searchName: { contains: query.search.trim().toLowerCase() } } : {}),
           ...(query.game ? { game: query.game } : {}),

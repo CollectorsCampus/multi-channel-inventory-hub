@@ -520,6 +520,54 @@ describeDb('InventoryService', () => {
    * unscoped call is a question nobody asked rather than a request for
    * everything.
    */
+  /**
+   * Several conditions at once, because a seller thinks "show me the played
+   * copies" rather than one grade at a time. A list of one must behave exactly
+   * as the single value did, since every existing URL and caller sends that.
+   */
+  describe('filtering by several conditions', () => {
+    async function seedGraded(condition: string) {
+      const catalogItem = await prisma.catalogItem.create({
+        data: {
+          name: `Card ${condition}`,
+          searchName: 'card',
+          game: 'Pokemon',
+          skus: { create: [{ condition, printing: 'NORMAL', language: 'EN' }] },
+        },
+        include: { skus: true },
+      });
+      return prisma.inventoryItem.create({
+        data: { skuId: catalogItem.skus[0]!.id, quantityOnHand: 1 },
+      });
+    }
+
+    it('returns the union of the conditions asked for', async () => {
+      for (const c of ['NM', 'LP', 'MP', 'DMG']) await seedGraded(c);
+
+      const page = await service.listInventory({ condition: ['LP', 'MP'] });
+
+      expect(page.total).toBe(2);
+      expect(page.items.map((i) => i.condition).sort()).toEqual(['LP', 'MP']);
+    });
+
+    it('treats one condition exactly as the single value did', async () => {
+      for (const c of ['NM', 'LP']) await seedGraded(c);
+
+      const page = await service.listInventory({ condition: ['NM'] });
+
+      expect(page.total).toBe(1);
+      expect(page.items[0]!.condition).toBe('NM');
+    });
+
+    /** Absent, or an empty list, is "every condition" — never "no rows". */
+    it('does not filter when none are given', async () => {
+      for (const c of ['NM', 'LP']) await seedGraded(c);
+
+      expect((await service.listInventory({})).total).toBe(2);
+      expect((await service.listInventory({ condition: [] })).total).toBe(2);
+    });
+  });
+
   describe('listSets', () => {
     async function seedInSet(game: string | null, setName: string | null) {
       const item = await prisma.catalogItem.create({

@@ -105,6 +105,9 @@ export function toCandidate(card: PwCard, imageBase: string): CatalogCandidate |
   const setName = (card.expansion_name ?? '').trim();
   if (setName) candidate.setName = setName;
 
+  const number = (card.card_number ?? '').trim();
+  if (number) candidate.collectorNumber = number;
+
   const picture = (card.picture ?? '').trim();
   if (picture) candidate.imageUrl = `${imageBase.replace(/\/$/, '')}/${picture}`;
 

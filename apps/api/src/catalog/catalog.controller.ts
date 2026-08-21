@@ -5,6 +5,7 @@ import { IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min } from 'clas
 import { RequireRole } from '../auth/decorators';
 import { CatalogService } from './catalog.service';
 import { CatalogMergeService } from './catalog-merge.service';
+import { CatalogDuplicatesService } from './catalog-duplicates.service';
 import { CatalogClearService } from './catalog-clear.service';
 import { CatalogSourceRegistry } from './catalog-source-registry.service';
 import { CatalogCredentialsService } from './catalog-credentials.service';
@@ -117,6 +118,7 @@ export class CatalogController {
   constructor(
     private readonly catalog: CatalogService,
     private readonly merge: CatalogMergeService,
+    private readonly duplicates: CatalogDuplicatesService,
     private readonly clear: CatalogClearService,
     private readonly registry: CatalogSourceRegistry,
     private readonly credentials: CatalogCredentialsService,
@@ -198,6 +200,25 @@ export class CatalogController {
    * allocation beneath. The service therefore validates completely before it
    * writes, and refuses rather than deciding anything about stock.
    */
+  /**
+   * Same-named items whose refs share no namespace — the signature of a
+   * convergence failure, ranked by how sure the evidence is. Feeds the panel
+   * that drives `local/merge`; nothing here writes anything.
+   */
+  @Get('local/duplicates')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Catalog items that look like one product, for the operator to merge or dismiss.',
+    description:
+      'Groups same-named items within a game whose external refs share no namespace — had ' +
+      'they shared one, intake would have converged them. Same-named items with distinct ' +
+      'collector numbers are excluded as reprints rather than offered: merging two real ' +
+      'printings is the split this ledger exists to prevent, in the other direction.',
+  })
+  localDuplicates() {
+    return this.duplicates.findDuplicates();
+  }
+
   @Post('local/merge')
   @RequireRole('admin')
   @ApiOperation({

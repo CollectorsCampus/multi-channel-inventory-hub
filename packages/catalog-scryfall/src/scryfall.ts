@@ -40,6 +40,7 @@ interface ScryfallCard {
   id: string;
   name: string;
   set_name?: string;
+  collector_number?: string;
   lang?: string;
   tcgplayer_id?: number;
   cardmarket_id?: number;
@@ -185,6 +186,9 @@ function toCandidate(card: ScryfallCard): CatalogCandidate {
   };
 
   if (card.set_name) candidate.setName = card.set_name;
+  // Scryfall's `collector_number` is the printed number, verbatim — including
+  // suffixes like `123★`. Kept as-is for cross-source equality.
+  if (card.collector_number) candidate.collectorNumber = card.collector_number;
   if (imageUrl) candidate.imageUrl = imageUrl;
   if (printings.length > 0) candidate.printings = printings;
   if (marketPrice !== undefined) candidate.marketPrice = marketPrice;

@@ -172,6 +172,41 @@ describeDb('CatalogIngestService', () => {
   });
 
   /**
+   * The collector number rides the same fill-empty rule, and the backfill path
+   * is how the whole existing catalogue gets numbers: the column starts null
+   * everywhere, so a re-ingest of an already-held set fills it — and a stored
+   * one is never rewritten, since cross-source equality is the field's whole
+   * job and sources disagree about zero-padding.
+   */
+  it('backfills the collector number on re-ingest, and never rewrites one', async () => {
+    // Created before the field existed, effectively: no number supplied.
+    fetchSet.mockImplementation(async (_ctx: unknown, setId: string) =>
+      setId === '3:1' ? [card({ collectorNumber: undefined })] : [],
+    );
+    await ingest.ingest({ sourceKey: 'tcgcsv' });
+
+    fetchSet.mockImplementation(async (_ctx: unknown, setId: string) =>
+      setId === '3:1' ? [card({ collectorNumber: '013/094' })] : [],
+    );
+    const filled = await ingest.ingest({ sourceKey: 'tcgcsv' });
+    expect(filled.refreshed).toBe(1);
+
+    const item = await prisma.catalogItem.findFirstOrThrow({
+      where: { externalRefs: { some: { source: 'tcgcsv', externalId: '100' } } },
+    });
+    expect(item.collectorNumber).toBe('013/094');
+
+    // A source now spelling it differently must not win.
+    fetchSet.mockImplementation(async (_ctx: unknown, setId: string) =>
+      setId === '3:1' ? [card({ collectorNumber: '13/94' })] : [],
+    );
+    const again = await ingest.ingest({ sourceKey: 'tcgcsv' });
+    expect(again.refreshed).toBe(0);
+    const after = await prisma.catalogItem.findFirstOrThrow({ where: { id: item.id } });
+    expect(after.collectorNumber).toBe('013/094');
+  });
+
+  /**
    * A full-game ingest is minutes of downloads. Discarding all of it because one
    * file 404s would make the feature unusable exactly when a source is flaky.
    */

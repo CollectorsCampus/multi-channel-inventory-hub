@@ -78,6 +78,18 @@ export interface CatalogCandidate {
   printings?: readonly string[];
 
   language?: string;
+
+  /**
+   * The printed collector number ("013/094", "EBP01-001"), verbatim, where the
+   * source publishes one.
+   *
+   * Verbatim matters: sources disagree about zero-padding and separators, and a
+   * source that "tidied" its numbers would break the cross-source equality this
+   * field exists for — it is the strongest signal that two catalogue rows from
+   * different sources are one physical product, which is what duplicate
+   * detection runs on. Only ever unique within a set; never treat it as an id.
+   */
+  collectorNumber?: string;
 }
 
 /**

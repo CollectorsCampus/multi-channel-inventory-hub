@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { PrismaClient } from '@hub/db';
 import type { CatalogSource } from '@hub/connector-sdk';
 import { RepriceService } from './reprice.service';
+import { MarketPriceService } from './market-prices.service';
 import { encodeRepricingPolicy, type RepricingPolicy } from './repricing';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { CatalogSourceRegistry } from '../catalog/catalog-source-registry.service';
@@ -72,10 +73,13 @@ function buildService(source: CatalogSource) {
   raiseFlag = vi.fn(async () => ({ id: 'a', occurrences: 1 }));
   clearFlag = vi.fn(async () => true);
 
+  // A real MarketPriceService over the faked registry, not a stub: which
+  // source a card is priced from is the behaviour these tests are about, and
+  // stubbing it would prove the sweep calls something rather than that it
+  // prices correctly.
   return new RepriceService(
     prisma as unknown as PrismaService,
-    registry,
-    credentials,
+    new MarketPriceService(registry, credentials),
     { enqueue } as unknown as OutboundQueue,
     { raiseFlag, clearFlag } as unknown as AlertsService,
   );
@@ -136,10 +140,13 @@ function buildWithSources(sources: CatalogSource[]) {
   raiseFlag = vi.fn(async () => ({ id: 'a', occurrences: 1 }));
   clearFlag = vi.fn(async () => true);
 
+  // A real MarketPriceService over the faked registry, not a stub: which
+  // source a card is priced from is the behaviour these tests are about, and
+  // stubbing it would prove the sweep calls something rather than that it
+  // prices correctly.
   return new RepriceService(
     prisma as unknown as PrismaService,
-    registry,
-    credentials,
+    new MarketPriceService(registry, credentials),
     { enqueue } as unknown as OutboundQueue,
     { raiseFlag, clearFlag } as unknown as AlertsService,
   );

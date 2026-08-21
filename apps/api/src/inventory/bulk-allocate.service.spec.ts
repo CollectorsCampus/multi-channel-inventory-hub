@@ -78,14 +78,50 @@ async function seedItem(options: {
   return item.id;
 }
 
+/**
+ * A controllable stand-in for the live price fetch. A stub rather than the
+ * real service here — the opposite choice from `reprice.service.spec.ts` —
+ * because these tests are about the *allocation* judgement, and the fetch
+ * itself is covered where it lives. `fetched` records what was asked for, so
+ * a test can also assert the live path was NOT taken.
+ */
+function fakeMarketPrices(liveFigures: Record<string, Record<string, number>> = {}) {
+  const fetched: string[] = [];
+  const marketPrices = {
+    hasPricedSource: () => true,
+    fetchPrices: async (items: Map<string, unknown>) => {
+      fetched.push(...items.keys());
+      const prices = new Map(
+        Object.entries(liveFigures).map(([id, byPrinting]) => [
+          id,
+          new Map(
+            Object.entries(byPrinting).map(([printing, cents]) => [
+              printing,
+              { source: 'tcgcsv', cents },
+            ]),
+          ),
+        ]),
+      );
+      return { prices, problems: [] };
+    },
+  };
+  return { marketPrices, fetched };
+}
+
+function build(liveFigures: Record<string, Record<string, number>> = {}) {
+  const { marketPrices } = fakeMarketPrices(liveFigures);
+  return new BulkAllocateService(
+    prisma as unknown as PrismaService,
+    new InventoryService(prisma as unknown as PrismaService),
+    marketPrices as never,
+  );
+}
+
 describeDb('BulkAllocateService', () => {
   beforeAll(async () => {
     prisma = new PrismaClient({ datasources: { db: { url } } });
     await prisma.$connect();
-    service = new BulkAllocateService(
-      prisma as unknown as PrismaService,
-      new InventoryService(prisma as unknown as PrismaService),
-    );
+    service = build();
   });
 
   afterAll(async () => {
@@ -151,13 +187,55 @@ describeDb('BulkAllocateService', () => {
     expect(row!.marketPrice).toBe(1000);
   });
 
-  it('skips an item no sweep has ever priced', async () => {
-    const unpriced = await seedItem({ name: 'Never swept', condition: 'NM' });
+  /**
+   * The case the live fetch exists for: the sweep only prices allocated items,
+   * so an item going onto its first channel has nothing stored — and on the
+   * operator's own data that was every unlisted item (224 of 224 stored rows
+   * belonged to already-allocated items).
+   */
+  it('prices an unstored item by asking the sources live', async () => {
+    const unpriced = await seedItem({ name: 'First listing', condition: 'LP' });
+    const catalogItemId = (
+      await prisma.inventoryItem.findUniqueOrThrow({
+        where: { id: unpriced },
+        select: { sku: { select: { catalogItemId: true } } },
+      })
+    ).sku.catalogItemId;
+
+    const withLive = build({ [catalogItemId]: { NORMAL: 1000 } });
+    const [row] = await withLive.preview(channelId, [unpriced]);
+
+    // Still the policy's target — 80% for LP — never the raw live figure.
+    expect(row!.marketPrice).toBe(1000);
+    expect(row!.price).toBe(800);
+  });
+
+  it('skips an item no source can price, saying so', async () => {
+    const unpriced = await seedItem({ name: 'Truly unpriceable', condition: 'NM' });
 
     const [row] = await service.preview(channelId, [unpriced]);
 
     expect(row!.price).toBeNull();
-    expect(row!.skipped).toMatch(/no market price recorded/);
+    expect(row!.skipped).toMatch(/no source publishes a price/);
+  });
+
+  /** The stored figure is free and at most a day old; the live path is not. */
+  it('does not ask the sources for an item whose figure is stored', async () => {
+    const stored = await seedItem({
+      name: 'Already swept',
+      condition: 'NM',
+      prices: [{ source: 'tcgcsv', price: 500 }],
+    });
+    const { marketPrices, fetched } = fakeMarketPrices();
+    const spied = new BulkAllocateService(
+      prisma as unknown as PrismaService,
+      new InventoryService(prisma as unknown as PrismaService),
+      marketPrices as never,
+    );
+
+    await spied.preview(channelId, [stored]);
+
+    expect(fetched).toEqual([]);
   });
 
   /**
@@ -175,7 +253,7 @@ describeDb('BulkAllocateService', () => {
     const [row] = await service.preview(channelId, [foil]);
 
     expect(row!.price).toBeNull();
-    expect(row!.skipped).toMatch(/no market price recorded/);
+    expect(row!.skipped).toMatch(/no source publishes a price/);
   });
 
   it('prefers tcgcsv to scryfall, as the repricing sweep does', async () => {

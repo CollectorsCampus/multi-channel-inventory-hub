@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from './inventory.service';
 import { parseRepricingPolicy, targetPrice } from '../pricing/repricing';
+import { MarketPriceService, type PriceableItem } from '../pricing/market-prices.service';
 import { MAX_ITEMS } from '../listings/listing-creation.service';
 
 /**
@@ -35,10 +36,17 @@ import { MAX_ITEMS } from '../listings/listing-creation.service';
  * `deriveSkuDimensions` will not default a condition, and the reason repricing
  * itself never touches an undeclared condition.
  *
- * An item the sweep has never priced is skipped for the same kind of reason:
- * `MarketPrice` is latest-only and populated by the sweep, which visits
- * allocated items, so an unlisted card legitimately has no figure. There is
- * nothing to price it from and inventing one is not an option.
+ * An item with no stored figure — the sweep only prices *allocated* items, so
+ * anything going onto its first channel has none — is priced by asking the
+ * sources live, through the same `MarketPriceService` the sweep itself uses.
+ * Same code, so "what this allocation was created at" and "what the sweep
+ * would say tomorrow" cannot disagree about which source a card follows. Only
+ * an item no source can price is skipped, and the row says so.
+ *
+ * The live figures are deliberately **not** written to `market_prices`: that
+ * table has one writer, the sweep, and a second would make "when was this
+ * figure taken" ambiguous. An item allocated here is swept like any other
+ * allocated item from the next night on.
  *
  * ## Preview first
  *
@@ -86,6 +94,7 @@ export class BulkAllocateService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
+    private readonly marketPrices: MarketPriceService,
   ) {}
 
   /** What {@link allocate} would do, without doing any of it. */
@@ -196,8 +205,11 @@ export class BulkAllocateService {
             printing: true,
             catalogItem: {
               select: {
+                id: true,
                 name: true,
+                game: true,
                 setName: true,
+                externalRefs: { select: { source: true, externalId: true } },
                 marketPrices: {
                   select: { source: true, printing: true, price: true },
                 },
@@ -207,6 +219,27 @@ export class BulkAllocateService {
         },
       },
     });
+
+    // One live fetch for every item with no stored figure, batched: the sweep
+    // only prices allocated items, so a first listing has nothing stored, and
+    // asking per item would read the same tcgcsv set file once per card.
+    const unstored = new Map<string, PriceableItem>();
+    for (const item of items) {
+      const ci = item.sku.catalogItem;
+      const hasStored = ci.marketPrices.some((p) => p.printing === item.sku.printing);
+      if (!hasStored && !unstored.has(ci.id)) {
+        unstored.set(ci.id, {
+          game: ci.game,
+          setName: ci.setName,
+          refs: new Map(ci.externalRefs.map((r) => [r.source, r.externalId])),
+        });
+      }
+    }
+
+    const live =
+      unstored.size > 0 && this.marketPrices.hasPricedSource()
+        ? await this.marketPrices.fetchPrices(unstored)
+        : { prices: new Map(), problems: [] };
 
     const rows = items.map((item): BulkAllocationRow => {
       const { sku } = item;
@@ -232,9 +265,14 @@ export class BulkAllocateService {
       // market is the wrong price with no error, which is why the sweep records
       // figures per printing in the first place.
       const forPrinting = sku.catalogItem.marketPrices.filter((p) => p.printing === sku.printing);
-      const figure = PRICE_SOURCE_ORDER.map((source) =>
+      const stored = PRICE_SOURCE_ORDER.map((source) =>
         forPrinting.find((p) => p.source === source),
       ).find((p) => p !== undefined);
+
+      // Stored first — it costs nothing and is at most a day old — then the
+      // live answer fetched above for whatever had none.
+      const fresh = live.prices.get(sku.catalogItem.id)?.get(sku.printing);
+      const figure = stored ?? (fresh ? { source: fresh.source, price: fresh.cents } : undefined);
 
       if (!figure) {
         return {
@@ -242,7 +280,7 @@ export class BulkAllocateService {
           price: null,
           marketPrice: null,
           source: null,
-          skipped: 'no market price recorded yet — repricing has never priced this item',
+          skipped: 'no source publishes a price for this item',
         };
       }
 

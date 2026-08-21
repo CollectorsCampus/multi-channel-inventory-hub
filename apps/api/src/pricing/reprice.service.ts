@@ -1,9 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { CatalogCtx, CatalogSource } from '@hub/connector-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { CatalogSourceRegistry } from '../catalog/catalog-source-registry.service';
-import { CatalogCredentialsService } from '../catalog/catalog-credentials.service';
-import { MinIntervalLimiter, intervalFor } from '../catalog/rate-limiter';
+import { MarketPriceService, type ItemPrices } from './market-prices.service';
 import { OutboundQueue } from '../queue/outbound-queue.service';
 import { AlertsService } from '../sync/alerts.service';
 import {
@@ -87,17 +85,13 @@ export interface ProposalRow {
 /** Sources that publish prices, in preference order. tcgplayer shares tcgcsv's id space. */
 const PRICED_SOURCES = ['tcgcsv', 'scryfall'] as const;
 
-type ItemPrices = Map<string, Map<string, { source: string; cents: number }>>;
-
 @Injectable()
 export class RepriceService {
   private readonly logger = new Logger(RepriceService.name);
-  private readonly limiter = new MinIntervalLimiter();
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly registry: CatalogSourceRegistry,
-    private readonly credentials: CatalogCredentialsService,
+    private readonly marketPrices: MarketPriceService,
     private readonly outbound: OutboundQueue,
     private readonly alerts: AlertsService,
   ) {}
@@ -128,7 +122,12 @@ export class RepriceService {
     }
     report.itemsConsidered = catalogItems.size;
 
-    const prices = await this.fetchPrices(catalogItems, report);
+    // Delegated: `BulkAllocateService` needs the same answer, and two copies of
+    // "which source prices this card" would diverge the first time either
+    // changed — the sweep then arguing with the price an allocation was created
+    // at, a night after it was created.
+    const { prices, problems } = await this.marketPrices.fetchPrices(catalogItems);
+    report.problems.push(...problems);
     report.pricesRecorded = await this.recordPrices(prices);
 
     await this.reprice(items, prices, report);
@@ -266,164 +265,6 @@ export class RepriceService {
    * Current market figures per catalog item and printing, from the first
    * priced source each item carries a ref for.
    */
-  private async fetchPrices(
-    catalogItems: Map<
-      string,
-      { game: string | null; setName: string | null; refs: Map<string, string> }
-    >,
-    report: SweepReport,
-  ): Promise<ItemPrices> {
-    const prices: ItemPrices = new Map();
-
-    /**
-     * Items tcgcsv could not look up, and why — held back rather than reported.
-     *
-     * A source failing to cover an item is **not** a problem with the sweep: the
-     * passes are a fallback chain, and the next one usually prices it. Reported
-     * as it happened, an ordinary hand-off between sources reads as failure —
-     * five red lines saying `tcgcsv has no set named "Final Fantasy"` while
-     * every one of those cards was priced by Scryfall a moment later.
-     *
-     * That is not a tcgcsv fault either. A Magic card taken in through Scryfall
-     * stores **Scryfall's** set spelling, and tcgcsv spells the same set
-     * `FINAL FANTASY`, or `Universes Beyond: Doctor Who`, or splits Scryfall's
-     * one `Secret Lair Drop` across many groups. The set lookup was written
-     * when tcgcsv was the only thing creating Magic items, so stored names were
-     * always its own; intaking Magic from Scryfall broke that assumption.
-     *
-     * So these are resolved at the end, against what was actually priced, and
-     * only genuinely unpriced items are reported.
-     */
-    const strandedByReason = new Map<string, { reason: string; itemIds: string[] }>();
-    const strand = (key: string, reason: string, itemId: string) => {
-      const entry = strandedByReason.get(key) ?? { reason, itemIds: [] };
-      entry.itemIds.push(itemId);
-      strandedByReason.set(key, entry);
-    };
-
-    // ---- tcgcsv: whole set files for the sets the ledger holds -------------
-    const tcgcsvItems = [...catalogItems.entries()].filter(
-      ([, ci]) => ci.refs.has('tcgcsv') || ci.refs.has('tcgplayer'),
-    );
-
-    if (tcgcsvItems.length > 0 && this.registry.has('tcgcsv')) {
-      const source = this.registry.get('tcgcsv');
-      const ctx = await this.makeCtx(source);
-      const interval = intervalFor(source.rateLimit);
-
-      // Which set files to read, and for which games.
-      const neededSets = new Map<string, { game: string; setName: string }>();
-      // Which items wait on which set, so a set that cannot be found is judged
-      // by what those items were finally priced at rather than on the spot.
-      const itemsBySet = new Map<string, string[]>();
-      for (const [id, ci] of tcgcsvItems) {
-        if (!ci.game || !ci.setName) {
-          strand('no-set-recorded', 'no game or set is recorded against them', id);
-          continue;
-        }
-        const key = `${ci.game} ${ci.setName}`;
-        neededSets.set(key, { game: ci.game, setName: ci.setName });
-        itemsBySet.set(key, [...(itemsBySet.get(key) ?? []), id]);
-      }
-
-      const setIds = new Map<string, string>();
-      const games = [...new Set([...neededSets.values()].map((s) => s.game))];
-      for (const game of games) {
-        try {
-          const sets = await this.limiter.run(source.key, interval, () =>
-            source.listSets!(ctx, game),
-          );
-          for (const set of sets) setIds.set(`${game} ${set.name}`, set.setId);
-        } catch (error) {
-          report.problems.push(`tcgcsv sets for "${game}": ${(error as Error).message}`);
-        }
-      }
-
-      // One id map for the whole source: candidate tcgcsv id -> per-printing cents.
-      const byTcgcsvId = new Map<string, Record<string, number>>();
-      for (const [key, { game, setName }] of neededSets) {
-        const setId = setIds.get(key);
-        if (!setId) {
-          for (const itemId of itemsBySet.get(key) ?? []) {
-            strand(key, `tcgcsv has no set named "${setName}" for "${game}"`, itemId);
-          }
-          continue;
-        }
-        try {
-          const candidates = await this.limiter.run(source.key, interval, () =>
-            source.fetchSet!(ctx, setId),
-          );
-          for (const candidate of candidates) {
-            const id = candidate.externalIds['tcgcsv'] ?? candidate.sourceId;
-            const perPrinting =
-              candidate.pricesByPrinting ??
-              (candidate.marketPrice !== undefined ? { NORMAL: candidate.marketPrice } : undefined);
-            if (perPrinting) byTcgcsvId.set(id, { ...perPrinting });
-          }
-        } catch (error) {
-          report.problems.push(`tcgcsv set "${setName}": ${(error as Error).message}`);
-        }
-      }
-
-      for (const [id, ci] of tcgcsvItems) {
-        const refId = ci.refs.get('tcgcsv') ?? ci.refs.get('tcgplayer')!;
-        const perPrinting = byTcgcsvId.get(refId);
-        if (!perPrinting) continue;
-        const forItem = prices.get(id) ?? new Map();
-        for (const [printing, cents] of Object.entries(perPrinting)) {
-          forItem.set(printing, { source: 'tcgcsv', cents });
-        }
-        prices.set(id, forItem);
-      }
-    }
-
-    // ---- scryfall: per card, only where tcgcsv had nothing -----------------
-    const scryfallItems = [...catalogItems.entries()].filter(
-      ([id, ci]) => !prices.has(id) && ci.refs.has('scryfall'),
-    );
-
-    if (scryfallItems.length > 0 && this.registry.has('scryfall')) {
-      const source = this.registry.get('scryfall');
-      const ctx = await this.makeCtx(source);
-      const interval = intervalFor(source.rateLimit);
-
-      for (const [id, ci] of scryfallItems) {
-        try {
-          const candidate = await this.limiter.run(source.key, interval, () =>
-            source.fetchById!(ctx, ci.refs.get('scryfall')!),
-          );
-          if (!candidate) continue;
-          const perPrinting =
-            candidate.pricesByPrinting ??
-            (candidate.marketPrice !== undefined ? { NORMAL: candidate.marketPrice } : undefined);
-          if (!perPrinting) continue;
-          const forItem = new Map<string, { source: string; cents: number }>();
-          for (const [printing, cents] of Object.entries(perPrinting)) {
-            forItem.set(printing, { source: 'scryfall', cents });
-          }
-          prices.set(id, forItem);
-        } catch (error) {
-          report.problems.push(`scryfall ${ci.refs.get('scryfall')}: ${(error as Error).message}`);
-        }
-      }
-    }
-
-    // ---- what nothing could price ------------------------------------------
-    //
-    // Now, and only now: a source that could not cover an item is reported
-    // solely where no later source covered it either. Everything else was a
-    // hand-off working as designed.
-    for (const { reason, itemIds } of strandedByReason.values()) {
-      const stranded = itemIds.filter((id) => !prices.has(id));
-      if (stranded.length === 0) continue;
-      report.problems.push(
-        `${stranded.length} item(s) could not be priced by any source: ${reason}.`,
-      );
-    }
-
-    return prices;
-  }
-
   /** Persist the latest figures, keeping the previous for was/now display. */
   private async recordPrices(prices: ItemPrices): Promise<number> {
     const fetchedAt = new Date();
@@ -597,19 +438,6 @@ export class RepriceService {
       allocationId,
       operation: 'price',
     });
-  }
-
-  private async makeCtx(source: CatalogSource): Promise<CatalogCtx> {
-    const context = `reprice:${source.key}`;
-    return {
-      secrets: await this.credentials.loadSecrets(source),
-      logger: {
-        debug: (m) => this.logger.debug(m, context),
-        info: (m) => this.logger.log(m, context),
-        warn: (m) => this.logger.warn(m, context),
-        error: (m) => this.logger.error(m, context),
-      },
-    };
   }
 }
 

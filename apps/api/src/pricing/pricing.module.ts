@@ -4,6 +4,7 @@ import { QueueModule } from '../queue/queue.module';
 import { AlertsModule } from '../sync/alerts.module';
 import { PricingController } from './pricing.controller';
 import { RepriceService } from './reprice.service';
+import { MarketPriceService } from './market-prices.service';
 import { RepriceWorker } from './reprice.worker';
 
 /**
@@ -14,6 +15,9 @@ import { RepriceWorker } from './reprice.worker';
 @Module({
   imports: [CatalogModule, QueueModule, AlertsModule],
   controllers: [PricingController],
-  providers: [RepriceService, RepriceWorker],
+  providers: [RepriceService, MarketPriceService, RepriceWorker],
+  // Exported for BulkAllocateService: an item being put on its first channel
+  // has no stored figure, because the sweep only prices allocated ones.
+  exports: [MarketPriceService],
 })
 export class PricingModule {}

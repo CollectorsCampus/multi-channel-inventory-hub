@@ -3,6 +3,8 @@ import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import {
   formatPrice,
+  useBulkAllocate,
+  usePreviewBulkAllocate,
   useApplyStockUpdates,
   useCreateInventoryItem,
   useInventoryGames,
@@ -96,10 +98,29 @@ interface InventoryTableMeta {
   staged: Record<string, string>;
   setStaged: (id: string, value: string) => void;
   requestApply: (ids: string[]) => void;
+  /** Rows ticked for a bulk action. Separate from staged quantity edits. */
+  selected: ReadonlySet<string>;
+  toggleSelected: (id: string) => void;
 }
 
 function buildColumns(showImages: boolean): ColumnDef<InventoryRow>[] {
   return [
+    {
+      id: 'select',
+      header: '',
+      cell: ({ row, table }) => {
+        const meta = table.options.meta as InventoryTableMeta;
+        const id = row.original.inventoryItemId;
+        return (
+          <input
+            type="checkbox"
+            checked={meta.selected.has(id)}
+            onChange={() => meta.toggleSelected(id)}
+            aria-label={`Select ${row.original.name}`}
+          />
+        );
+      },
+    },
     {
       accessorKey: 'name',
       header: 'Item',
@@ -194,6 +215,138 @@ function buildColumns(showImages: boolean): ColumnDef<InventoryRow>[] {
   ];
 }
 
+/**
+ * Add the ticked rows to a channel, priced from the market.
+ *
+ * **Preview, then confirm.** Unlike the quantity edits beside it, this writes a
+ * price a customer will see the moment the push lands, and it does so for rows
+ * the operator picked rather than a number they typed. Showing what each item
+ * would cost — and which the hub refuses to price, and why — before anything
+ * is written is the difference between a bulk action and a bulk accident.
+ *
+ * The prices are the channel's own: what its repricing policy says the
+ * condition sells for, not the raw market figure. See `BulkAllocateService`
+ * for why, and for what it declines to guess at.
+ */
+function AddSelectedToChannel({
+  selected,
+  channels,
+  onDone,
+}: {
+  selected: ReadonlySet<string>;
+  channels: Array<{ id: string; displayName: string; connectorKey: string }>;
+  onDone: () => void;
+}) {
+  const [channelId, setChannelId] = useState('');
+  const preview = usePreviewBulkAllocate(channelId);
+  const allocate = useBulkAllocate(channelId);
+
+  const ids = useMemo(() => [...selected], [selected]);
+  const rows = preview.data ?? [];
+  const priceable = rows.filter((r) => r.price !== null);
+
+  return (
+    <div className="staged-bar">
+      <span>
+        {selected.size} row{selected.size === 1 ? '' : 's'} selected
+      </span>
+
+      <select
+        value={channelId}
+        aria-label="Channel to add to"
+        onChange={(e) => {
+          setChannelId(e.target.value);
+          preview.reset();
+          allocate.reset();
+        }}
+      >
+        <option value="">Add to channel…</option>
+        {channels.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.displayName} · {c.connectorKey}
+          </option>
+        ))}
+      </select>
+
+      {channelId !== '' && !preview.data && (
+        <button type="button" disabled={preview.isPending} onClick={() => preview.mutate(ids)}>
+          {preview.isPending ? 'Checking…' : 'Preview prices'}
+        </button>
+      )}
+
+      {preview.data && !allocate.data && (
+        <>
+          <span className="muted">
+            {priceable.length} would be added
+            {rows.length > priceable.length && `, ${rows.length - priceable.length} skipped`}.
+          </span>
+          <button
+            type="button"
+            disabled={priceable.length === 0 || allocate.isPending}
+            onClick={() => allocate.mutate(ids, { onSuccess: () => preview.reset() })}
+          >
+            {allocate.isPending ? 'Adding…' : `Add ${priceable.length}`}
+          </button>
+        </>
+      )}
+
+      <button type="button" className="ghost" onClick={onDone}>
+        Clear
+      </button>
+
+      {allocate.data && (
+        <span className={allocate.data.problems.length > 0 ? 'outcome-conflict' : 'outcome-ok'}>
+          {allocate.data.allocated.length} added
+          {allocate.data.skipped.length > 0 && `, ${allocate.data.skipped.length} skipped`}
+          {allocate.data.problems.length > 0 && `, ${allocate.data.problems.length} failed`}.
+        </span>
+      )}
+
+      {/* This page's own idiom for a failed request, as used for the list
+          query above — rather than reaching for the channels page's local
+          FormError, which would mean exporting it across screens for one use. */}
+      {preview.isError && <p className="error">{(preview.error as Error).message}</p>}
+      {allocate.isError && <p className="error">{(allocate.error as Error).message}</p>}
+
+      {/* Every row, priced or refused, with the market figure behind it. A
+          skipped item says why rather than simply not appearing — "it did
+          nothing" is the report that sends someone looking for a bug. */}
+      {preview.data && (
+        <table className="compact">
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.inventoryItemId}>
+                <td>
+                  <span className="cell-title">{row.name}</span>
+                  <span className="cell-sub">
+                    {[row.setName, row.condition, row.printing].filter(Boolean).join(' · ')}
+                  </span>
+                </td>
+                <td>
+                  {row.price !== null ? (
+                    <>
+                      <strong>{formatPrice(row.price)}</strong>
+                      {row.marketPrice !== null && (
+                        <span className="muted">
+                          {' '}
+                          · market {formatPrice(row.marketPrice)}
+                          {row.source && ` (${row.source})`}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="muted">{row.skipped}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 export function InventoryListPage() {
   const search = useSearch({ from: '/' });
   const navigate = useNavigate({ from: '/' });
@@ -244,6 +397,38 @@ export function InventoryListPage() {
   });
 
   const columns = useMemo(() => buildColumns(showImages), [showImages]);
+
+  /**
+   * Rows ticked for a bulk action, kept out of the URL.
+   *
+   * A selection is a thing you are part-way through doing, not part of what the
+   * table is showing — sharing a filtered view should not hand someone else
+   * your half-finished selection. It is deliberately cleared when the filters
+   * change, below: a tick you can no longer see is one you cannot reconsider,
+   * and acting on invisible rows is how a bulk action surprises someone.
+   */
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const toggleSelected = useCallback((id: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const filterKey = JSON.stringify([
+    search.search,
+    search.condition,
+    search.game,
+    search.set,
+    search.channel,
+    search.page,
+    inStockOnly,
+  ]);
+  useEffect(() => {
+    setSelected(new Set());
+  }, [filterKey]);
 
   // -- On-hand editing -------------------------------------------------------
   // A draft value per item id, lifted here so several rows can be edited and
@@ -314,6 +499,8 @@ export function InventoryListPage() {
       staged,
       setStaged: setStagedValue,
       requestApply,
+      selected,
+      toggleSelected,
     } satisfies InventoryTableMeta,
   });
 
@@ -511,6 +698,14 @@ export function InventoryListPage() {
       </div>
 
       {query.isError && <p className="error">{(query.error as Error).message}</p>}
+
+      {selected.size > 0 && (
+        <AddSelectedToChannel
+          selected={selected}
+          onDone={() => setSelected(new Set())}
+          channels={(channels.data ?? []).filter((c) => c.enabled)}
+        />
+      )}
 
       {stagedChanges.length > 0 && (
         <div className="staged-bar">

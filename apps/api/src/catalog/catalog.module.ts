@@ -4,6 +4,7 @@ import { CatalogSourceRegistry } from './catalog-source-registry.service';
 import { CatalogService } from './catalog.service';
 import { CatalogController } from './catalog.controller';
 import { CatalogMergeService } from './catalog-merge.service';
+import { CatalogDuplicatesService } from './catalog-duplicates.service';
 import { CatalogClearService } from './catalog-clear.service';
 import { CatalogCredentialsService } from './catalog-credentials.service';
 
@@ -14,6 +15,7 @@ import { CatalogCredentialsService } from './catalog-credentials.service';
     CatalogSourceRegistry,
     CatalogService,
     CatalogMergeService,
+    CatalogDuplicatesService,
     CatalogClearService,
     CatalogCredentialsService,
   ],
@@ -21,6 +23,7 @@ import { CatalogCredentialsService } from './catalog-credentials.service';
     CatalogSourceRegistry,
     CatalogService,
     CatalogMergeService,
+    CatalogDuplicatesService,
     CatalogClearService,
     CatalogCredentialsService,
   ],

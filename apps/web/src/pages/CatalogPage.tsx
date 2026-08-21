@@ -3,12 +3,15 @@ import { Link } from '@tanstack/react-router';
 import {
   DEFAULT_MAX_SETS,
   useCatalogCredentialStatus,
+  useCatalogDuplicates,
   useCatalogSources,
   useIngestableSets,
   useLocalSearch,
   useLocalSets,
+  useMergeCatalogItems,
   useRunIngest,
   useSetCatalogCredentials,
+  type DuplicateGroup,
   type LocalSetSummary,
 } from '../api/catalog';
 import { useCurrentUser } from '../auth';
@@ -192,6 +195,8 @@ export function CatalogPage() {
         )}
       </div>
 
+      {user?.role === 'admin' && <DuplicatesPanel />}
+
       {/* Server enforces admin-only; the panel explains rather than hides (§8). */}
       {user?.role === 'admin' ? (
         <IngestPanel />
@@ -202,6 +207,154 @@ export function CatalogPage() {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Suspected duplicates, and the merge that resolves each one.
+ *
+ * The list is `useCatalogDuplicates`' judgement (ref-disjoint, same name,
+ * reprints excluded); this panel adds only the human half: **the operator
+ * picks the survivor**, per group, and confirms. No "merge all" exists on
+ * purpose — every group is a claim about physical reality that one person can
+ * check and a heuristic cannot, and the merge moves SKUs and live listing
+ * links with no undo.
+ *
+ * The survivor defaults to the row with the most attached — SKUs, allocations
+ * — because that is the row whose links and history there are most of to
+ * preserve, but it is a default in a dropdown, not a decision.
+ */
+function DuplicatesPanel() {
+  const [open, setOpen] = useState(false);
+  const groups = useCatalogDuplicates(open);
+  const merge = useMergeCatalogItems();
+  // Keyed per group by name+game, so one confirm cannot fire another group's merge.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [winners, setWinners] = useState<Record<string, string>>({});
+
+  const keyOf = (g: DuplicateGroup) => `${g.game ?? ''}::${g.name}`;
+  const winnerFor = (g: DuplicateGroup) =>
+    winners[keyOf(g)] ??
+    [...g.items].sort(
+      (a, b) => b.skuCount + b.allocationCount - (a.skuCount + a.allocationCount),
+    )[0]!.id;
+
+  return (
+    <div className="panel">
+      <h2>Duplicates</h2>
+      <p className="muted">
+        The same product recorded twice, usually because two sources shared no id — a Magic card
+        taken in through Scryfall beside its tcgcsv row. Merging keeps one, moves everything onto
+        it, and records the other&rsquo;s ids so it cannot come back. Same-named cards with
+        different collector numbers are reprints and are not offered.
+      </p>
+
+      {!open ? (
+        <button type="button" className="ghost" onClick={() => setOpen(true)}>
+          Look for duplicates
+        </button>
+      ) : groups.isLoading ? (
+        <p className="muted">Checking every repeated name…</p>
+      ) : groups.isError ? (
+        <p className="error">{(groups.error as Error).message}</p>
+      ) : (groups.data ?? []).length === 0 ? (
+        <p className="field-hint">No suspected duplicates. Reprint families do not count.</p>
+      ) : (
+        (groups.data ?? []).map((group) => {
+          const key = keyOf(group);
+          const winner = winnerFor(group);
+          const losers = group.items.filter((i) => i.id !== winner);
+          return (
+            <div key={key} className="allocation">
+              <div className="allocation-head">
+                <strong>{group.name}</strong>
+                <span className="muted">{group.game ?? 'no game'}</span>
+                <span className="chip">
+                  {group.confidence === 'number'
+                    ? 'same collector number'
+                    : group.confidence === 'image'
+                      ? 'same image'
+                      : 'same name only'}
+                </span>
+              </div>
+
+              <table className="compact">
+                <tbody>
+                  {group.items.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <label className="inline-check">
+                          <input
+                            type="radio"
+                            name={`winner-${key}`}
+                            checked={winner === item.id}
+                            onChange={() => setWinners((w) => ({ ...w, [key]: item.id }))}
+                          />
+                          keep
+                        </label>
+                      </td>
+                      <td className="muted">{item.setName ?? '(no set)'}</td>
+                      <td className="muted">{item.collectorNumber ?? ''}</td>
+                      <td className="muted">
+                        {item.refs.map((r) => r.source).join(', ') || 'no refs'}
+                      </td>
+                      <td className="muted">
+                        {item.skuCount} SKU(s) · {item.allocationCount} listing link(s)
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="inline-form">
+                {confirming === key ? (
+                  <>
+                    <span className="muted">
+                      Merge {losers.length} row(s) into the kept one? Everything moves; there is no
+                      undo.
+                    </span>
+                    <button
+                      type="button"
+                      disabled={merge.isPending}
+                      onClick={() => {
+                        setConfirming(null);
+                        // Sequential by construction: one loser per click-cycle
+                        // for a 2-row group (the overwhelming case); a 3-row
+                        // group merges its losers one request at a time.
+                        for (const loser of losers) {
+                          merge.mutate({ winnerId: winner, loserId: loser.id });
+                        }
+                      }}
+                    >
+                      Yes, merge
+                    </button>
+                    <button type="button" className="ghost" onClick={() => setConfirming(null)}>
+                      No
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={merge.isPending}
+                    onClick={() => setConfirming(key)}
+                  >
+                    Merge into kept row…
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })
+      )}
+
+      {merge.isError && <p className="error">{(merge.error as Error).message}</p>}
+      {merge.data && (
+        <p className="outcome-ok">
+          Merged: {merge.data.movedSkus} SKU(s) moved, {merge.data.movedRefs.length} id(s) carried
+          over.
+        </p>
+      )}
+    </div>
   );
 }
 

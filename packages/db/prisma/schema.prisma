@@ -64,6 +64,14 @@ model CatalogItem {
   setName    String? @map("set_name")
   imageUrl   String? @map("image_url")
 
+  /// The printed collector number ("013/094", "EBP01-001"), where the source
+  /// publishes one. Nullable and NOT part of any unique: numbers are unique
+  /// only within a set, set names diverge between sources, and rule 4 bans
+  /// nullable columns in duplicate-preventing uniques anyway. Its job is
+  /// duplicate *detection* — the strongest cross-source signal two rows are
+  /// one product — and titles, someday.
+  collectorNumber String? @map("collector_number")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

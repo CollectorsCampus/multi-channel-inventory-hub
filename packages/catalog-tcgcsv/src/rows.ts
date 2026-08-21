@@ -268,6 +268,12 @@ export function toCandidates(
     if (setName) candidate.setName = setName;
 
     if (first.imageUrl) candidate.imageUrl = first.imageUrl;
+
+    // Verbatim from `extNumber`, never tidied: cross-source duplicate
+    // detection is an equality test on this, and zero-padding differences are
+    // exactly what "tidying" would introduce.
+    const number = (first.extended.extNumber ?? '').trim();
+    if (number) candidate.collectorNumber = number;
     if (marketPrice !== undefined) candidate.marketPrice = marketPrice;
     if (Object.keys(pricesByPrinting).length > 0) candidate.pricesByPrinting = pricesByPrinting;
     if (printings.length > 0) candidate.printings = printings;

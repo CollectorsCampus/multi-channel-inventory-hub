@@ -299,17 +299,24 @@ export class IntakeService {
   ): Promise<boolean> {
     const current = await this.prisma.catalogItem.findUnique({
       where: { id: catalogItemId },
-      select: { game: true, setName: true, imageUrl: true },
+      select: { game: true, setName: true, imageUrl: true, collectorNumber: true },
     });
     if (!current) return false;
 
     // `name`/`searchName` are intentionally absent: a created item always has a
     // name, so under fill-empty-only there is nothing to fill and nothing to
     // overwrite.
-    const data: { game?: string; setName?: string; imageUrl?: string } = {};
+    const data: { game?: string; setName?: string; imageUrl?: string; collectorNumber?: string } =
+      {};
     if (isBlank(current.game) && candidate.game) data.game = candidate.game;
     if (isBlank(current.setName) && candidate.setName) data.setName = candidate.setName;
     if (isBlank(current.imageUrl) && candidate.imageUrl) data.imageUrl = candidate.imageUrl;
+    // Same rule, and it is how the whole catalogue gets numbers: the column
+    // starts null everywhere, and a re-ingest of an already-held set fills it
+    // without touching anything a source or the operator already set.
+    if (isBlank(current.collectorNumber) && candidate.collectorNumber) {
+      data.collectorNumber = candidate.collectorNumber;
+    }
 
     if (Object.keys(data).length === 0) return false;
 
@@ -352,6 +359,7 @@ export class IntakeService {
         game: candidate.game ?? null,
         setName: candidate.setName ?? null,
         imageUrl: candidate.imageUrl ?? null,
+        collectorNumber: candidate.collectorNumber ?? null,
         externalRefs: {
           create: refs.map(([source, externalId]) => ({ source, externalId })),
         },

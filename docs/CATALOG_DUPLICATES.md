@@ -1,11 +1,13 @@
 # Duplicate catalog items — what causes them, and what to build
 
-Spec, not a design that has been built. Written 2026-08-17 after the operator
-reported "some show up twice" in catalogue search, and the repricing sweep
-reported five sets tcgcsv could not name.
-
-Those two symptoms have one cause and two different remedies; the reporting half
-shipped separately (#141), and this is the other half.
+Written 2026-08-17 as a spec, after the operator reported "some show up twice"
+in catalogue search; **built 2026-08-21**. What survives below is the analysis —
+the cause, the measurements, and the judgements — with each "what to build"
+section marked with what actually shipped, including one correction: the merge
+already existed (#65, `POST /catalog/local/merge`), which this spec wrongly
+listed as unbuilt. The detection (#141 made the sweep honest; this work added
+`GET /catalog/local/duplicates` and the /catalog panel) and the collector-number
+column are what was genuinely new.
 
 ## The cause, measured
 
@@ -70,7 +72,17 @@ not make tcgcsv able to find the set.
 
 ## What to build
 
-### 1. Detection — a report, never an automatic merge
+### 1. Detection — a report, never an automatic merge — **built 2026-08-21**
+
+Shipped as `CatalogDuplicatesService` + `GET /catalog/local/duplicates` + the
+Duplicates panel on /catalog. One judgement sharpened during building: the gate
+is **ref-namespace disjointness**, not name similarity. A reprint family created
+by one source shares that source's namespace on every row, while a convergence
+failure by construction does not — had the rows shared any namespace, intake
+would have merged them. Disjointness is the failure's definition, not a
+heuristic for it, and it is what keeps reprints out of the report without an
+alias table. Same-named rows whose collector numbers all differ are excluded as
+reprints outright.
 
 A duplicate is two catalog items that are one real product. Merging them moves
 SKUs, allocations, stock movements and possibly live listing links between rows.
@@ -97,7 +109,11 @@ Report each group with what each side carries — refs, set name, SKU count,
 allocation count — because which row to keep is decided by what is attached to
 it, not by which is "right".
 
-### 2. Merge — explicit, and refusing what it cannot do safely
+### 2. Merge — explicit, and refusing what it cannot do safely — **already existed (#65)**
+
+Everything this section asked for was already in `CatalogMergeService`: validate
+completely before writing, refuse a SKU natural-key collision, union the refs,
+keep the target's identity, never touch a quantity. The panel drives it.
 
 Keep one item, move everything to it, delete the other:
 
@@ -110,7 +126,13 @@ Keep one item, move everything to it, delete the other:
   rule and merging is not a reason to break it.
 - Record it. A merge is not recoverable by re-running anything.
 
-### 3. Prevention — worth doing first, and cheaper
+### 3. Prevention — **the column shipped 2026-08-21; convergence-on-number did not**
+
+`CatalogItem.collectorNumber` exists, all three number-publishing sources emit
+it verbatim, and a re-ingest backfills it fill-empty-only. Intake still
+converges on refs alone: converging on `(game, set, number)` needs comparable
+set names, which is exactly what diverges, so the number is a detection signal
+rather than a join key — as the caveat below always said.
 
 Storing the collector number would let intake converge on it as well as on refs,
 which stops most future duplicates rather than cleaning them up afterwards. It

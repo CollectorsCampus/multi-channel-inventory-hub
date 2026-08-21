@@ -270,3 +270,62 @@ export function useIntake() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inventory', 'list'] }),
   });
 }
+
+/** One row of a suspected-duplicate group. */
+export interface DuplicateItem {
+  id: string;
+  name: string;
+  setName: string | null;
+  collectorNumber: string | null;
+  imageUrl: string | null;
+  createdAt: string;
+  refs: Array<{ source: string; externalId: string }>;
+  skuCount: number;
+  allocationCount: number;
+}
+
+export interface DuplicateGroup {
+  game: string | null;
+  name: string;
+  confidence: 'number' | 'image' | 'name';
+  items: DuplicateItem[];
+}
+
+/**
+ * Same-named items whose refs share no namespace — convergence failures, for
+ * the operator to merge or dismiss. Loaded only when the panel is opened: it
+ * walks every repeated name in the catalogue, which is a few seconds, not a
+ * page-load cost.
+ */
+export function useCatalogDuplicates(enabled: boolean) {
+  return useQuery({
+    queryKey: ['catalog', 'duplicates'],
+    queryFn: () => apiFetch<DuplicateGroup[]>('/catalog/local/duplicates'),
+    enabled,
+    retry: false,
+  });
+}
+
+export interface MergeReport {
+  winnerId: string;
+  loserId: string;
+  movedSkus: number;
+  discardedSkus: number;
+  movedRefs: Array<{ source: string; externalId: string }>;
+}
+
+export function useMergeCatalogItems() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { winnerId: string; loserId: string }) =>
+      apiFetch<MergeReport>('/catalog/local/merge', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      // The group list, the set counts and any browse of the loser are stale.
+      void queryClient.invalidateQueries({ queryKey: ['catalog'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+}

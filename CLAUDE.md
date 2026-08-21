@@ -28,7 +28,7 @@ tcgcsv catalog source, and the match-proposal workflow. The section keeps that h
 because it explains _why_ each landed, which the CHANGELOG does not. Everything in "After
 v0.2.0" shipped in **v0.3.0**, for the same reason.
 
-`main` is green: **1286 tests** (api 790, shopify 162, tcgplayer 102, sdk 61, tcgcsv 49,
+`main` is green: **1314 tests** (api 818, shopify 162, tcgplayer 102, sdk 61, tcgcsv 49,
 cardtrader 37, web 35, scryfall 28, palworld 15, db 7), lint/typecheck/format/build clean —
 on **vitest 4** and **bullmq 6** now (see the dependency section below). `apps/web` has
 tests — the card-image and tag-suggestion grammars. **Count these rather than
@@ -1625,10 +1625,10 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#142** is on `main` and released as **v0.10.2**, which adds no
-migration on top of 0.10.1 — a clean drop-in, as 0.10.1 was on 0.10.0. **0.10.0 was the one carrying migrations**
-(`sellout_scope`, then `reactivate_on_restock` + `sellout_drafted_at`), the first since
-0.8.0, applied automatically by the entrypoint.
+None. Everything through **#152** is on `main` and released as **v0.11.0**, which
+**carries a migration** (`collector_number` on catalog items — additive, nullable, empty
+until a re-ingest fills it). Production was on 0.10.2 with `draftAtSellout` live when it
+was cut.
 
 **Production is on 0.10.2** (updated 2026-08-20). The operator ran the listing-rule
 back-fill over their 462 listings on 0.10.0, which is what prompted #137's Apply-button
@@ -1681,6 +1681,58 @@ bespoke source would be wasted work.
 the operator linked the sold, unlinked listing through 0.9.1's manual link and then set On
 hand, because **linking credits no stock by design**. Both halves were needed; the second
 is the one easy to forget.
+
+### After v0.10.2 — #145–#152, shipped in **v0.11.0** (2026-08-20/21)
+
+The operator's own priority list, worked in their order: split repricing thresholds, the
+three inventory-screen asks, then catalogue duplicates. Plus two found along the way.
+
+- **Repricing thresholds split** (#146): `autoApplyMaxUpPct` / `autoApplyMaxDownPct`, with
+  the old `autoApplyMaxPct` kept as the per-direction fallback so every stored policy —
+  including the operator's live `{"autoApplyMaxPct":10}` — behaves identically until next
+  saved. `autoApplyLimits` resolves the fallback in one place. Absent still means review,
+  per direction. Mutation-checked both ways.
+- **Multi-condition filter** (#147): `condition` is a list end to end, comma-separated in
+  URL and query. The API refuses an unknown value (it reaches a database filter); the
+  router drops it instead, failing toward showing more — a filter that silently empties
+  the table reads as a broken page. Toggle chips, no "Any" chip.
+- **Sort by lowest price** (#148): price lives on the allocation, so the row sorts by the
+  cheapest one and the header says so. Prisma cannot order by a relation aggregate and raw
+  SQL is banned, so ids+prices are read for the filtered set and ordered in memory —
+  replace with a stored lowest-price column if the ledger reaches tens of thousands.
+  Unpriced rows last in both directions.
+- **`pnpm check:overrides`** (#149): pnpm 9.15.4 warns the `pnpm` field "is no longer
+  read" but still reads it; **moving overrides to `pnpm-workspace.yaml` under pnpm 9
+  silently drops them** (tested — `fastify@5` vanished from the lockfile). So they stay
+  put until the pnpm 10 upgrade, and a dependency-free script fails the build if any
+  declared override is missing from or drifted in the lockfile.
+- **Bulk add-to-channel** (#150, #151): tick rows, preview, confirm; pooled allocations
+  priced at the channel's `targetPrice`, never raw market — or the next sweep would
+  propose changing every price just set. Undeclared conditions and unpriceable items skip
+  with reasons. #151 closed the gap #150 shipped with: the sweep only prices allocated
+  items, so first listings had no stored figure — `MarketPriceService` is the sweep's
+  `fetchPrices` **extracted, not copied** (its 41 tests pass through it unchanged), and
+  the bulk path asks it live. Live figures are not written to `market_prices` (one
+  writer: the sweep). Proven on the six real unlisted singles that had all skipped:
+  Mox Amber priced at its live figure, Mabel's 32c floored to 99c, the LP/HP ones now
+  refused by policy rather than missing data.
+- **Catalogue duplicates** (#152): detection + panel; **the merge already existed (#65)**,
+  which the spec had wrongly listed as unbuilt — spec corrected. The gate is
+  **ref-namespace disjointness**: a reprint family shares its creating source's namespace,
+  a convergence failure by construction does not, so disjointness is the failure's
+  definition and no alias table is needed. Same-named rows with differing collector
+  numbers are excluded as reprints outright. `CatalogItem.collectorNumber` (the release's
+  one migration) is emitted verbatim by tcgcsv/Scryfall/Palworld and backfilled by
+  re-ingest under fill-empty-only. Proven on the copy: seeded pair merged through the
+  panel, survivor carrying all three namespaces — permanent, since intake converges on any
+  of them. 23k real rows: 0 groups in 3.3s (copy predates the Secret Lair intakes); its
+  one exact-name pair is two _different_ tcgcsv products, correctly not offered.
+
+**The stale-link remedy is documented for operators** (2026-08-21, live production event):
+deleting a listing's variant in Shopify leaves the hub's allocation pointing at a dead
+gid, and the sellout sweep then alerts nightly. The fix is the item page's "Stop selling
+here" on the affected allocation, then Resolve (or let the next clean sweep clear the
+flag). Resolving first just re-raises it.
 
 ### v0.10.2 (2026-08-19)
 

@@ -3,6 +3,44 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.11.0] — 2026-08-21
+
+The inventory browser grows into a workbench, repricing learns that up and down are
+different risks, and the catalogue can find and heal its own duplicates.
+
+**Contains a schema migration** — `collector_number` on catalog items, additive and
+nullable, applied automatically on start. It begins empty everywhere: **re-ingest a set to
+fill it in** for the items you hold, under the usual never-overwrite rule.
+
+### Added
+
+- **Select rows and add them all to a channel, priced from the market.** Tick items in the
+  inventory browser, pick a channel, preview, confirm. Each is priced at what the channel's
+  repricing policy says its condition sells for — not the raw market figure, or the next
+  sweep would immediately propose changing every price this just set. A condition the
+  policy declares no percentage for is skipped and says so, never guessed at; so is
+  anything no source prices at all. Items the nightly sweep has never seen are priced by
+  asking the sources live, through the same code the sweep itself uses.
+- **Filter by several conditions at once.** The condition filter is now toggle chips —
+  NM and LP together is one view, not two passes. None selected still means everything.
+- **Sort by price.** The channels column orders by an item's _lowest_ asking price across
+  its channels, and the header says so. Unpriced items go last in both directions.
+- **A Duplicates panel on the catalogue page.** Finds the same product recorded twice —
+  usually a card taken in through Scryfall beside its tcgcsv row, where the two shared no
+  id — ranked by how sure the evidence is. You pick which row survives, per group; merging
+  moves everything onto it and carries the other's ids over, so the pair can never split
+  again. Same-named cards with different collector numbers are reprints and are never
+  offered.
+- **Separate auto-apply thresholds for price rises and drops.** A price rising on its own
+  loses a sale; one falling on its own gives away margin. The single threshold becomes
+  two boxes, pre-filled from what a stored policy already enforces — every existing policy
+  behaves exactly as it did until you next save it.
+
+### Fixed
+
+- The build now fails if a pnpm dependency override stops reaching the lockfile, instead
+  of silently reinstalling versions with known advisories while CI stays green.
+
 ## [0.10.2] — 2026-08-19
 
 A catalogue for a game nothing else carries, and a sweep that stops crying wolf.

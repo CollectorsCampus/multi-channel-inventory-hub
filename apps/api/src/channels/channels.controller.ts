@@ -25,13 +25,16 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { RequireRole } from '../auth/decorators';
+import { CurrentUser, RequireRole } from '../auth/decorators';
+import type { AuthenticatedPrincipal } from '../auth/auth-provider.interface';
 import { ChannelsService } from './channels.service';
 import { ChannelListingDefaultsDto } from './listing-defaults.dto';
 import { SELLOUT_SCOPES } from './listing-defaults';
 import { ChannelFilesService } from './channel-files.service';
 import { ReconcileService } from '../sync/reconcile.service';
 import { SelloutService } from '../sync/sellout.service';
+import { BulkAllocateService } from '../inventory/bulk-allocate.service';
+import { BulkAllocateDto } from '../inventory/inventory.dto';
 import { IMPORT_KINDS, type ImportKind, type ImportSummary } from './file-transport';
 
 /**
@@ -180,6 +183,7 @@ export class ChannelsController {
     private readonly files: ChannelFilesService,
     private readonly reconciler: ReconcileService,
     private readonly selloutService: SelloutService,
+    private readonly bulkAllocate: BulkAllocateService,
   ) {}
 
   /**
@@ -271,6 +275,47 @@ export class ChannelsController {
   })
   sellout(@Param('id') id: string) {
     return this.selloutService.sweepChannel(id);
+  }
+
+  /**
+   * What adding these items to this channel would do — prices and refusals —
+   * without doing it.
+   *
+   * A preview rather than a dry-run flag on the write endpoint: the two are
+   * different questions, and a boolean that decides whether a request has side
+   * effects is the kind of parameter that eventually gets passed wrong.
+   */
+  @Post(':id/allocate/preview')
+  @RequireRole('editor')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'The price each selected item would be listed at here, and what would be skipped.',
+    description:
+      'Priced at what this channel’s repricing policy says the condition sells for, not the ' +
+      'raw market figure — otherwise the next sweep would immediately propose changing every ' +
+      'price this set. A condition the policy declares no percentage for is skipped rather ' +
+      'than guessed at, as is an item no sweep has ever priced.',
+  })
+  allocatePreview(@Param('id') id: string, @Body() body: BulkAllocateDto) {
+    return this.bulkAllocate.preview(id, body.inventoryItemIds);
+  }
+
+  @Post(':id/allocate')
+  @RequireRole('editor')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Add the selected items to this channel, priced from the market.',
+    description:
+      'Creates a pooled allocation per item — pooled because splitting stock between channels ' +
+      'is a decision a bulk action should not make. Items it cannot price are reported, not ' +
+      'guessed at. The normal push path then advertises the quantity.',
+  })
+  allocateBulk(
+    @Param('id') id: string,
+    @Body() body: BulkAllocateDto,
+    @CurrentUser() user: AuthenticatedPrincipal,
+  ) {
+    return this.bulkAllocate.allocate(id, body.inventoryItemIds, user.userId);
   }
 
   // ---------------------------------------------------------------------------

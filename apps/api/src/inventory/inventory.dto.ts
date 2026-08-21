@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsIn,
@@ -13,6 +15,9 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { ALLOCATION_MODES, SKU_CONDITIONS, STOCK_MOVEMENT_REASONS } from '@hub/db';
+
+/** Mirrors listings' MAX_ITEMS; duplicated to keep this DTO free of that import cycle. */
+export const MAX_BULK_ALLOCATE = 50;
 
 /**
  * Quantities are `Int` everywhere and prices are integer cents — never floats.
@@ -383,4 +388,26 @@ export class PreviewLedgerDto {
   @ValidateNested({ each: true })
   @Type(() => AllocationWriteDto)
   allocations?: AllocationWriteDto[];
+}
+
+/**
+ * Ledger items to put on a channel in one action.
+ *
+ * Explicit ids rather than a filter, like every other batch here that writes
+ * somewhere a customer can see: this creates allocations, and a run over "every
+ * row matching my current filter" is a decision nobody can review afterwards.
+ */
+export class BulkAllocateDto {
+  @ApiProperty({
+    type: [String],
+    description:
+      'Ledger items to add to the channel, chosen from the browse list. Capped like every ' +
+      'other batch — a partial run is indistinguishable from a complete one afterwards.',
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(MAX_BULK_ALLOCATE)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  inventoryItemIds!: string[];
 }

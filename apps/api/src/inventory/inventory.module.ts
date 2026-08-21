@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { IntakeService } from './intake.service';
+import { BulkAllocateService } from './bulk-allocate.service';
 import { CatalogModule } from '../catalog/catalog.module';
 import { AlertsModule } from '../sync/alerts.module';
 
@@ -11,7 +12,7 @@ import { AlertsModule } from '../sync/alerts.module';
   // its own, which is what makes the split work.
   imports: [CatalogModule, AlertsModule],
   controllers: [InventoryController],
-  providers: [InventoryService, IntakeService],
-  exports: [InventoryService, IntakeService],
+  providers: [InventoryService, IntakeService, BulkAllocateService],
+  exports: [InventoryService, IntakeService, BulkAllocateService],
 })
 export class InventoryModule {}

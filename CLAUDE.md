@@ -1682,6 +1682,27 @@ the operator linked the sold, unlinked listing through 0.9.1's manual link and t
 hand, because **linking credits no stock by design**. Both halves were needed; the second
 is the one easy to forget.
 
+### v0.11.0 (2026-08-21)
+
+Tagged after the "Prepare v0.11.0" merge (#153), carrying #145–#152. Tags `0.11.0`, `0.11`
+and `latest` all at digest `sha256:80863cf4…`, replacing 0.10.2's `sha256:90d50e14…`.
+**Contains one migration** — `collector_number`, additive and nullable, applied by the
+entrypoint; it starts empty everywhere and a re-ingest of a held set fills it.
+
+Verified the established way. Anonymously: three tags at the one digest, real
+`linux/amd64` + `linux/arm64` children. Inside the pulled artifact: version 0.11.0, the
+migration directory present, `catalog-duplicates.service.js`, `bulk-allocate.service.js`
+and `market-prices.service.js` in the built output, `autoApplyLimits` in the built
+repricing, `collectorNumber` in the built scryfall source, zero compiled specs, `--prod`
+held. Booted against the throwaway services: the entrypoint reports **10 migrations
+found**, starts clean, and its own OpenAPI document reports `info.version: 0.11.0` with
+**74 paths** including `/catalog/local/duplicates` and both `/channels/{id}/allocate`
+routes.
+
+**For the operator's upgrade**: after updating the stack, re-ingest the sets you hold (the
+grouped ingest on /catalog) to fill collector numbers — duplicates found before that will
+mostly rank "same name only" rather than "same collector number".
+
 ### After v0.10.2 — #145–#152, shipped in **v0.11.0** (2026-08-20/21)
 
 The operator's own priority list, worked in their order: split repricing thresholds, the

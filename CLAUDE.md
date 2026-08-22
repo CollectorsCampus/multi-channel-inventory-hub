@@ -1625,10 +1625,11 @@ is the operator's call, not a verification step.
 
 ### Unmerged work
 
-None. Everything through **#152** is on `main` and released as **v0.11.0**, which
-**carries a migration** (`collector_number` on catalog items — additive, nullable, empty
-until a re-ingest fills it). Production was on 0.10.2 with `draftAtSellout` live when it
-was cut.
+None. Everything through **#157** is on `main` and released as **v0.12.0** (no
+migration). Production was on **0.11.0** when it was cut (the operator updated the stack
+on 2026-08-21, right after that release; whether they have re-ingested held sets to fill
+collector numbers has not been confirmed). The 0.10.2 note below describes the earlier
+state and is kept for what it explains.
 
 **Production is on 0.10.2** (updated 2026-08-20). The operator ran the listing-rule
 back-fill over their 462 listings on 0.10.0, which is what prompted #137's Apply-button
@@ -1681,6 +1682,49 @@ bespoke source would be wasted work.
 the operator linked the sold, unlinked listing through 0.9.1's manual link and then set On
 hand, because **linking credits no stock by design**. Both halves were needed; the second
 is the one easy to forget.
+
+### v0.12.0 (2026-08-22)
+
+Tagged after the "Prepare v0.12.0" merge (#157), carrying #156 alone — the catalog
+import and the `imported` source, built for Neuroscape (see the roadmap's Neuroscape
+entry for why no live source is possible; #156 superseded the docs-only #155). Tags
+`0.12.0`, `0.12` and `latest` all at digest `sha256:73fce434…`, replacing 0.11.0's
+`sha256:80863cf4…`. **No migration** — the entrypoint still reports 10 and a clean
+"no pending".
+
+Verified the established way. Anonymously: three tags at the one digest, real
+`linux/amd64` + `linux/arm64` children plus the two attestation manifests. Inside the
+pulled artifact: version 0.12.0, `catalog-import.controller.js` /
+`catalog-import.service.js` / `imported-source.js` in the built catalog dir, zero
+compiled specs, `--prod` held, and the pins intact (`fastify@5.12.0`,
+`find-my-way@9.8.0`, `js-yaml@5.2.3`). Booted against a fresh throwaway DB: 75 paths
+including `/catalog/import`, and — the check that matters for this release —
+`GET /catalog/sources` from the running image lists **`imported` with
+`canIngest: false`**.
+
+Two things learned verifying it:
+
+- **The registry's "Registered catalog source(s)" boot log does not include
+  `imported`**, because `ImportedSourceRegistrar`'s init hook runs after the registry's
+  own hook prints that line. The source _is_ registered — prove it by reading
+  `/catalog/sources` back, not by the log. Earlier verifications (0.10.2) used that log
+  line as the proof; for `imported` it cannot be. A follow-up moving the summary line
+  (or logging from the registrar) would make the log honest again.
+- **A new Dependabot high appeared mid-release: `deepmerge-ts` < 8.0.0** (stack
+  exhaustion on recursive object graphs), reached only through `@prisma/config@6.19.3`,
+  which **exact-pins 7.1.5** — the find-my-way/js-yaml shape, so no Dependabot PR is
+  possible. It **is in the runtime image** (the Prisma CLI ships for migrations), but
+  the precondition fails: `@prisma/config` only deep-merges the operator's own config
+  file with defaults, never untrusted input. Deliberately **not** overridden: the patch
+  is a major, and forcing it under Prisma's exact pin risks breaking `migrate deploy`
+  at container start — the worst place — for an unreachable advisory. Clear it by
+  taking the Prisma minor that bumps it, when that exists.
+
+**For the operator's use**: run the scrape (`node private/dev/scrape-neuroscape.mjs`,
+title-cases names, fresh 24-hour image URLs), import the file on `/catalog` the same
+day, intake, then create listings on `/list` — Shopify copies each image to its own CDN
+at creation, so the URL expiry stops mattering after that. Names are immutable after
+first import, so the first production import must be the title-cased file.
 
 ### v0.11.0 (2026-08-21)
 

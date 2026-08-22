@@ -3,6 +3,37 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.12.0] — 2026-08-22
+
+The catalogue no longer stops at what somebody else publishes: a hand-built card list can
+be imported and then flows through intake, matching and Shopify listing creation like any
+other source's cards. Built for the newly launched Neuroscape TCG, which no marketplace
+catalogue carries, and reusable for whatever launches next.
+
+**No schema migration** — a clean drop-in on 0.11.0.
+
+### Added
+
+- **Import a card list** (`POST /catalog/import`, and an Import panel on the catalog
+  screen, admin only). A JSON file of cards — name, id, optional set, collector number and
+  image URL — lands in the local catalog under a new `imported` source, namespaced so two
+  imported games' ids can never collide. Imported cards are searchable at intake,
+  intakeable, and listable on a channel; their listing SKU codes carry the imported id, so
+  a rebuilt hub re-derives the links like any other source's.
+- **The `imported` catalog source**, answering search and by-id lookups from the local
+  database. It deliberately cannot be bulk-ingested — the local catalog _is_ its store —
+  and the ingest panel says so rather than offering it.
+
+### Changed
+
+- **Re-importing a list is safe, and useful**: identity follows the standing
+  fill-empty-only rule (an import can never rename a card), while a **changed image URL is
+  replaced** — the one argued exception, because import exists for sites whose image links
+  expire, and an imported row's image can only ever have come from an earlier import. The
+  day a real catalogue source picks up an imported game, its rows arrive separately and
+  the duplicates screen migrates them — matching collector numbers are its strongest
+  evidence tier.
+
 ## [0.11.0] — 2026-08-21
 
 The inventory browser grows into a workbench, repricing learns that up and down are

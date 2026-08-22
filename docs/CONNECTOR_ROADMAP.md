@@ -501,6 +501,40 @@ building anything. A bespoke source against a fan site or a JP retailer would be
 that tcgcsv makes redundant on arrival, and it would be the third source in an id space
 none of the others share. Remember the User-Agent — that CDN answers 401 to a blank one.
 
+### Neuroscape TCG — _checked 2026-08-22; no viable source, and one real obstacle_
+
+An indie cyberpunk TCG (Kickstarter-funded, ~$570k, printed by WJPC, distributed by PHD),
+launch set _Genesis_ (256 cards, `GEN-N` collector numbers), wide retail release
+2026-08-28. Checked live: **not in tcgcsv's 90 categories and not among CardTrader's 14
+games.**
+
+The publisher has a card database — `playneuroscape.com/cards` — but it is a **Carde.io
+"Play Network" white-label**, and unlike Bushiroad's Palworld site there is no
+unauthenticated JSON behind it:
+
+- The data endpoint that exists (`api.admin.carde.io/api/v2/games/134/cards/`) answers
+  **401**; the public gallery gets its data server-side through Next.js RSC, so nothing
+  machine-readable is exposed. No sitemap, no robots, no public Carde.io developer API
+  (searched; only a support knowledge base).
+- **The card images are 24-hour signed GCS URLs** (`spicerack_media/cards/neuroscape/
+GEN-N.webp?X-Goog-Signature=…`). That is the decisive obstacle even if the data were
+  reachable: a stored `imageUrl` would 403 within a day, breaking listing images and the
+  browser — and fixing that means re-hosting media, a pipeline the hub deliberately does
+  not have.
+
+So a source here would mean scraping a hydrated SPA, reverse-engineering guest auth, and
+solving image expiry — high effort, fragile, unofficial. **Do not build it.**
+
+**The reason for hope is Elestrals**: also a Carde.io game, also PHD-distributed, and it
+_is_ a TCGPlayer category (83, in tcgcsv). So "TCGPlayer may not add it" is not a foregone
+conclusion for this exact shape of game — categories tend to follow wide retail, which is
+2026-08-28. Re-check the categories endpoint a few weeks after that. Meanwhile nothing is
+blocked: hand-entered items list under `hub:` codes, as with Palworld before its source.
+
+Unofficial fallbacks if it ever becomes urgent: `mainframemeta.com` (fan deck builder
+claiming all Genesis cards) and the Fandom wiki — both scrape targets with no stability
+promise, both worse than waiting.
+
 ## Suggested order
 
 1. **eBay** — largest reach, most likely to have a genuinely usable API, and the strongest

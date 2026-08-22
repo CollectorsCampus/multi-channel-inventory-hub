@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   DEFAULT_MAX_SETS,
+  IMPORT_MAX_ITEMS,
   useCatalogCredentialStatus,
   useCatalogDuplicates,
   useCatalogSources,
@@ -9,8 +10,10 @@ import {
   useLocalSearch,
   useLocalSets,
   useMergeCatalogItems,
+  useRunImport,
   useRunIngest,
   useSetCatalogCredentials,
+  type CatalogImportItem,
   type DuplicateGroup,
   type LocalSetSummary,
 } from '../api/catalog';
@@ -206,6 +209,8 @@ export function CatalogPage() {
           <p className="muted">Running an ingest needs the admin role.</p>
         </div>
       )}
+
+      {user?.role === 'admin' && <ImportPanel />}
     </section>
   );
 }
@@ -576,6 +581,166 @@ function IngestPanel() {
           {run.data.problems.map((problem) => (
             <p key={problem.set} className="error">
               {problem.set}: {problem.message}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Importing a hand-built card list — the write half of the `imported` source,
+ * for games no catalogue carries yet (Neuroscape today).
+ *
+ * The file is JSON: either a bare array of cards or a wrapper
+ * `{ game, setName, cards: [...] }` (the shape the scrape scripts emit, whose
+ * game and set prefill the fields). Each card needs a `name` and an `id` —
+ * `number` stands in for a missing `id`, and doubles as the collector number,
+ * because for a card list the printed number *is* the natural per-set id.
+ *
+ * Everything is parsed client-side before anything is sent, so a malformed
+ * file is refused with its reason rather than half-imported.
+ */
+function ImportPanel() {
+  const [namespace, setNamespace] = useState('');
+  const [game, setGame] = useState('');
+  const [setName, setSetName] = useState('');
+  const [items, setItems] = useState<CatalogImportItem[]>([]);
+  const [fileError, setFileError] = useState('');
+  const run = useRunImport();
+
+  const readFile = (file: File | undefined) => {
+    setFileError('');
+    setItems([]);
+    run.reset();
+    if (!file) return;
+    void file.text().then((text) => {
+      try {
+        const parsed: unknown = JSON.parse(text);
+        const wrapper = parsed as { game?: string; setName?: string; cards?: unknown };
+        const raw = Array.isArray(parsed) ? parsed : wrapper.cards;
+        if (!Array.isArray(raw)) {
+          setFileError('Expected a JSON array of cards, or an object with a "cards" array.');
+          return;
+        }
+        if (!Array.isArray(parsed)) {
+          if (typeof wrapper.game === 'string') setGame((g) => g || wrapper.game!);
+          if (typeof wrapper.setName === 'string') setSetName((s) => s || wrapper.setName!);
+        }
+        const mapped: CatalogImportItem[] = [];
+        for (const [index, entry] of (raw as Array<Record<string, unknown>>).entries()) {
+          const name = typeof entry.name === 'string' ? entry.name : '';
+          const id =
+            typeof entry.id === 'string' && entry.id !== ''
+              ? entry.id
+              : typeof entry.number === 'string'
+                ? entry.number
+                : '';
+          if (name === '' || id === '') {
+            setFileError(`Card ${index + 1} is missing a name or an id/number.`);
+            return;
+          }
+          const collectorNumber =
+            typeof entry.collectorNumber === 'string'
+              ? entry.collectorNumber
+              : typeof entry.number === 'string'
+                ? entry.number
+                : undefined;
+          mapped.push({
+            id,
+            name,
+            ...(typeof entry.setName === 'string' ? { setName: entry.setName } : {}),
+            ...(collectorNumber !== undefined ? { collectorNumber } : {}),
+            ...(typeof entry.imageUrl === 'string' ? { imageUrl: entry.imageUrl } : {}),
+          });
+        }
+        setItems(mapped);
+      } catch {
+        setFileError('Not valid JSON.');
+      }
+    });
+  };
+
+  const ready = items.length > 0 && namespace !== '' && game !== '';
+
+  return (
+    <div className="panel">
+      <h2>Import a card list</h2>
+      <p className="muted">
+        For games no catalogue source carries. Loads a JSON card list into the local catalog under
+        the <strong>Imported</strong> source, so the cards can be searched at intake and listed on a
+        channel. Re-importing the same namespace is safe: it fills gaps and refreshes images, and
+        never renames anything.
+      </p>
+
+      <div className="filters">
+        <input
+          type="file"
+          accept="application/json,.json"
+          aria-label="Card list file"
+          onChange={(e) => readFile(e.target.files?.[0])}
+        />
+        <input
+          type="text"
+          placeholder="Namespace (e.g. neuroscape)"
+          value={namespace}
+          onChange={(e) => setNamespace(e.target.value.toLowerCase())}
+          aria-label="Namespace"
+        />
+        <input
+          type="text"
+          placeholder="Game (e.g. Neuroscape TCG)"
+          value={game}
+          onChange={(e) => setGame(e.target.value)}
+          aria-label="Game"
+        />
+        <input
+          type="text"
+          placeholder="Set (optional)"
+          value={setName}
+          onChange={(e) => setSetName(e.target.value)}
+          aria-label="Set name"
+        />
+        <button
+          type="button"
+          disabled={!ready || run.isPending}
+          onClick={() =>
+            run.mutate({
+              namespace,
+              game,
+              ...(setName !== '' ? { setName } : {}),
+              items,
+            })
+          }
+        >
+          {run.isPending
+            ? 'Importing…'
+            : items.length > 0
+              ? `Import ${items.length} card(s)`
+              : 'Import'}
+        </button>
+      </div>
+
+      {items.length > IMPORT_MAX_ITEMS && (
+        <p className="error">
+          {items.length} cards is over the {IMPORT_MAX_ITEMS}-card limit for one run — split the
+          file.
+        </p>
+      )}
+      {fileError && <p className="error">{fileError}</p>}
+      {run.isError && <p className="error">{(run.error as Error).message}</p>}
+
+      {run.isSuccess && run.data && (
+        <div>
+          <p className="muted">
+            {run.data.items} card(s): <strong>{run.data.created} created</strong>,{' '}
+            {run.data.refreshed} refreshed, {run.data.imagesRefreshed} image(s) refreshed, in{' '}
+            {(run.data.durationMs / 1000).toFixed(1)}s.
+          </p>
+          {run.data.problems.map((problem) => (
+            <p key={problem.id} className="error">
+              {problem.id}: {problem.message}
             </p>
           ))}
         </div>

@@ -501,7 +501,7 @@ building anything. A bespoke source against a fan site or a JP retailer would be
 that tcgcsv makes redundant on arrival, and it would be the third source in an id space
 none of the others share. Remember the User-Agent — that CDN answers 401 to a blank one.
 
-### Neuroscape TCG — _checked 2026-08-22; no viable source, and one real obstacle_
+### Neuroscape TCG — _checked 2026-08-22; no viable source — covered by the catalog import instead_
 
 An indie cyberpunk TCG (Kickstarter-funded, ~$570k, printed by WJPC, distributed by PHD),
 launch set _Genesis_ (256 cards, `GEN-N` collector numbers), wide retail release
@@ -522,14 +522,28 @@ GEN-N.webp?X-Goog-Signature=…`). That is the decisive obstacle even if the dat
   browser — and fixing that means re-hosting media, a pipeline the hub deliberately does
   not have.
 
-So a source here would mean scraping a hydrated SPA, reverse-engineering guest auth, and
-solving image expiry — high effort, fragile, unofficial. **Do not build it.**
+So a live `CatalogSource` here would mean scraping a hydrated SPA, reverse-engineering
+guest auth, and solving image expiry — high effort, fragile, unofficial. **Do not build
+one.**
+
+**What was built instead is the generic catalog import** (`POST /catalog/import` and the
+`/catalog` screen's Import panel), which sidesteps every obstacle above: a one-shot
+browser scrape (`private/dev/scrape-neuroscape.mjs`, playwright-core driving installed
+Chrome — all 256 Genesis cards with names, numbers and image URLs) loads the set into the
+local catalog under the `imported` source, so the cards are searchable at intake and
+listable on Shopify like anything else. **The 24-hour image expiry stops mattering at the
+Shopify boundary**: `productCreate` ingests the image and re-hosts it on Shopify's own
+CDN permanently (proven back in the Black Lotus creation), so the signed URL only has to
+be alive on the day a product is created — and re-running the scrape plus a re-import
+refreshes expired URLs for whatever is created later, without renaming anything.
 
 **The reason for hope is Elestrals**: also a Carde.io game, also PHD-distributed, and it
 _is_ a TCGPlayer category (83, in tcgcsv). So "TCGPlayer may not add it" is not a foregone
 conclusion for this exact shape of game — categories tend to follow wide retail, which is
-2026-08-28. Re-check the categories endpoint a few weeks after that. Meanwhile nothing is
-blocked: hand-entered items list under `hub:` codes, as with Palworld before its source.
+2026-08-28. Re-check the categories endpoint a few weeks after that. The day a real source
+appears its ingest will **not** converge on the imported rows (no shared id namespace, by
+construction), so the migration is a session on the duplicates screen — collector numbers
+match, which is the screen's strongest evidence tier.
 
 Unofficial fallbacks if it ever becomes urgent: `mainframemeta.com` (fan deck builder
 claiming all Genesis cards) and the Fandom wiki — both scrape targets with no stability

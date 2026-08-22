@@ -163,3 +163,15 @@ export function parseSkuCode(value: string | undefined | null): SkuCode | undefi
 export function isSkuCode(value: string | undefined | null): boolean {
   return parseSkuCode(value) !== undefined;
 }
+
+/**
+ * True when `value` can stand as a code's `sourceId` segment.
+ *
+ * Exported for the catalog import path, which mints external ids
+ * (`<namespace>.<id>`) that will later be encoded into listing SKUs — an id
+ * accepted at import but refused here would surface months later as a listing
+ * creation that cannot build its code. One definition, so the two cannot drift.
+ */
+export function isValidSourceId(value: string): boolean {
+  return SOURCE_ID.test(value);
+}

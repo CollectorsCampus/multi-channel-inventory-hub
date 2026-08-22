@@ -7,12 +7,14 @@ import { CatalogMergeService } from './catalog-merge.service';
 import { CatalogDuplicatesService } from './catalog-duplicates.service';
 import { CatalogClearService } from './catalog-clear.service';
 import { CatalogCredentialsService } from './catalog-credentials.service';
+import { ImportedSourceRegistrar } from './imported-source';
 
 @Module({
   imports: [ConnectorsModule],
   controllers: [CatalogController],
   providers: [
     CatalogSourceRegistry,
+    ImportedSourceRegistrar,
     CatalogService,
     CatalogMergeService,
     CatalogDuplicatesService,

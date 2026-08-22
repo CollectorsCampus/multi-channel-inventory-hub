@@ -12,6 +12,8 @@ export default tseslint.config(
       '**/coverage/**',
       'packages/db/generated/**',
       'packages/db/prisma/migrations/**',
+      // Gitignored operator-local data and one-off scripts; not product code.
+      'private/**',
     ],
   },
 

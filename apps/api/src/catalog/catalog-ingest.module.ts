@@ -3,6 +3,8 @@ import { CatalogModule } from './catalog.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { CatalogIngestService } from './catalog-ingest.service';
 import { CatalogIngestController } from './catalog-ingest.controller';
+import { CatalogImportService } from './catalog-import.service';
+import { CatalogImportController } from './catalog-import.controller';
 
 /**
  * Its own module, rather than a provider inside `CatalogModule`.
@@ -17,8 +19,8 @@ import { CatalogIngestController } from './catalog-ingest.controller';
  */
 @Module({
   imports: [CatalogModule, InventoryModule],
-  controllers: [CatalogIngestController],
-  providers: [CatalogIngestService],
-  exports: [CatalogIngestService],
+  controllers: [CatalogIngestController, CatalogImportController],
+  providers: [CatalogIngestService, CatalogImportService],
+  exports: [CatalogIngestService, CatalogImportService],
 })
 export class CatalogIngestModule {}

@@ -240,6 +240,45 @@ export function useRunIngest() {
   });
 }
 
+export interface CatalogImportItem {
+  /** Id unique within the namespace, e.g. a collector number. */
+  id: string;
+  name: string;
+  setName?: string;
+  collectorNumber?: string;
+  imageUrl?: string;
+}
+
+export interface CatalogImportReport {
+  namespace: string;
+  items: number;
+  created: number;
+  refreshed: number;
+  imagesRefreshed: number;
+  problems: Array<{ id: string; message: string }>;
+  durationMs: number;
+}
+
+/** Mirrors the server's refuse-not-truncate ceiling on one import. */
+export const IMPORT_MAX_ITEMS = 1000;
+
+export function useRunImport() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      namespace: string;
+      game: string;
+      setName?: string;
+      items: CatalogImportItem[];
+    }) =>
+      apiFetch<CatalogImportReport>('/catalog/import', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['catalog', 'local'] }),
+  });
+}
+
 export interface IntakeRequest {
   sourceKey: string;
   sourceId: string;

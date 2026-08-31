@@ -479,7 +479,28 @@ SKU with no `CatalogExternalRef` still gets a valid `hub:<skuId>:…` code, so i
 listed on Shopify and tagged by the normal rules. What is missing until a source appears is
 search-by-name at intake, images, and **market prices** — so no repricing for its singles.
 
-### Palworld TCG — _checked 2026-08-17; too new, re-check tcgcsv_
+### Palworld TCG — _re-checked 2026-08-31: TCGPlayer opened the category; products not yet populated_
+
+**The wait is ending as predicted.** tcgcsv now carries **category 91, "Palworld OFFICIAL
+CARD GAME"**, with 3 groups matching Bushiroad's launch lineup exactly (BP01 Dawn of
+Palpagos and both trial decks) — but every group holds **0 products and 0 prices** so far:
+a skeleton, not yet ingestable. Re-check the group product files in a week or two; the day
+they populate, ingest from `/catalog` with zero code and repricing gains Palworld.
+
+**When that ingest runs, remember the non-convergence note below**: cards taken in through
+the Bushiroad `palworld` source carry no TCGPlayer id, so tcgcsv's rows will arrive as
+_separate_ items — the duplicates screen migrates them, and matching collector numbers
+(stored verbatim by both sources) are its strongest evidence tier.
+
+Also new in the same check: **category 92, "Cyberpunk TCG"** — the Cyberpunk 2077 game
+(_Welcome to Night City_ Beta, publishing 2026-09-10), **not** Neuroscape, and also still
+empty of products. If the store will stock it, tcgcsv covers it from day one. CardTrader
+was unchanged at 14 games (no Palworld, no Neuroscape), and Bushiroad's own database still
+lists the same 4 sets.
+
+The original entry, kept for the reasoning:
+
+#### As of 2026-08-17 — too new, re-check tcgcsv
 
 Bushiroad's Palworld OFFICIAL CARD GAME launched **2026-07-30** (first set _Dawn of
 Palpagos_; English, Japanese and Simplified Chinese). Checked live against both ingesting
@@ -501,7 +522,14 @@ building anything. A bespoke source against a fan site or a JP retailer would be
 that tcgcsv makes redundant on arrival, and it would be the third source in an id space
 none of the others share. Remember the User-Agent — that CDN answers 401 to a blank one.
 
-### Neuroscape TCG — _checked 2026-08-22; no viable source — covered by the catalog import instead_
+### Neuroscape TCG — _re-checked 2026-08-31: still no category; the import remains the path_
+
+Neither of the two categories TCGPlayer has added since (91 Palworld, 92 Cyberpunk TCG —
+the Cyberpunk 2077 game, despite Neuroscape also being a cyberpunk TCG) is Neuroscape, and
+CardTrader's games are unchanged. Wide retail was 2026-08-28; keep re-checking a few weeks
+out. The original entry:
+
+#### As of 2026-08-22 — no viable source — covered by the catalog import instead
 
 An indie cyberpunk TCG (Kickstarter-funded, ~$570k, printed by WJPC, distributed by PHD),
 launch set _Genesis_ (256 cards, `GEN-N` collector numbers), wide retail release

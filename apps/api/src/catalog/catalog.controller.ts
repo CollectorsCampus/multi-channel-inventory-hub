@@ -5,6 +5,7 @@ import { IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min } from 'clas
 import { RequireRole } from '../auth/decorators';
 import { CatalogService } from './catalog.service';
 import { CatalogMergeService } from './catalog-merge.service';
+import { CatalogGameMergeService } from './catalog-game-merge.service';
 import { CatalogDuplicatesService } from './catalog-duplicates.service';
 import { CatalogClearService } from './catalog-clear.service';
 import { CatalogSourceRegistry } from './catalog-source-registry.service';
@@ -36,6 +37,26 @@ export class MergeCatalogItemsDto {
   @MaxLength(64)
   loserId!: string;
 }
+
+export class GameMergeDto {
+  @ApiProperty({
+    example: 'Palworld',
+    description: 'The stopgap game whose items are folded away.',
+  })
+  @IsString()
+  @MaxLength(100)
+  fromGame!: string;
+
+  @ApiProperty({
+    example: 'Palworld OFFICIAL CARD GAME',
+    description: 'The game whose items survive — normally the marketplace source’s spelling.',
+  })
+  @IsString()
+  @MaxLength(100)
+  intoGame!: string;
+}
+
+export class GameMergePreviewQueryDto extends GameMergeDto {}
 
 export class CatalogSearchQueryDto {
   @ApiPropertyOptional({ example: 'lightning bolt' })
@@ -118,6 +139,7 @@ export class CatalogController {
   constructor(
     private readonly catalog: CatalogService,
     private readonly merge: CatalogMergeService,
+    private readonly gameMerge: CatalogGameMergeService,
     private readonly duplicates: CatalogDuplicatesService,
     private readonly clear: CatalogClearService,
     private readonly registry: CatalogSourceRegistry,
@@ -232,6 +254,39 @@ export class CatalogController {
   })
   mergeItems(@Body() body: MergeCatalogItemsDto) {
     return this.merge.merge(body.winnerId, body.loserId);
+  }
+
+  /**
+   * The whole-game counterpart, matched by collector number, for when a
+   * stopgap source's rows meet the marketplace source that finally opened —
+   * pairs the duplicates screen cannot see, because the two sources agree on
+   * neither game spelling nor name (see `CatalogGameMergeService`).
+   */
+  @Get('local/merge-games/preview')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Preview merging one game’s items into another by collector number.',
+    description:
+      'Pairs items whose collector numbers match exactly and uniquely on both sides; ' +
+      'anything ambiguous, unnumbered or contradicted by a shared id namespace is skipped ' +
+      'with its reason. Nothing is written.',
+  })
+  gameMergePreview(@Query() query: GameMergePreviewQueryDto) {
+    return this.gameMerge.preview(query.fromGame, query.intoGame);
+  }
+
+  @Post('local/merge-games')
+  @RequireRole('admin')
+  @ApiOperation({
+    summary: 'Merge one game’s items into another by collector number.',
+    description:
+      'Runs the previewed pairing — re-derived at the moment of writing, never trusted from ' +
+      'the client — and folds each matched item into its counterpart. The into side survives ' +
+      'every pair, because its set spellings are what repricing and future ingests match on. ' +
+      'One refused pair reports its problem and the rest still land.',
+  })
+  mergeGames(@Body() body: GameMergeDto) {
+    return this.gameMerge.mergeGames(body.fromGame, body.intoGame);
   }
 
   @Get('sources')

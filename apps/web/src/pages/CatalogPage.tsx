@@ -6,10 +6,12 @@ import {
   useCatalogCredentialStatus,
   useCatalogDuplicates,
   useCatalogSources,
+  useGameMergePreview,
   useIngestableSets,
   useLocalSearch,
   useLocalSets,
   useMergeCatalogItems,
+  useMergeGames,
   useRunImport,
   useRunIngest,
   useSetCatalogCredentials,
@@ -199,6 +201,12 @@ export function CatalogPage() {
       </div>
 
       {user?.role === 'admin' && <DuplicatesPanel />}
+
+      {user?.role === 'admin' && (
+        <GameMergePanel
+          games={byGame.map(([game]) => game).filter((game) => game !== '(no game)')}
+        />
+      )}
 
       {/* Server enforces admin-only; the panel explains rather than hides (§8). */}
       {user?.role === 'admin' ? (
@@ -741,6 +749,185 @@ function ImportPanel() {
           {run.data.problems.map((problem) => (
             <p key={problem.id} className="error">
               {problem.id}: {problem.message}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Merging one game's rows into another's, matched by collector number.
+ *
+ * The Duplicates panel above cannot see these pairs: a stopgap source
+ * (Bushiroad's Palworld database, a hand-built import) and the marketplace
+ * source that later opens agree on neither the game spelling nor the card
+ * name — only on the printed collector number. The operator asserts the two
+ * games are one game by picking both; the server pairs by exact, unique
+ * number and refuses everything ambiguous.
+ *
+ * Direction is fixed and the copy says so: the "into" side survives because
+ * its set spellings are what repricing matches against. Confirm sits above
+ * the table (the #137 lesson — a whole set of singles is a long scroll).
+ */
+function GameMergePanel({ games }: { games: string[] }) {
+  const [fromGame, setFromGame] = useState('');
+  const [intoGame, setIntoGame] = useState('');
+  const [previewRequested, setPreviewRequested] = useState(false);
+  const ready = fromGame !== '' && intoGame !== '' && fromGame !== intoGame;
+  const preview = useGameMergePreview(fromGame, intoGame, previewRequested && ready);
+  const run = useMergeGames();
+
+  // A different pairing is a different plan; a stale preview must not look
+  // like one that covers the new choice.
+  useEffect(() => {
+    setPreviewRequested(false);
+    run.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromGame, intoGame]);
+
+  // After a merge the from side is (usually) empty, so re-running the preview
+  // would answer with a refusal that reads like an error. The report is the
+  // panel's content now.
+  useEffect(() => {
+    if (run.isSuccess) setPreviewRequested(false);
+  }, [run.isSuccess]);
+
+  const pairs = preview.data?.pairs ?? [];
+  const skipped = preview.data?.skipped ?? [];
+
+  return (
+    <div className="panel">
+      <h2>Merge a game into another</h2>
+      <p className="muted">
+        For a game whose cards arrived through a stopgap source before a marketplace catalogue
+        carried it. Items are paired by their printed collector number — exactly and uniquely, or
+        not at all — and each pair is folded into the marketplace side, which keeps its name and set
+        spellings. Stock, channels and history move; nothing is guessed.
+      </p>
+
+      <div className="filters">
+        <select
+          value={fromGame}
+          onChange={(e) => setFromGame(e.target.value)}
+          aria-label="Merge from game"
+        >
+          <option value="">Merge from…</option>
+          {games.map((game) => (
+            <option key={game} value={game} disabled={game === intoGame}>
+              {game}
+            </option>
+          ))}
+        </select>
+        <select
+          value={intoGame}
+          onChange={(e) => setIntoGame(e.target.value)}
+          aria-label="Merge into game"
+        >
+          <option value="">…into</option>
+          {games.map((game) => (
+            <option key={game} value={game} disabled={game === fromGame}>
+              {game}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={!ready || preview.isFetching}
+          onClick={() => setPreviewRequested(true)}
+        >
+          {preview.isFetching ? 'Pairing…' : 'Preview'}
+        </button>
+      </div>
+
+      {/* A completed run replaces the preview, refusal messages included —
+          post-merge the from side is empty and a re-preview's "no items carry
+          that game" is the migration having finished, not a problem. */}
+      {preview.isError && !run.data && <p className="error">{(preview.error as Error).message}</p>}
+      {run.isError && <p className="error">{(run.error as Error).message}</p>}
+
+      {preview.data && !run.data && (
+        <>
+          <p className="muted">
+            {pairs.length} pair(s) matched, {skipped.length} skipped.
+            {pairs.length > 0 && (
+              <>
+                {' '}
+                Merging moves{' '}
+                <strong>
+                  {pairs.reduce((sum, p) => sum + p.skuCount, 0)} SKU(s) and{' '}
+                  {pairs.reduce((sum, p) => sum + p.allocationCount, 0)} channel link(s)
+                </strong>{' '}
+                onto {preview.data.intoGame}.
+              </>
+            )}
+          </p>
+
+          {pairs.length > 0 && (
+            <p>
+              <button
+                type="button"
+                disabled={run.isPending}
+                onClick={() => run.mutate({ fromGame, intoGame })}
+              >
+                {run.isPending ? 'Merging…' : `Merge ${pairs.length} pair(s)`}
+              </button>
+            </p>
+          )}
+
+          {pairs.length > 0 && (
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>Number</th>
+                  <th>From</th>
+                  <th>Into</th>
+                  <th className="num">SKUs</th>
+                  <th className="num">Channels</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pairs.map((pair) => (
+                  <tr key={pair.fromId}>
+                    <td>{pair.collectorNumber}</td>
+                    <td>{pair.fromName}</td>
+                    <td>{pair.intoName}</td>
+                    <td className="num">{pair.skuCount}</td>
+                    <td className="num">{pair.allocationCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {skipped.length > 0 && (
+            <details className="quiet-details">
+              <summary>
+                Skipped <span className="muted">· {skipped.length}</span>
+              </summary>
+              <ul>
+                {skipped.map((skip, index) => (
+                  <li key={index} className="muted">
+                    {skip.name}
+                    {skip.collectorNumber ? ` (${skip.collectorNumber})` : ''} — {skip.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
+      )}
+
+      {run.data && (
+        <div>
+          <p className="muted">
+            <strong>{run.data.merged} pair(s) merged</strong>, {run.data.skipped.length} skipped,{' '}
+            {run.data.problems.length} problem(s).
+          </p>
+          {run.data.problems.map((problem) => (
+            <p key={problem.collectorNumber} className="error">
+              {problem.collectorNumber}: {problem.message}
             </p>
           ))}
         </div>

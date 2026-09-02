@@ -4,6 +4,7 @@ import { CatalogSourceRegistry } from './catalog-source-registry.service';
 import { CatalogService } from './catalog.service';
 import { CatalogController } from './catalog.controller';
 import { CatalogMergeService } from './catalog-merge.service';
+import { CatalogGameMergeService } from './catalog-game-merge.service';
 import { CatalogDuplicatesService } from './catalog-duplicates.service';
 import { CatalogClearService } from './catalog-clear.service';
 import { CatalogCredentialsService } from './catalog-credentials.service';
@@ -17,6 +18,7 @@ import { ImportedSourceRegistrar } from './imported-source';
     ImportedSourceRegistrar,
     CatalogService,
     CatalogMergeService,
+    CatalogGameMergeService,
     CatalogDuplicatesService,
     CatalogClearService,
     CatalogCredentialsService,
@@ -25,6 +27,7 @@ import { ImportedSourceRegistrar } from './imported-source';
     CatalogSourceRegistry,
     CatalogService,
     CatalogMergeService,
+    CatalogGameMergeService,
     CatalogDuplicatesService,
     CatalogClearService,
     CatalogCredentialsService,

@@ -118,6 +118,53 @@ export function useClearCatalog() {
   });
 }
 
+export interface GameMergePair {
+  collectorNumber: string;
+  fromId: string;
+  fromName: string;
+  intoId: string;
+  intoName: string;
+  skuCount: number;
+  allocationCount: number;
+}
+
+export interface GameMergePreview {
+  fromGame: string;
+  intoGame: string;
+  pairs: GameMergePair[];
+  skipped: Array<{ collectorNumber: string | null; name: string; reason: string }>;
+}
+
+export interface GameMergeReport extends GameMergePreview {
+  merged: number;
+  problems: Array<{ collectorNumber: string; message: string }>;
+}
+
+/** Preview only on request — the operator asked what a merge would do right now. */
+export function useGameMergePreview(fromGame: string, intoGame: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['catalog', 'local', 'merge-games-preview', fromGame, intoGame],
+    queryFn: () => {
+      const params = new URLSearchParams({ fromGame, intoGame });
+      return apiFetch<GameMergePreview>(`/catalog/local/merge-games/preview?${params.toString()}`);
+    },
+    enabled,
+    staleTime: 0,
+  });
+}
+
+export function useMergeGames() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { fromGame: string; intoGame: string }) =>
+      apiFetch<GameMergeReport>('/catalog/local/merge-games', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['catalog', 'local'] }),
+  });
+}
+
 export function useLocalSets(game?: string) {
   return useQuery({
     queryKey: ['catalog', 'local', 'sets', game],

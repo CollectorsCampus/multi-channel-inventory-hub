@@ -3,6 +3,32 @@
 Notable changes, newest first. This project follows [semantic versioning](https://semver.org):
 while it is `0.x`, a minor bump may contain breaking changes, and those are called out here.
 
+## [0.13.0] — 2026-09-01
+
+TCGPlayer opened its Palworld category, and the cards that arrived through the stopgap
+source can now meet it: one run merges a whole game's rows into the marketplace's, matched
+by collector number.
+
+**No schema migration** — a clean drop-in on 0.12.0.
+
+### Added
+
+- **Merge a game into another, by collector number** (a panel on the catalog screen, admin
+  only). For a game whose cards were taken in through a stopgap source — Bushiroad's
+  Palworld database, a hand-built import — before a marketplace catalogue carried it. The
+  duplicates panel cannot see these pairs: the two sources agree on neither the game
+  spelling nor the card name, only on the printed collector number. You name both games —
+  the assertion that they are one game is yours to make, not the software's — and items
+  are paired by exact, unique number, previewed, and each folded into its marketplace
+  counterpart. Stock, channel links and history move; the marketplace side's name and set
+  spellings survive, which is what lets the repricing sweep price the cards afterwards.
+  Anything unnumbered, ambiguous, or contradicted by a shared platform id is skipped with
+  its reason, never guessed.
+
+### Fixed
+
+- Removed a zero-byte file accidentally committed with the Palworld source.
+
 ## [0.12.0] — 2026-08-22
 
 The catalogue no longer stops at what somebody else publishes: a hand-built card list can

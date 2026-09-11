@@ -48,6 +48,6 @@
     "@types/nodemailer": "^8.0.1",
     "typescript": "^5.9.3",
     "unplugin-swc": "^1.5.11",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }

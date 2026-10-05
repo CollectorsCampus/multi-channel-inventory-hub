@@ -25,7 +25,7 @@
     "@nestjs/common": "^11.1.29",
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.1.29",
-    "@nestjs/platform-fastify": "^11.1.29",
+    "@nestjs/platform-fastify": "^11.2.4",
     "@nestjs/swagger": "^11.0.0",
     "@node-rs/argon2": "^2.1.0",
     "bullmq": "^6.1.0",

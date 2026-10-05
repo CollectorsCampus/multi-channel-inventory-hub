@@ -84,8 +84,8 @@ importers:
         specifier: ^11.1.29
         version: 11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/platform-fastify':
-        specifier: ^11.1.29
-        version: 11.1.29(@fastify/static@10.1.3)(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))
+        specifier: ^11.2.4
+        version: 11.2.4(@fastify/static@10.1.3)(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))
       '@nestjs/swagger':
         specifier: ^11.0.0
         version: 11.4.6(@fastify/static@10.1.3)(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)
@@ -825,6 +825,9 @@ packages:
   '@fastify/merge-json-schemas@0.2.1':
     resolution: {integrity: sha512-OA3KGBCy6KtIvLf8DINC5880o5iBlDX4SxzLQS8HorJAbqluzLRn80UXU0bxZn7UOFhFgpRJDasfwn9nG4FG4A==}
 
+  '@fastify/middie@9.3.4':
+    resolution: {integrity: sha512-dd8phTnVWzx3iKPBKSvtRUT8+Igvy/MP+P5HcY2tjejEyeVbyjkD4HgzKessUObue5RRM5J6PZdxtAqgbn84yw==}
+
   '@fastify/proxy-addr@5.1.0':
     resolution: {integrity: sha512-INS+6gh91cLUjB+PVHfu1UqcB76Sqtpyp7bnL+FYojhjygvOPA9ctiD/JDKsyD9Xgu4hUhCSJBPig/w7duNajw==}
 
@@ -1123,8 +1126,8 @@ packages:
       class-validator:
         optional: true
 
-  '@nestjs/platform-fastify@11.1.29':
-    resolution: {integrity: sha512-upe47WhS8NzFQY5zfd7MzNyOevdeD5G6A9Yw2a7ip6xDyx9O+6jJ9aAXo4WNGLNvwLa8BuNV2/HVNFSj3wrmeQ==}
+  '@nestjs/platform-fastify@11.2.4':
+    resolution: {integrity: sha512-4qbVzwnEqbQUCZAzyao8nrBOz7GGNlRSb4S1PdGnfprqj3WGK3zlaDOuQyGt/eDmBILhGmXLbiNsMu/nCzUkag==}
     peerDependencies:
       '@fastify/static': ^10.1.2
       '@fastify/view': ^10.0.0 || ^11.0.0 || ^12.0.0
@@ -2300,6 +2303,10 @@ packages:
 
   find-my-way@9.8.0:
     resolution: {integrity: sha512-JtyUgATO7qxRp2zKhrmWof74Mqxc1ikbwpwMY97p8ipuTj2QtreA4gK2JNAF6SOqqHnYYkwMUvsgQVi2AJxIyw==}
+    engines: {node: '>=20'}
+
+  find-my-way@9.9.0:
+    resolution: {integrity: sha512-sJsgZ1sQH2UDuowPuMKg8az7Qc8F0jnj+SKkFWU/+T0xcFlgV5skgXOGUqmQzOdmW6ALA7AhJINWx3qFBkbLHA==}
     engines: {node: '>=20'}
 
   find-up@5.0.0:
@@ -3746,6 +3753,14 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
+  '@fastify/middie@9.3.4':
+    dependencies:
+      '@fastify/error': 4.2.0
+      fastify-plugin: 6.0.0
+      find-my-way: 9.9.0
+      path-to-regexp: 8.4.2
+      reusify: 1.1.0
+
   '@fastify/proxy-addr@5.1.0':
     dependencies:
       '@fastify/forwarded': 3.0.2
@@ -4055,19 +4070,18 @@ snapshots:
       class-transformer: 0.5.1
       class-validator: 0.15.1
 
-  '@nestjs/platform-fastify@11.1.29(@fastify/static@10.1.3)(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))':
+  '@nestjs/platform-fastify@11.2.4(@fastify/static@10.1.3)(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))':
     dependencies:
       '@fastify/cors': 11.3.0
       '@fastify/formbody': 8.0.2
+      '@fastify/middie': 9.3.4
       '@nestjs/common': 11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/core': 11.1.29(@nestjs/common@11.1.29(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2)
       fast-querystring: 1.1.2
       fastify: 5.12.0
-      fastify-plugin: 6.0.0
-      find-my-way: 9.8.0
+      find-my-way: 9.9.0
       light-my-request: 6.6.0
       path-to-regexp: 8.4.2
-      reusify: 1.1.0
       tslib: 2.8.1
     optionalDependencies:
       '@fastify/static': 10.1.3
@@ -5233,6 +5247,12 @@ snapshots:
       - supports-color
 
   find-my-way@9.8.0:
+    dependencies:
+      fast-deep-equal: 3.1.3
+      fast-querystring: 1.1.2
+      safe-regex2: 5.1.1
+
+  find-my-way@9.9.0:
     dependencies:
       fast-deep-equal: 3.1.3
       fast-querystring: 1.1.2
